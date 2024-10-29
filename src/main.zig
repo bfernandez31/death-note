@@ -4,7 +4,7 @@ const raylib = @import("raylib.zig");
 const MAX_ZOMBIES = 100;
 const MAX_INPUT_CHARS = 9;
 
-const ZOMBIE_FRAME_COUNT = 10;
+const ZOMBIE_FRAME_COUNT = 17;
 
 const BUFFER_SIZE = 16;
 // Input buffer for characters
@@ -35,11 +35,11 @@ var zombies: [MAX_ZOMBIES]?*Zombie = undefined;
 var zombie_texture: raylib.Texture2D = undefined;
 
 const names = [_][*:0]const u8{
-    "ZOMBIE_A",
-    "ZO",
-    "ZOMBIE_C",
-    "ZOMBIE_D",
-    "ZOMBIE_E",
+    "toto",
+    "fo",
+    "titi",
+    "lolo",
+    "riri",
 };
 
 const screen_width = 800;
@@ -49,7 +49,7 @@ pub fn main() !void {
     raylib.InitWindow(screen_width, screen_height, "Zombie Game");
     defer raylib.CloseWindow();
 
-    zombie_texture = raylib.LoadTexture("assets/spritesheet.png");
+    zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
 
     const text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 100.0, .y = 400.0, .width = 225.0, .height = 50.0 };
@@ -189,17 +189,29 @@ fn drawZombies() void {
             }
 
             // Calculate the source rectangle for the current frame
-            const frame_width = @divTrunc(zombie_texture.width, ZOMBIE_FRAME_COUNT);
+            const frame_width = @as(f32, @floatFromInt(@divTrunc(zombie_texture.width, ZOMBIE_FRAME_COUNT)));
 
             const src_rect = raylib.Rectangle{
-                .x = zomb.frame * @as(f32, @floatFromInt(frame_width)),
+                .x = zomb.frame * frame_width,
                 .y = 0,
-                .width = @as(f32, @floatFromInt(frame_width)),
+                .width = frame_width,
                 .height = @as(f32, @floatFromInt(zombie_texture.height)),
             };
 
-            // Draw the zombie texture
-            raylib.DrawTextureRec(zombie_texture, src_rect, pos, raylib.WHITE);
+            const scale = 0.2; // Adjust the scale factor to make the zombie smaller
+            raylib.DrawTexturePro(
+                zombie_texture,
+                src_rect,
+                raylib.Rectangle{
+                    .x = pos.x,
+                    .y = pos.y,
+                    .width = frame_width * scale,
+                    .height = @as(f32, @floatFromInt(zombie_texture.height)) * scale,
+                },
+                raylib.Vector2{ .x = 0, .y = 0 }, // Origin for scaling
+                0.0, // Rotation
+                raylib.WHITE,
+            );
 
             // Draw the zombie's name above the zombie
             const text_pos = raylib.Vector2{ .x = pos.x, .y = pos.y - 20.0 }; // Adjust Y position as needed
