@@ -1,111 +1,190 @@
 const std = @import("std");
 const raylib = @import("raylib.zig");
 
+const MAX_ZOMBIES = 100;
+const MAX_INPUT_CHARS = 9;
+
+const BUFFER_SIZE = 16;
+// Input buffer for characters
+var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
+var letter_count: usize = 0;
+
+var input_text: [MAX_INPUT_CHARS]u8 = undefined;
+var input_length: usize = 0;
+
+// Delay settings
+const spawn_delay: f32 = 3.0; // Delay in seconds between spawns
+var spawn_timer: f32 = 0.0; // Timer to track time since last spawn
+
+// Define the Zombie structure
 const Zombie = struct {
     x: f32,
     y: f32,
     speed: f32,
-    name: []const u8,
+    name: [*:0]const u8,
+    is_active: bool,
 };
 
-const MAX_ZOMBIES = 100;
+// Array to hold zombie pointers
 var zombies: [MAX_ZOMBIES]?*Zombie = undefined;
 
-var input_text: [32]u8 = undefined;
-var input_length: usize = 0;
+const names = [_][*:0]const u8{
+    "ZOMBIE_A",
+    "ZO",
+    "ZOMBIE_C",
+    "ZOMBIE_D",
+    "ZOMBIE_E",
+};
+
+const screen_width = 800;
+const screen_height = 450;
 
 pub fn main() !void {
-    raylib.InitWindow(800, 600, "Death Note Game");
+    raylib.InitWindow(screen_width, screen_height, "Zombie Game");
     defer raylib.CloseWindow();
 
-    raylib.SetTargetFPS(60);
+    const text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 100.0, .y = 400.0, .width = 225.0, .height = 50.0 };
+    var mouse_on_text = false;
+    var frames_counter: usize = 0;
 
-    const font = raylib.LoadFont("assets/alagard.png");
-    defer raylib.UnloadFont(font);
+    raylib.SetTargetFPS(60); // Set target frames per second
 
-    while (!raylib.WindowShouldClose()) {
-        handleInput();
-        updateZombies();
-        render(font);
-    }
-}
+    var allocator = std.heap.page_allocator;
 
-fn handleInput() void {
-    var key = raylib.GetCharPressed();
-    while (key != 0) {
-        if (key >= 32 and key <= 125) {
-            if (input_length < input_text.len) {
-                input_text[input_length] = @intCast(key);
-                input_length += 1;
+    while (!raylib.WindowShouldClose()) { // Main game loop
+        // Update
+        if (raylib.CheckCollisionPointRec(raylib.GetMousePosition(), text_box)) {
+            mouse_on_text = true;
+            raylib.SetMouseCursor(raylib.MOUSE_CURSOR_IBEAM);
+
+            var key = raylib.GetCharPressed();
+
+            // Check if more characters have been pressed on the same frame
+            while (key > 0) {
+                if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
+                    name[letter_count] = @intCast(key); // Add character to input buffer
+                    name[letter_count + 1] = '\x00'; // Null-terminate the string
+                    letter_count += 1;
+                }
+                key = raylib.GetCharPressed(); // Check next character in the queue
             }
-        }
-        key = raylib.GetCharPressed();
-    }
 
-    if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and input_length > 0) {
-        input_length -= 1;
+            // Handle backspace
+            if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
+                letter_count -= 1;
+                name[letter_count] = '\x00'; // Null-terminate after backspace
+            }
+        } else {
+            mouse_on_text = false;
+            raylib.SetMouseCursor(raylib.MOUSE_CURSOR_DEFAULT);
+        }
+
+        if (mouse_on_text) {
+            frames_counter += 1;
+        } else {
+            frames_counter = 0;
+        }
+
+        // Update spawn timer
+        spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
+
+        // Check if enough time has passed to spawn a new zombie
+        if (spawn_timer >= spawn_delay) {
+            try spawnZombie(&allocator); // Call the function to spawn a zombie
+            spawn_timer = 0.0; // Reset the spawn timer
+        }
+
+        // Update zombies
+        updateZombies();
+
+        // Draw
+        raylib.BeginDrawing();
+        defer raylib.EndDrawing();
+
+        raylib.ClearBackground(raylib.RAYWHITE);
+
+        raylib.DrawRectangleRec(text_box, raylib.LIGHTGRAY);
+        if (mouse_on_text) {
+            raylib.DrawRectangleLines(@intFromFloat(text_box.x), @intFromFloat(text_box.y), @intFromFloat(text_box.width), @intFromFloat(text_box.height), raylib.RED);
+        } else {
+            raylib.DrawRectangleLines(@intFromFloat(text_box.x), @intFromFloat(text_box.y), @intFromFloat(text_box.width), @intFromFloat(text_box.height), raylib.DARKGRAY);
+        }
+
+        raylib.DrawText(&name, @as(c_int, @intFromFloat(text_box.x)) + 5, @as(c_int, @intFromFloat(text_box.y)) + 8, 40, raylib.MAROON);
+
+        // Draw zombies
+        drawZombies();
+
+        // Draw blinking underscore char
+        if (mouse_on_text and letter_count < MAX_INPUT_CHARS and ((frames_counter / 20) % 2) == 0) {
+            raylib.DrawText("_", @as(c_int, @intFromFloat(text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(text_box.y)) + 12, 40, raylib.MAROON);
+        }
+
+        if (mouse_on_text and letter_count >= MAX_INPUT_CHARS) {
+            raylib.DrawText("Press BACKSPACE to delete chars...", 230, 300, 20, raylib.GRAY);
+        }
     }
 }
 
+// Function to update zombies
 fn updateZombies() void {
     for (zombies) |zombie| {
         if (zombie == null) continue;
 
         if (zombie) |zomb| {
-            if (zomb.y < 0) continue;
-            zomb.y += zomb.speed;
+            if (!zomb.is_active) continue; // Skip if zombie is not on screen
+            zomb.y += zomb.speed; // Update zombie position
 
-            const typed_name = input_text[0..input_length];
-            if (std.mem.eql(u8, typed_name, zomb.name)) {
-                zomb.y = -1.0;
-                input_length = 0;
+            // Create a slice from the input text
+            const typed_name = name[0..letter_count];
+
+            // Calculate the length of the zombie's name
+            var zomb_name_length: usize = 0;
+            while (zomb.name[zomb_name_length] != '\x00') {
+                zomb_name_length += 1;
             }
 
-            if (zomb.y > 600) {
-                raylib.CloseWindow();
-                std.debug.print("Game Over!\n", .{});
+            // Create a slice from the zombie's name
+            const zomb_name_slice = zomb.name[0..zomb_name_length];
+
+            // Check for equality
+            if (std.mem.eql(u8, typed_name, zomb_name_slice)) {
+                zomb.is_active = false; // Mark zombie as "removed"
+                letter_count = 0;
+                name[letter_count] = '\x00';
             }
         }
     }
 }
 
-fn render(font: raylib.Font) void {
-    raylib.BeginDrawing();
-    defer raylib.EndDrawing();
-
-    raylib.ClearBackground(raylib.RAYWHITE);
-
+fn drawZombies() void {
     for (zombies) |zombie| {
         if (zombie == null) continue;
 
         if (zombie) |zomb| {
+            if (!zomb.is_active) continue;
             const pos = raylib.Vector2{ .x = zomb.x, .y = zomb.y };
-            raylib.DrawTextEx(font, zomb.name, pos, 20.0, 2.0, raylib.BLACK);
+            raylib.DrawText(zomb.name, @intFromFloat(pos.x), @intFromFloat(pos.y), 20, raylib.DARKGREEN);
         }
     }
-
-    const page_texture = raylib.LoadTexture("assets/page.png");
-    const page_pos = raylib.Vector2{ .x = 0, .y = 500 };
-    raylib.DrawTexture(page_texture, page_pos.x, page_pos.y, raylib.RAYWHITE);
-
-    const input_str = input_text[0..input_length];
-    const text_pos = raylib.Vector2{ .x = 50, .y = 550 };
-    raylib.DrawTextEx(font, input_str, text_pos, 20.0, 2.0, raylib.DARKGRAY);
-
-    const plume_texture = raylib.LoadTexture("assets/plume.png");
-    const plume_pos = raylib.Vector2{ .x = text_pos.x + raylib.MeasureTextEx(font, input_str, 20.0, 2.0).x, .y = 540 };
-    raylib.DrawTexture(plume_texture, plume_pos.x, plume_pos.y, raylib.RAYWHITE);
 }
 
-fn spawnZombie() void {
-    for (zombies) |zombie| {
+// Function to spawn new zombies
+fn spawnZombie(allocator: *std.mem.Allocator) !void {
+    for (zombies, 0..) |zombie, i| {
         if (zombie == null) {
-            zombie.* = Zombie{
-                .x = std.rand.defaultRandom.next() % 750,
+            // Allocate memory for a new zombie and assign it to zombies[i]
+            const new_zombie = try allocator.create(Zombie);
+            errdefer allocator.destroy(Zombie);
+
+            new_zombie.* = Zombie{
+                .x = 200,
                 .y = 0.0,
-                .speed = 1.0 + std.rand.defaultRandom.next() % 2,
-                .name = "Alex",
+                .speed = 0.5,
+                .name = names[1], // Selecting a name as an example
+                .is_active = true,
             };
+            zombies[i] = new_zombie;
             break;
         }
     }
