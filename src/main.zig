@@ -4,6 +4,8 @@ const raylib = @import("raylib.zig");
 const MAX_ZOMBIES = 100;
 const MAX_INPUT_CHARS = 9;
 
+const ZOMBIE_FRAME_COUNT = 10;
+
 const BUFFER_SIZE = 16;
 // Input buffer for characters
 var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
@@ -23,10 +25,14 @@ const Zombie = struct {
     speed: f32,
     name: [*:0]const u8,
     is_active: bool,
+    frame: f32, // Current animation frame
+    animationTimer: f32,
 };
 
 // Array to hold zombie pointers
 var zombies: [MAX_ZOMBIES]?*Zombie = undefined;
+
+var zombie_texture: raylib.Texture2D = undefined;
 
 const names = [_][*:0]const u8{
     "ZOMBIE_A",
@@ -42,6 +48,9 @@ const screen_height = 450;
 pub fn main() !void {
     raylib.InitWindow(screen_width, screen_height, "Zombie Game");
     defer raylib.CloseWindow();
+
+    zombie_texture = raylib.LoadTexture("assets/spritesheet.png");
+    defer raylib.UnloadTexture(zombie_texture);
 
     const text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 100.0, .y = 400.0, .width = 225.0, .height = 50.0 };
     var mouse_on_text = false;
@@ -158,13 +167,43 @@ fn updateZombies() void {
 }
 
 fn drawZombies() void {
+    const deltaTime = 1.0 / 60.0; // 60 FPS
+
     for (zombies) |zombie| {
         if (zombie == null) continue;
 
         if (zombie) |zomb| {
             if (!zomb.is_active) continue;
+
             const pos = raylib.Vector2{ .x = zomb.x, .y = zomb.y };
-            raylib.DrawText(zomb.name, @intFromFloat(pos.x), @intFromFloat(pos.y), 20, raylib.DARKGREEN);
+
+            // Update the animation frame
+            zomb.animationTimer += deltaTime;
+
+            if (zomb.animationTimer >= 0.1) { // Change frame every 0.1 seconds
+                zomb.frame += 1;
+                if (zomb.frame >= ZOMBIE_FRAME_COUNT) {
+                    zomb.frame = 0; // Loop back to the first frame
+                }
+                zomb.animationTimer = 0; // Reset the timer
+            }
+
+            // Calculate the source rectangle for the current frame
+            const frame_width = @divTrunc(zombie_texture.width, ZOMBIE_FRAME_COUNT);
+
+            const src_rect = raylib.Rectangle{
+                .x = zomb.frame * @as(f32, @floatFromInt(frame_width)),
+                .y = 0,
+                .width = @as(f32, @floatFromInt(frame_width)),
+                .height = @as(f32, @floatFromInt(zombie_texture.height)),
+            };
+
+            // Draw the zombie texture
+            raylib.DrawTextureRec(zombie_texture, src_rect, pos, raylib.WHITE);
+
+            // Draw the zombie's name above the zombie
+            const text_pos = raylib.Vector2{ .x = pos.x, .y = pos.y - 20.0 }; // Adjust Y position as needed
+            raylib.DrawText(zomb.name, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y), 20, raylib.DARKGREEN); // Adjust font size and color as needed
         }
     }
 }
@@ -183,6 +222,8 @@ fn spawnZombie(allocator: *std.mem.Allocator) !void {
                 .speed = 0.5,
                 .name = names[1], // Selecting a name as an example
                 .is_active = true,
+                .frame = 0,
+                .animationTimer = 0,
             };
             zombies[i] = new_zombie;
             break;
