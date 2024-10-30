@@ -1,6 +1,9 @@
 const std = @import("std");
 const raylib = @import("raylib.zig");
 
+// Importing the list of zombie names
+const ZombieNames = @import("zombie_names.zig").ZombieNames;
+
 const MAX_ZOMBIES = 100;
 const MAX_INPUT_CHARS = 9;
 
@@ -34,18 +37,12 @@ var zombies: [MAX_ZOMBIES]?*Zombie = undefined;
 
 var zombie_texture: raylib.Texture2D = undefined;
 
-const names = [_][*:0]const u8{
-    "toto",
-    "fo",
-    "titi",
-    "lolo",
-    "riri",
-};
-
 const screen_width = 800;
 const screen_height = 450;
 
 pub fn main() !void {
+    var rng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
+
     raylib.InitWindow(screen_width, screen_height, "Zombie Game");
     defer raylib.CloseWindow();
 
@@ -99,7 +96,7 @@ pub fn main() !void {
 
         // Check if enough time has passed to spawn a new zombie
         if (spawn_timer >= spawn_delay) {
-            try spawnZombie(&allocator); // Call the function to spawn a zombie
+            try spawnZombie(&allocator, &rng); // Call the function to spawn a zombie
             spawn_timer = 0.0; // Reset the spawn timer
         }
 
@@ -221,18 +218,20 @@ fn drawZombies() void {
 }
 
 // Function to spawn new zombies
-fn spawnZombie(allocator: *std.mem.Allocator) !void {
+fn spawnZombie(allocator: *std.mem.Allocator, rng: *std.Random.Xoshiro256) !void {
     for (zombies, 0..) |zombie, i| {
         if (zombie == null) {
             // Allocate memory for a new zombie and assign it to zombies[i]
             const new_zombie = try allocator.create(Zombie);
             errdefer allocator.destroy(Zombie);
+            const x = @as(f32, @floatFromInt(rng.random().intRangeLessThan(u32, 10, 750)));
+            const nameIndex = rng.random().intRangeLessThan(usize, 0, ZombieNames.len);
 
             new_zombie.* = Zombie{
-                .x = 200,
+                .x = x,
                 .y = 0.0,
                 .speed = 0.5,
-                .name = names[1], // Selecting a name as an example
+                .name = ZombieNames[nameIndex],
                 .is_active = true,
                 .frame = 0,
                 .animationTimer = 0,
