@@ -36,6 +36,7 @@ const Zombie = struct {
 var zombies: [MAX_ZOMBIES]?*Zombie = undefined;
 
 var zombie_texture: raylib.Texture2D = undefined;
+var zombie_kill_sound: raylib.Sound = undefined;
 
 const screen_width = 800;
 const screen_height = 450;
@@ -45,6 +46,14 @@ pub fn main() !void {
 
     raylib.InitWindow(screen_width, screen_height, "Zombie Game");
     defer raylib.CloseWindow();
+
+    // Initialize the audio device
+    raylib.InitAudioDevice();
+    defer raylib.CloseAudioDevice();
+
+    // Load sound effect
+    zombie_kill_sound = raylib.LoadSound("assets/zombie-hit.wav");
+    defer raylib.UnloadSound(zombie_kill_sound);
 
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
@@ -158,6 +167,9 @@ fn updateZombies() void {
                 zomb.is_active = false; // Mark zombie as "removed"
                 letter_count = 0;
                 name[letter_count] = '\x00';
+
+                // Play the zombie kill sound
+                raylib.PlaySound(zombie_kill_sound);
             }
         }
     }
