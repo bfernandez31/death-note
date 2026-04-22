@@ -1,13 +1,17 @@
 version: 1
 project:
-  name: "target-repo"
-  language: null
+  name: "death-note"
+  language: zig
   framework: none
 runtime:
-  manager: null
+  manager: zig
 commands:
-  install: "echo 'install not configured'"
+  install: "zig build"
+  test: "zig build test"
+  type_check: "zig build --summary all"
+  lint: "zig fmt --check ."
 testing:
   e2e: false
+  framework: zig-test
 agent:
   cli: claude-code
