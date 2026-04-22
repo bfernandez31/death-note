@@ -1,0 +1,13 @@
+version: 1
+project:
+  name: "target-repo"
+  language: null
+  framework: none
+runtime:
+  manager: null
+commands:
+  install: "echo 'install not configured'"
+testing:
+  e2e: false
+agent:
+  cli: claude-code
