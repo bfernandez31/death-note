@@ -1,5 +1,5 @@
 const std = @import("std");
-const raylib = @import("raylib.zig");
+const raylib = @import("raylib.zig").c;
 
 // Importing the list of zombie names
 const ZombieNames = @import("zombie_names.zig").ZombieNames;
@@ -44,8 +44,6 @@ const screen_width = 800;
 const screen_height = 450;
 
 pub fn main() !void {
-    var rng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
-
     raylib.InitWindow(screen_width, screen_height, "Zombie Game");
     defer raylib.CloseWindow();
 
@@ -110,7 +108,7 @@ pub fn main() !void {
 
             // Check if enough time has passed to spawn a new zombie
             if (spawn_timer >= spawn_delay) {
-                try spawnZombie(&allocator, &rng); // Call the function to spawn a zombie
+                try spawnZombie(&allocator); // Call the function to spawn a zombie
                 spawn_timer = 0.0; // Reset the spawn timer
             }
 
@@ -257,15 +255,15 @@ fn drawZombies() void {
 }
 
 // Function to spawn new zombies
-fn spawnZombie(allocator: *std.mem.Allocator, rng: *std.Random.Xoshiro256) !void {
+fn spawnZombie(allocator: *std.mem.Allocator) !void {
     for (zombies, 0..) |zombie, i| {
         if (zombie == null) {
             // Allocate memory for a new zombie and assign it to zombies[i]
             const new_zombie = try allocator.create(Zombie);
             errdefer allocator.destroy(new_zombie);
 
-            const x = @as(f32, @floatFromInt(rng.random().intRangeLessThan(u32, 10, 750)));
-            const nameIndex = rng.random().intRangeLessThan(usize, 0, ZombieNames.len);
+            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(10, 749)));
+            const nameIndex: usize = @intCast(raylib.GetRandomValue(0, @intCast(ZombieNames.len - 1)));
 
             new_zombie.* = Zombie{
                 .x = x,
