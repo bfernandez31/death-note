@@ -87,17 +87,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T025 [P] [US2] Extend tests in `src/main.zig`: add `test "score calculation with combo"` verifying normal kill score = `BASE_KILL_SCORE * comboMultiplier(combo)` at various combo values
-- [ ] T026 [P] [US2] Extend tests in `src/main.zig`: add `test "wave completion bonus"` verifying bonus = `WAVE_COMPLETION_BONUS_PER_WAVE * current_wave`
+- [x] T025 [P] [US2] Extend tests in `src/main.zig`: add `test "score calculation with combo"` verifying normal kill score = `BASE_KILL_SCORE * comboMultiplier(combo)` at various combo values
+- [x] T026 [P] [US2] Extend tests in `src/main.zig`: add `test "wave completion bonus"` verifying bonus = `WAVE_COMPLETION_BONUS_PER_WAVE * current_wave`
 
 ### Implementation for User Story 2
 
-- [ ] T027 [US2] Wire combo tracking into `updateZombies` in `src/main.zig`: on zombie kill increment `combo`, compute score delta = `BASE_KILL_SCORE * comboMultiplier(combo)`, add to `score`, increment `wave_kill_count` and `total_kills`, record kill timestamp in `wpm_kill_times` circular buffer
-- [ ] T028 [US2] Wire combo-breaking into the input handler in `frame()` in `src/main.zig`: after accepting a character, call `isValidPrefix` on the updated buffer. If not valid prefix → `combo = 0`, increment `total_keystrokes` only. If valid prefix → increment both `total_keystrokes` and `correct_keystrokes`
-- [ ] T029 [US2] Add wave-completion bonus in wave completion detection in `src/main.zig`: when kill target is met before timer expires, add `WAVE_COMPLETION_BONUS_PER_WAVE * current_wave` to `score`
-- [ ] T030 [US2] Implement `drawHud()` function in `src/main.zig`: draw top-left "Wave: {current_wave}", top-center "Score: {score}" and "Best: {best_score}" (if loaded), top-right "Combo: {combo} ({multiplier}x)" / "WPM: {wpm}" / "Accuracy: {accuracy}%" using `raylib.DrawText` with font size 16-18 in the top 25px margin. Call after `drawZombies()` in the draw phase during active gameplay (not during transition or game-over)
-- [ ] T031 [US2] Calculate live WPM and accuracy each frame for HUD display in `src/main.zig`: WPM via `calculateWpm(wpm_kill_times, wpm_kill_count, raylib.GetTime())`, accuracy via `(correct_keystrokes * 100) / total_keystrokes` (or 100 if no keystrokes)
-- [ ] T032 [US2] Verify `zig build` and `zig build test` both pass cleanly
+- [x] T027 [US2] Wire combo tracking into `updateZombies` in `src/main.zig`: on zombie kill increment `combo`, compute score delta = `BASE_KILL_SCORE * comboMultiplier(combo)`, add to `score`, increment `wave_kill_count` and `total_kills`, record kill timestamp in `wpm_kill_times` circular buffer
+- [x] T028 [US2] Wire combo-breaking into the input handler in `frame()` in `src/main.zig`: after accepting a character, call `isValidPrefix` on the updated buffer. If not valid prefix → `combo = 0`, increment `total_keystrokes` only. If valid prefix → increment both `total_keystrokes` and `correct_keystrokes`
+- [x] T029 [US2] Add wave-completion bonus in wave completion detection in `src/main.zig`: when kill target is met before timer expires, add `WAVE_COMPLETION_BONUS_PER_WAVE * current_wave` to `score`
+- [x] T030 [US2] Implement `drawHud()` function in `src/main.zig`: draw top-left "Wave: {current_wave}", top-center "Score: {score}" and "Best: {best_score}" (if loaded), top-right "Combo: {combo} ({multiplier}x)" / "WPM: {wpm}" / "Accuracy: {accuracy}%" using `raylib.DrawText` with font size 16-18 in the top 25px margin. Call after `drawZombies()` in the draw phase during active gameplay (not during transition or game-over)
+- [x] T031 [US2] Calculate live WPM and accuracy each frame for HUD display in `src/main.zig`: WPM via `calculateWpm(wpm_kill_times, wpm_kill_count, raylib.GetTime())`, accuracy via `(correct_keystrokes * 100) / total_keystrokes` (or 100 if no keystrokes)
+- [x] T032 [US2] Verify `zig build` and `zig build test` both pass cleanly
 
 **Checkpoint**: Scoring, combo, and HUD all functional. Score changes on kills, combo resets on errors, HUD is always visible during gameplay.
 

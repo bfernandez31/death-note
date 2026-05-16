@@ -140,13 +140,18 @@ fn frame(ctx: *FrameContext) void {
                 resetZombies(ctx.allocator);
             }
         } else {
-            // Input handling
             var key = raylib.GetCharPressed();
             while (key > 0) {
                 if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
                     name[letter_count] = @intCast(key);
                     name[letter_count + 1] = '\x00';
                     letter_count += 1;
+                    total_keystrokes += 1;
+                    if (isValidPrefix(name[0..letter_count], &zombies)) {
+                        correct_keystrokes += 1;
+                    } else {
+                        combo = 0;
+                    }
                 }
                 key = raylib.GetCharPressed();
             }
@@ -170,8 +175,8 @@ fn frame(ctx: *FrameContext) void {
 
             updateZombies();
 
-            // Wave completion detection
             if (wave_kill_count >= waveKillTarget(current_wave) and !boss_alive) {
+                score += WAVE_COMPLETION_BONUS_PER_WAVE * current_wave;
                 is_wave_transitioning = true;
                 wave_transition_timer = 0.0;
             } else if (wave_timer >= waveDuration(current_wave) and !boss_alive) {
@@ -211,6 +216,7 @@ fn frame(ctx: *FrameContext) void {
         drawWaveTransition();
     } else {
         drawZombies();
+        drawHud();
     }
 
     if (ctx.mouse_on_text and letter_count < MAX_INPUT_CHARS and ((ctx.frames_counter / 20) % 2) == 0) {
@@ -303,17 +309,69 @@ fn updateZombies() void {
             const zomb_name_length = cstrLen(zomb.name);
             const zomb_name_slice = zomb.name[0..zomb_name_length];
 
-            // Check for equality
             if (std.mem.eql(u8, typed_name, zomb_name_slice)) {
-                zomb.is_active = false; // Mark zombie as "removed"
+                zomb.is_active = false;
                 letter_count = 0;
-                name[letter_count] = '\x00';
+                name[0] = '\x00';
 
-                // Play the zombie kill sound
+                combo += 1;
+                const kill_score = if (zomb.is_boss) BOSS_KILL_SCORE else BASE_KILL_SCORE;
+                score += kill_score * comboMultiplier(combo);
+                wave_kill_count += 1;
+                total_kills += 1;
+
+                wpm_kill_times[wpm_kill_index] = raylib.GetTime();
+                wpm_kill_index = (wpm_kill_index + 1) % WPM_BUFFER_SIZE;
+                if (wpm_kill_count < WPM_BUFFER_SIZE) wpm_kill_count += 1;
+
+                if (zomb.is_boss) boss_alive = false;
+
                 raylib.PlaySound(zombie_kill_sound);
             }
         }
     }
+}
+
+fn drawHud() void {
+    // Top-left: wave
+    var wave_buf: [24]u8 = undefined;
+    const wave_text = std.fmt.bufPrint(&wave_buf, "Wave: {}", .{current_wave}) catch "Wave: --";
+    raylib.DrawText(@ptrCast(wave_text.ptr), 10, 5, 18, raylib.DARKGRAY);
+
+    // Top-center: score and best
+    var score_buf: [32]u8 = undefined;
+    const score_text = std.fmt.bufPrint(&score_buf, "Score: {}", .{score}) catch "Score: --";
+    raylib.DrawText(@ptrCast(score_text.ptr), screen_width / 2 - 60, 5, 18, raylib.DARKGRAY);
+
+    if (best_score_loaded and best_score > 0) {
+        var best_buf: [32]u8 = undefined;
+        const best_text = std.fmt.bufPrint(&best_buf, "Best: {}", .{best_score}) catch "Best: --";
+        raylib.DrawText(@ptrCast(best_text.ptr), screen_width / 2 + 60, 5, 16, raylib.GRAY);
+    }
+
+    // Top-right: combo, WPM, accuracy
+    const mult = comboMultiplier(combo);
+    var combo_buf: [32]u8 = undefined;
+    const combo_text = std.fmt.bufPrint(&combo_buf, "Combo: {} ({}x)", .{ combo, mult }) catch "Combo: --";
+    raylib.DrawText(@ptrCast(combo_text.ptr), screen_width - 180, 5, 16, if (combo >= 5) raylib.ORANGE else raylib.DARKGRAY);
+
+    const wpm = calculateWpm(&wpm_kill_times, wpm_kill_count, raylib.GetTime());
+    var wpm_buf: [24]u8 = undefined;
+    const wpm_text = std.fmt.bufPrint(&wpm_buf, "WPM: {}", .{wpm}) catch "WPM: --";
+    raylib.DrawText(@ptrCast(wpm_text.ptr), screen_width - 90, 5, 16, raylib.DARKGRAY);
+
+    const accuracy: u64 = if (total_keystrokes > 0) (correct_keystrokes * 100) / total_keystrokes else 100;
+    var acc_buf: [24]u8 = undefined;
+    const acc_text = std.fmt.bufPrint(&acc_buf, "Acc: {}%", .{accuracy}) catch "Acc: --%";
+    raylib.DrawText(@ptrCast(acc_text.ptr), screen_width - 90, 22, 16, raylib.DARKGRAY);
+
+    // Wave timer
+    const duration = waveDuration(current_wave);
+    const remaining = if (wave_timer < duration) duration - wave_timer else 0.0;
+    const remaining_int: u32 = @intFromFloat(remaining);
+    var timer_buf: [24]u8 = undefined;
+    const timer_text = std.fmt.bufPrint(&timer_buf, "Time: {}s", .{remaining_int}) catch "Time: --";
+    raylib.DrawText(@ptrCast(timer_text.ptr), 10, 22, 16, if (remaining < 10.0) raylib.RED else raylib.DARKGRAY);
 }
 
 fn drawWaveTransition() void {
@@ -694,6 +752,21 @@ test "calculateWpm" {
     times[1] = 15.0;
     times[2] = 20.0;
     try std.testing.expectEqual(@as(u32, 0), calculateWpm(&times, 3, 100.0));
+}
+
+test "score calculation with combo" {
+    try std.testing.expectEqual(@as(u64, 100), BASE_KILL_SCORE * comboMultiplier(0));
+    try std.testing.expectEqual(@as(u64, 200), BASE_KILL_SCORE * comboMultiplier(5));
+    try std.testing.expectEqual(@as(u64, 300), BASE_KILL_SCORE * comboMultiplier(10));
+    try std.testing.expectEqual(@as(u64, 500), BASE_KILL_SCORE * comboMultiplier(20));
+    try std.testing.expectEqual(@as(u64, 500), BOSS_KILL_SCORE * comboMultiplier(0));
+    try std.testing.expectEqual(@as(u64, 2500), BOSS_KILL_SCORE * comboMultiplier(20));
+}
+
+test "wave completion bonus" {
+    try std.testing.expectEqual(@as(u64, 200), WAVE_COMPLETION_BONUS_PER_WAVE * 1);
+    try std.testing.expectEqual(@as(u64, 1000), WAVE_COMPLETION_BONUS_PER_WAVE * 5);
+    try std.testing.expectEqual(@as(u64, 2000), WAVE_COMPLETION_BONUS_PER_WAVE * 10);
 }
 
 test "wave state resets on new wave" {
