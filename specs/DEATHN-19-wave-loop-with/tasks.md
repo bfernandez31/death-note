@@ -20,12 +20,12 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T001 Add `WaveConfig` struct after the `Zombie` struct (line 33) in `src/main.zig` with fields: `target_wpm: u32`, `spawn_delay: f32`, `fall_speed: f32`, `pool_size: u32`
-- [ ] T002 Add `WAVE_TABLE` compile-time constant array of 15 `WaveConfig` entries (matching the difficulty table in spec.md) at module top in `src/main.zig`
-- [ ] T003 Add `WAVE_TRANSITION_DURATION: f32 = 3.0` constant at module top in `src/main.zig`
-- [ ] T004 Add `getWaveConfig(wave: u32) WaveConfig` function in `src/main.zig` — returns `WAVE_TABLE[wave - 1]` for waves 1–15, computes scaling formula (`target_wpm=110, spawn_delay=0.66, fall_speed=2.0, pool_size=33+2*(wave-15)`) for wave 16+
-- [ ] T005 Add wave state module-level variables after `is_game_over` (line 22) in `src/main.zig`: `current_wave: u32 = 1`, `wave_kills: u32 = 0`, `wave_spawned: u32 = 0`, `is_transitioning: bool = false`, `transition_timer: f32 = 0.0`
-- [ ] T006 Remove `const ZOMBIE_FALL_SPEED: f32 = 0.5` (line 12) and `const spawn_delay: f32 = 3.0` (line 19) from `src/main.zig` — these are replaced by per-wave lookups via `getWaveConfig()`
+- [X] T001 Add `WaveConfig` struct after the `Zombie` struct (line 33) in `src/main.zig` with fields: `target_wpm: u32`, `spawn_delay: f32`, `fall_speed: f32`, `pool_size: u32` ✅ DONE
+- [X] T002 Add `WAVE_TABLE` compile-time constant array of 15 `WaveConfig` entries (matching the difficulty table in spec.md) at module top in `src/main.zig` ✅ DONE
+- [X] T003 Add `WAVE_TRANSITION_DURATION: f32 = 3.0` constant at module top in `src/main.zig` ✅ DONE
+- [X] T004 Add `getWaveConfig(wave: u32) WaveConfig` function in `src/main.zig` — returns `WAVE_TABLE[wave - 1]` for waves 1–15, computes scaling formula (`target_wpm=110, spawn_delay=0.66, fall_speed=2.0, pool_size=33+2*(wave-15)`) for wave 16+ ✅ DONE
+- [X] T005 Add wave state module-level variables after `is_game_over` (line 22) in `src/main.zig`: `current_wave: u32 = 1`, `wave_kills: u32 = 0`, `wave_spawned: u32 = 0`, `is_transitioning: bool = false`, `transition_timer: f32 = 0.0` ✅ DONE
+- [X] T006 Remove `const ZOMBIE_FALL_SPEED: f32 = 0.5` (line 12) and `const spawn_delay: f32 = 3.0` (line 19) from `src/main.zig` — these are replaced by per-wave lookups via `getWaveConfig()` ✅ DONE
 
 **Checkpoint**: Foundation ready — `zig build test` passes, all user stories can now proceed sequentially
 
@@ -47,8 +47,8 @@
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Parameterize zombie speed in `spawnZombie` (line 326): change `.speed = ZOMBIE_FALL_SPEED` to `.speed = getWaveConfig(current_wave).fall_speed` in `src/main.zig`
-- [ ] T011 [US1] Parameterize spawn delay in frame function (line 99): change `spawn_timer >= spawn_delay` to `spawn_timer >= getWaveConfig(current_wave).spawn_delay` in `src/main.zig`
+- [X] T010 [US1] Parameterize zombie speed in `spawnZombie` (line 326): change `.speed = ZOMBIE_FALL_SPEED` to `.speed = getWaveConfig(current_wave).fall_speed` in `src/main.zig` ✅ DONE
+- [X] T011 [US1] Parameterize spawn delay in frame function (line 99): change `spawn_timer >= spawn_delay` to `spawn_timer >= getWaveConfig(current_wave).spawn_delay` in `src/main.zig` ✅ DONE
 - [ ] T012 [US1] Gate spawning on pool_size: before the `spawnZombie` call (line 103), add condition `wave_spawned < getWaveConfig(current_wave).pool_size`. After successful spawn, increment `wave_spawned += 1` in `src/main.zig`
 - [ ] T013 [US1] Track wave kills: in `updateZombies` after `zomb.is_active = false` (line 248), increment `wave_kills += 1` in `src/main.zig`
 - [ ] T014 [US1] Add wave completion detection: after `updateZombies()` call (line 108), check if `wave_kills >= cfg.pool_size and wave_spawned >= cfg.pool_size`, then set `is_transitioning = true` and `transition_timer = WAVE_TRANSITION_DURATION` in `src/main.zig`

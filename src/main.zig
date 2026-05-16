@@ -9,17 +9,38 @@ const MAX_INPUT_CHARS = 9;
 
 const ZOMBIE_FRAME_COUNT = 17;
 const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1; // seconds per spritesheet frame
-const ZOMBIE_FALL_SPEED: f32 = 0.5;
+const WAVE_TRANSITION_DURATION: f32 = 3.0;
+
+const WAVE_TABLE = [_]WaveConfig{
+    .{ .target_wpm = 15, .spawn_delay = 4.80, .fall_speed = 0.5, .pool_size = 5 },
+    .{ .target_wpm = 18, .spawn_delay = 4.00, .fall_speed = 0.6, .pool_size = 7 },
+    .{ .target_wpm = 22, .spawn_delay = 3.27, .fall_speed = 0.7, .pool_size = 9 },
+    .{ .target_wpm = 26, .spawn_delay = 2.77, .fall_speed = 0.8, .pool_size = 11 },
+    .{ .target_wpm = 30, .spawn_delay = 2.40, .fall_speed = 0.9, .pool_size = 13 },
+    .{ .target_wpm = 35, .spawn_delay = 2.06, .fall_speed = 1.0, .pool_size = 15 },
+    .{ .target_wpm = 40, .spawn_delay = 1.80, .fall_speed = 1.1, .pool_size = 17 },
+    .{ .target_wpm = 45, .spawn_delay = 1.60, .fall_speed = 1.2, .pool_size = 19 },
+    .{ .target_wpm = 50, .spawn_delay = 1.44, .fall_speed = 1.3, .pool_size = 21 },
+    .{ .target_wpm = 55, .spawn_delay = 1.31, .fall_speed = 1.4, .pool_size = 23 },
+    .{ .target_wpm = 60, .spawn_delay = 1.20, .fall_speed = 1.5, .pool_size = 25 },
+    .{ .target_wpm = 70, .spawn_delay = 1.03, .fall_speed = 1.6, .pool_size = 27 },
+    .{ .target_wpm = 80, .spawn_delay = 0.90, .fall_speed = 1.7, .pool_size = 29 },
+    .{ .target_wpm = 90, .spawn_delay = 0.80, .fall_speed = 1.8, .pool_size = 31 },
+    .{ .target_wpm = 100, .spawn_delay = 0.72, .fall_speed = 1.9, .pool_size = 33 },
+};
 
 // Input buffer for characters
 var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
 var letter_count: usize = 0;
 
-// Delay settings
-const spawn_delay: f32 = 3.0; // Delay in seconds between spawns
-var spawn_timer: f32 = 0.0; // Timer to track time since last spawn
+var spawn_timer: f32 = 0.0;
 
 var is_game_over: bool = false;
+var current_wave: u32 = 1;
+var wave_kills: u32 = 0;
+var wave_spawned: u32 = 0;
+var is_transitioning: bool = false;
+var transition_timer: f32 = 0.0;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -30,6 +51,13 @@ const Zombie = struct {
     is_active: bool,
     frame: f32, // Current animation frame
     animation_timer: f32,
+};
+
+const WaveConfig = struct {
+    target_wpm: u32,
+    spawn_delay: f32,
+    fall_speed: f32,
+    pool_size: u32,
 };
 
 // Array to hold zombie pointers
@@ -96,7 +124,7 @@ fn frame(ctx: *FrameContext) void {
         spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
 
         // Check if enough time has passed to spawn a new zombie
-        if (spawn_timer >= spawn_delay) {
+        if (spawn_timer >= getWaveConfig(current_wave).spawn_delay) {
             // Only reset the timer when a slot was actually claimed; if the pool is full,
             // keep trying every frame so a freed slot is reused immediately instead of
             // stalling spawns indefinitely.
@@ -323,7 +351,7 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
             new_zombie.* = Zombie{
                 .x = x,
                 .y = 0.0,
-                .speed = ZOMBIE_FALL_SPEED,
+                .speed = getWaveConfig(current_wave).fall_speed,
                 .name = ZombieNames[name_index],
                 .is_active = true,
                 .frame = 0,
@@ -334,6 +362,18 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
         }
     }
     return false;
+}
+
+fn getWaveConfig(wave: u32) WaveConfig {
+    if (wave >= 1 and wave <= WAVE_TABLE.len) {
+        return WAVE_TABLE[wave - 1];
+    }
+    return WaveConfig{
+        .target_wpm = 110,
+        .spawn_delay = 0.66,
+        .fall_speed = 2.0,
+        .pool_size = 33 + 2 * (wave - 15),
+    };
 }
 
 fn resetZombies(allocator: *std.mem.Allocator) void {
