@@ -95,6 +95,17 @@ const FrameContext = struct {
 };
 
 fn frame(ctx: *FrameContext) void {
+    // Resize input box for boss mode: the 9-char box is too narrow for the 35-char
+    // boss buffer at font size 40, so typing overflows visually. Widen and recenter
+    // while a boss is active; restore the standard layout otherwise.
+    if (boss != null) {
+        ctx.text_box.width = 700.0;
+        ctx.text_box.x = (screen_width - 700.0) / 2.0;
+    } else {
+        ctx.text_box.width = 225.0;
+        ctx.text_box.x = screen_width / 2.0 - 100.0;
+    }
+
     // Mouse-over and cursor state are updated every frame (not gated by is_game_over),
     // so the blinking cursor on the game-over screen stays animated and matches the
     // current mouse position instead of freezing at its last in-game value.
@@ -517,10 +528,12 @@ fn drawBoss() void {
 
         const boss_x: c_int = @intFromFloat(b.x);
         const boss_y: c_int = @intFromFloat(b.y);
-        raylib.DrawText(b.name, boss_x, boss_y - 30, 20, BOSS_DARK_RED);
+        // FR-007: phrase text sits above the sprite; health bar sits below the phrase
+        // (between phrase and sprite). Stacked top→bottom: phrase, bar, sprite.
+        raylib.DrawText(b.name, boss_x, boss_y - 50, 20, BOSS_DARK_RED);
 
         const bar_x = boss_x;
-        const bar_y = boss_y - 42;
+        const bar_y = boss_y - 25;
         raylib.DrawRectangle(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.LIGHTGRAY);
 
         if (boss_phrase_len > 0) {
