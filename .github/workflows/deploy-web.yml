@@ -27,6 +27,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # raylib's native build on Linux links against X11 dev libs; needed by
+      # `zig build test` which shares the exe module (and therefore raylib).
+      # The WASM build skips this via the Makefile's PLATFORM=PLATFORM_WEB.
+      - name: Install raylib native deps (X11)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
+
       - name: Set up Emscripten SDK 3.1.64
         uses: mymindstorm/setup-emsdk@v14
         with:
