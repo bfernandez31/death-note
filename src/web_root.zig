@@ -17,7 +17,12 @@ const main_module = @import("main.zig");
 // in the dev console; we don't need formatted output.
 pub const panic = std.debug.no_panic;
 
-fn entryPoint() callconv(.c) c_int {
+// Signature matches `int main(int argc, char **argv)` — emcc's JS runtime calls
+// main with both args and asserts the arity. A 0-arg main triggers the runtime
+// error: "native function `main` called with 2 args but expects 0".
+fn entryPoint(argc: c_int, argv: [*c][*c]u8) callconv(.c) c_int {
+    _ = argc;
+    _ = argv;
     main_module.main() catch return 1;
     return 0;
 }
