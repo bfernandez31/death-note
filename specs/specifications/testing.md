@@ -172,7 +172,7 @@ The 21 test blocks in `src/main.zig` cover the following pure-logic surfaces:
 | Category | Tests | Functions / logic under test |
 |---|---|---|
 | Core mechanics | 4 | Name-match equality via `std.mem.eql`, input-buffer bounds (printable-ASCII gate, 40-char cap), frame-index wrap-around, `cstrLen` null-terminator scan |
-| Combo system | 2 | `comboMultiplier` tier boundaries (1×, 2×, 4×, 8×), score calculation with combo multiplier applied |
+| Combo system | 2 | `comboMultiplier` tier boundaries (1×, 2×, 3×, 4×, 5×), score calculation with combo multiplier applied |
 | Wave system | 9 | `waveSpawnDelay` decreasing by wave, `waveFallSpeed` increasing by wave, `waveMaxActive` scaling, `waveKillTarget` scaling, `waveDuration` scaling, boss wave detection (every 5th wave), boss fall speed, wave state resets on transition, wave transition timer progression, wave completion bonus |
 | Live stats | 3 | `calculateWpm` words-per-minute from keystroke timestamps, `accuracyPercent` from hits/total, WPM drops to zero after the rolling window expires |
 | Persistence | 1 | High score value is monotonically non-decreasing (never drops below stored value) |

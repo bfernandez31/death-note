@@ -215,12 +215,13 @@ sequenceDiagram
 
     User->>OS: Physical keystroke (printable ASCII 32–125)
     OS->>Loop: raylib polls via GetCharPressed() each frame
-    Loop->>Input: mouse_on_text == true AND !is_game_over
-    Input->>Prefix: isValidPrefix(candidate) — check if any active zombie name starts with the typed text
+    Loop->>Input: !is_game_over AND !is_wave_transitioning
+    Input->>Buffer: Append character; null-terminate (letter_count < MAX_INPUT_CHARS)
+    Buffer->>Prefix: isValidPrefix(name[0..letter_count]) — does any active zombie name start with this slice?
     alt Prefix matches at least one active zombie
-        Prefix->>Buffer: Append character; null-terminate
+        Prefix->>Combo: correct_keystrokes += 1 (combo preserved)
     else No zombie name has this prefix
-        Prefix->>Input: Character rejected (not appended)
+        Prefix->>Combo: combo = 0 (buffer kept; only the streak resets)
     end
     Buffer->>Update: typed_name slice = name[0..letter_count]
 

@@ -66,12 +66,19 @@ var is_wave_transitioning: bool = false;
 var wave_transition_timer: f32 = 0.0;
 var boss_alive: bool = false;
 var boss_spawned_this_wave: bool = false;
+var wave_failed: bool = false;
+var wave_start_time: f64 = 0.0;
+var wave_correct_keystrokes: u64 = 0;
+var wave_total_keystrokes: u64 = 0;
+var wave_final_accuracy: u64 = 100;
+var wave_final_wpm: u32 = 0;
 
 // Score state
 var score: u64 = 0;
 var combo: u32 = 0;
 var best_score: u64 = 0;
 var best_score_loaded: bool = false;
+var is_new_high_score: bool = false;
 
 // Player stats
 var total_keystrokes: u64 = 0;
@@ -134,6 +141,12 @@ fn frame(ctx: *FrameContext) void {
 
     if (!is_game_over) {
         if (is_wave_transitioning) {
+            // Drain raylib's input queue so keys pressed during the recap/countdown
+            // don't surface on the first frame of the next wave (no zombies yet →
+            // every char would be a non-prefix and reset the combo).
+            while (raylib.GetCharPressed() > 0) {}
+            _ = raylib.IsKeyPressed(raylib.KEY_BACKSPACE);
+
             wave_transition_timer += dt;
             if (wave_transition_timer >= WAVE_TRANSITION_TOTAL_DURATION) {
                 current_wave += 1;
@@ -142,6 +155,10 @@ fn frame(ctx: *FrameContext) void {
                 is_wave_transitioning = false;
                 wave_transition_timer = 0.0;
                 boss_spawned_this_wave = false;
+                wave_failed = false;
+                wave_correct_keystrokes = 0;
+                wave_total_keystrokes = 0;
+                wave_start_time = raylib.GetTime();
                 resetZombies(ctx.allocator);
             }
         } else {
@@ -152,8 +169,10 @@ fn frame(ctx: *FrameContext) void {
                     name[letter_count + 1] = '\x00';
                     letter_count += 1;
                     total_keystrokes += 1;
+                    wave_total_keystrokes += 1;
                     if (isValidPrefix(name[0..letter_count], &zombies)) {
                         correct_keystrokes += 1;
+                        wave_correct_keystrokes += 1;
                     } else {
                         combo = 0;
                     }
@@ -178,22 +197,31 @@ fn frame(ctx: *FrameContext) void {
                 if (spawned) spawn_timer = 0.0;
             }
 
-            updateZombies();
+            updateZombies(ctx.allocator);
+
+            // updateZombies may have ended the game this frame; skip wave-transition
+            // bookkeeping so a dead game doesn't collect a completion bonus.
+            if (is_game_over) return;
 
             const is_boss_wave = (current_wave % BOSS_WAVE_INTERVAL == 0);
             const target_met = wave_kill_count >= waveKillTarget(current_wave);
 
-            // Spawn boss when kill target met on boss waves
+            // Spawn boss when kill target met on boss waves; only mark the wave's
+            // boss as spawned if the pool actually had room.
             if (is_boss_wave and target_met and !boss_spawned_this_wave) {
-                _ = spawnBoss(ctx.allocator) catch {};
-                boss_spawned_this_wave = true;
+                const spawned = spawnBoss(ctx.allocator) catch false;
+                if (spawned) boss_spawned_this_wave = true;
             }
 
-            if (target_met and !boss_alive) {
+            if (target_met and !boss_alive and (!is_boss_wave or boss_spawned_this_wave)) {
+                snapshotWaveStats();
                 score += WAVE_COMPLETION_BONUS_PER_WAVE * current_wave;
+                wave_failed = false;
                 is_wave_transitioning = true;
                 wave_transition_timer = 0.0;
             } else if (wave_timer >= waveDuration(current_wave) and !boss_alive) {
+                snapshotWaveStats();
+                wave_failed = true;
                 resetZombies(ctx.allocator);
                 is_wave_transitioning = true;
                 wave_transition_timer = 0.0;
@@ -220,27 +248,34 @@ fn frame(ctx: *FrameContext) void {
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
 
     if (is_game_over) {
-        // Save high score on first frame of game over
+        // Save high score on first frame of game over and latch the banner flag
+        // so it stays visible across subsequent frames (best_score == score from
+        // frame 2 onward would otherwise fail any direct comparison here).
         if (score > best_score) {
             best_score = score;
             best_score_loaded = true;
+            is_new_high_score = true;
             saveHighScore(score);
         }
 
-        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 100, 40, raylib.RED);
+        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 110, 40, raylib.RED);
 
-        if (score >= best_score and score > 0) {
-            raylib.DrawText("New High Score!", screen_width / 2 - 80, screen_height / 2 - 60, 20, raylib.ORANGE);
+        if (is_new_high_score) {
+            raylib.DrawText("New High Score!", screen_width / 2 - 80, screen_height / 2 - 70, 20, raylib.ORANGE);
         }
 
         const stats_x = screen_width / 2 - 80;
-        drawTextFmt(stats_x, screen_height / 2 - 30, 20, raylib.DARKGRAY, "Wave: {}", .{current_wave});
-        drawTextFmt(stats_x, screen_height / 2 - 5, 20, raylib.DARKGRAY, "Score: {}", .{score});
-        drawTextFmt(stats_x, screen_height / 2 + 20, 20, raylib.DARKGRAY, "Best: {}", .{best_score});
-        drawTextFmt(stats_x, screen_height / 2 + 45, 20, raylib.DARKGRAY, "Accuracy: {}%", .{accuracyPercent()});
-        drawTextFmt(stats_x, screen_height / 2 + 70, 20, raylib.DARKGRAY, "Kills: {}", .{total_kills});
+        const wpm = calculateWpm(&wpm_kill_times, wpm_kill_count, raylib.GetTime());
+        drawTextFmt(stats_x, screen_height / 2 - 40, 20, raylib.DARKGRAY, "Wave: {}", .{current_wave});
+        drawTextFmt(stats_x, screen_height / 2 - 15, 20, raylib.DARKGRAY, "Score: {}", .{score});
+        if (best_score_loaded and best_score > 0) {
+            drawTextFmt(stats_x, screen_height / 2 + 10, 20, raylib.DARKGRAY, "Best: {}", .{best_score});
+        }
+        drawTextFmt(stats_x, screen_height / 2 + 35, 20, raylib.DARKGRAY, "WPM: {}", .{wpm});
+        drawTextFmt(stats_x, screen_height / 2 + 60, 20, raylib.DARKGRAY, "Accuracy: {}%", .{accuracyPercent()});
+        drawTextFmt(stats_x, screen_height / 2 + 85, 20, raylib.DARKGRAY, "Kills: {}", .{total_kills});
 
-        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 105, 20, raylib.GRAY);
+        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 120, 20, raylib.GRAY);
 
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
             resetGameState(ctx.allocator);
@@ -303,6 +338,8 @@ pub fn main() !void {
         best_score_loaded = true;
     }
 
+    wave_start_time = raylib.GetTime();
+
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
     // c_allocator forwards to libc malloc/free, which emcc provides.
@@ -332,9 +369,9 @@ pub fn main() !void {
 }
 
 // Function to update zombies
-fn updateZombies() void {
-    for (zombies) |zombie| {
-        if (zombie) |zomb| {
+fn updateZombies(allocator: *std.mem.Allocator) void {
+    for (&zombies) |*slot| {
+        if (slot.*) |zomb| {
             if (!zomb.is_active) continue; // Skip if zombie is not on screen
             zomb.y += zomb.speed; // Update zombie position
 
@@ -349,14 +386,17 @@ fn updateZombies() void {
             const zomb_name_slice = zomb.name[0..zomb_name_length];
 
             if (zomb.is_boss) {
-                // Boss: update phrase progress based on how many chars match from the start
+                // Boss: phrase_progress reflects the current input — reset to 0
+                // whenever the buffer is no longer a valid prefix so the progress
+                // bar matches what's typed (including BACKSPACE and wrong keys).
                 if (letter_count > 0 and std.mem.startsWith(u8, zomb_name_slice, typed_name)) {
                     zomb.phrase_progress = letter_count;
+                } else {
+                    zomb.phrase_progress = 0;
                 }
             }
 
             if (std.mem.eql(u8, typed_name, zomb_name_slice)) {
-                zomb.is_active = false;
                 letter_count = 0;
                 name[0] = '\x00';
 
@@ -373,6 +413,11 @@ fn updateZombies() void {
                 if (zomb.is_boss) boss_alive = false;
 
                 raylib.PlaySound(zombie_kill_sound);
+
+                // Free the slot immediately so the pool can be re-used during long
+                // waves; otherwise dead allocations would accumulate until reset.
+                allocator.destroy(zomb);
+                slot.* = null;
             }
         }
     }
@@ -407,15 +452,18 @@ fn drawHud() void {
 
 fn drawWaveTransition() void {
     if (wave_transition_timer < WAVE_TRANSITION_RECAP_DURATION) {
-        // Recap screen (first 5 seconds)
-        drawTextFmt(screen_width / 2 - 120, screen_height / 2 - 80, 30, raylib.DARKGREEN, "Wave {} Complete!", .{current_wave});
+        // Recap screen (first 5 seconds) — header reflects whether the player hit
+        // the kill target or only reached the timeout.
+        if (wave_failed) {
+            drawTextFmt(screen_width / 2 - 120, screen_height / 2 - 80, 30, raylib.MAROON, "Wave {} Failed!", .{current_wave});
+        } else {
+            drawTextFmt(screen_width / 2 - 120, screen_height / 2 - 80, 30, raylib.DARKGREEN, "Wave {} Complete!", .{current_wave});
+        }
 
         const recap_x = screen_width / 2 - 60;
         drawTextFmt(recap_x, screen_height / 2 - 30, 20, raylib.DARKGRAY, "Kills: {}", .{wave_kill_count});
-        drawTextFmt(recap_x, screen_height / 2, 20, raylib.DARKGRAY, "Accuracy: {}%", .{accuracyPercent()});
-
-        const wpm = calculateWpm(&wpm_kill_times, wpm_kill_count, raylib.GetTime());
-        drawTextFmt(recap_x, screen_height / 2 + 30, 20, raylib.DARKGRAY, "WPM: {}", .{wpm});
+        drawTextFmt(recap_x, screen_height / 2, 20, raylib.DARKGRAY, "Accuracy: {}%", .{wave_final_accuracy});
+        drawTextFmt(recap_x, screen_height / 2 + 30, 20, raylib.DARKGRAY, "WPM: {}", .{wave_final_wpm});
     } else {
         // Countdown (last 3 seconds)
         const remaining = WAVE_TRANSITION_TOTAL_DURATION - wave_transition_timer;
@@ -563,9 +611,28 @@ fn spawnBoss(allocator: *std.mem.Allocator) !bool {
     return false;
 }
 
+fn snapshotWaveStats() void {
+    if (wave_total_keystrokes == 0) {
+        wave_final_accuracy = 100;
+    } else {
+        wave_final_accuracy = (wave_correct_keystrokes * 100) / wave_total_keystrokes;
+    }
+    const elapsed = raylib.GetTime() - wave_start_time;
+    wave_final_wpm = waveWpm(wave_kill_count, elapsed);
+}
+
+fn waveWpm(kills: u32, elapsed_seconds: f64) u32 {
+    if (elapsed_seconds <= 0.0) return 0;
+    const rate = @as(f64, @floatFromInt(kills)) * 60.0 / elapsed_seconds;
+    return @intFromFloat(rate);
+}
+
 fn loadHighScore() u64 {
     if (comptime is_emscripten) {
-        const val = raylib.emscripten_run_script_int("(function(){var v=localStorage.getItem('death-note-highscore');return v?parseInt(v,10)||0:0;})()");
+        // Wrap localStorage access in try/catch — Safari/Firefox private mode
+        // throws SecurityError on getItem/setItem, and an uncaught exception out
+        // of emscripten_run_script_int aborts the WASM module.
+        const val = raylib.emscripten_run_script_int("(function(){try{var v=localStorage.getItem('death-note-highscore');return v?parseInt(v,10)||0:0;}catch(e){return 0;}})()");
         return if (val > 0) @intCast(val) else 0;
     } else {
         const fp = raylib.fopen(HIGHSCORE_FILE, "rb") orelse return 0;
@@ -579,8 +646,8 @@ fn loadHighScore() u64 {
 
 fn saveHighScore(s: u64) void {
     if (comptime is_emscripten) {
-        var js_buf: [128]u8 = undefined;
-        const js = std.fmt.bufPrint(&js_buf, "localStorage.setItem('death-note-highscore','{}')", .{s}) catch return;
+        var js_buf: [160]u8 = undefined;
+        const js = std.fmt.bufPrint(&js_buf, "try{{localStorage.setItem('death-note-highscore','{}')}}catch(e){{}}", .{s}) catch return;
         if (js.len < js_buf.len) {
             js_buf[js.len] = 0;
             raylib.emscripten_run_script(@ptrCast(&js_buf));
@@ -698,8 +765,15 @@ fn resetGameState(allocator: *std.mem.Allocator) void {
     wave_transition_timer = 0.0;
     boss_alive = false;
     boss_spawned_this_wave = false;
+    wave_failed = false;
+    wave_correct_keystrokes = 0;
+    wave_total_keystrokes = 0;
+    wave_final_accuracy = 100;
+    wave_final_wpm = 0;
+    wave_start_time = raylib.GetTime();
     score = 0;
     combo = 0;
+    is_new_high_score = false;
     total_keystrokes = 0;
     correct_keystrokes = 0;
     total_kills = 0;
