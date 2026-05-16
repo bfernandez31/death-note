@@ -57,32 +57,42 @@ There are no lint or type-check commands wired up separately — `zig build` com
 
 - `name: [MAX_INPUT_CHARS + 1]u8` — null-terminated input buffer, max 9 chars.
 - `zombies: [MAX_ZOMBIES]?*Zombie` — fixed pool; `MAX_ZOMBIES = 100`.
-- `spawn_timer` / `spawn_delay` — seconds between spawns (`3.0`).
+- `spawn_timer` — seconds since last zombie spawn; compared against `getWaveConfig(current_wave).spawn_delay` each frame.
 - `is_game_over: bool` — controls update-phase skipping and restart prompt.
+- `current_wave: u32` — active wave number; starts at 1, advances after each wave transition.
+- `wave_kills: u32` / `wave_spawned: u32` — per-wave counters; wave completes when both reach `pool_size`.
+- `is_transitioning: bool` / `transition_timer: f32` — 3-second inter-wave countdown state.
 - `zombie_texture: raylib.Texture2D`, `zombie_kill_sound: raylib.Sound` — loaded once, reused.
 
 ## Data Models
 
-No database or ORM. The only persistent data shape is the `Zombie` struct in `src/main.zig`:
+No database or ORM. The two key data shapes in `src/main.zig` are:
 
 ```zig
 const Zombie = struct {
     x: f32,
     y: f32,
-    speed: f32,
+    speed: f32,          // set from WaveConfig.fall_speed at spawn
     name: [*:0]const u8, // pointer into ZombieNames, zero-terminated
     is_active: bool,
     frame: f32,
-    animationTimer: f32,
+    animation_timer: f32,
+};
+
+const WaveConfig = struct {
+    target_wpm: u32,
+    spawn_delay: f32,
+    fall_speed: f32,
+    pool_size: u32,
 };
 ```
 
-Names come from `ZombieNames` in `src/zombie_names.zig` — a compile-time `[_][*:0]const u8{ ... }` array of 49 short first names. `spawnZombie` picks an index at random from this array; names are never copied, only referenced.
+`WaveConfig` values come from the compile-time `WAVE_TABLE` (waves 1–15) or a scaling formula (waves 16+) via `getWaveConfig(wave: u32)`. Names come from `ZombieNames` in `src/zombie_names.zig` — a compile-time `[_][*:0]const u8{ ... }` array of 49 short first names. `spawnZombie` picks an index at random; names are never copied, only referenced.
 
 ## Testing Patterns
 
 - Testing framework: Zig's built-in test runner (`zig build test`). A `test_step` is wired up in `build.zig` against `src/main.zig` as the root test file.
-- No `test { ... }` blocks currently exist in the source tree — the step is scaffolded but unused.
+- Seven `test { ... }` blocks exist in `src/main.zig`: name-match equality, input-buffer bounds, `getWaveConfig` correctness for waves 1/15/16+, wave completion logic, and animation-frame wrap-around.
 - When adding tests, write them as top-level `test "name" { ... }` blocks inside the module under test (Zig convention). Reachability from `src/main.zig` is required for the existing `test_step` to pick them up; other files only run when imported (transitively) from `src/main.zig`.
 - No end-to-end / GUI testing: the game is exercised manually via `zig build run`.
 
@@ -97,7 +107,7 @@ Observed across `src/main.zig`, `src/zombie_names.zig`, and `build.zig`:
 - **Allocator**: `std.heap.page_allocator` is the sole allocator today. Pass it through as `*std.mem.Allocator` parameters rather than re-fetching it inside helpers.
 - **Optional pointers**: zombies are stored as `?*Zombie` and unwrapped with `if (zombie) |zomb| { … }`. Follow this pattern instead of `.?` force-unwrapping.
 - **C-string interop**: names kept as `[*:0]const u8` (null-terminated) so they can be passed straight to `raylib.DrawText`. When comparing to the input buffer, compute length with a terminator scan and use `std.mem.eql(u8, typed, zomb_name_slice)`.
-- **Magic numbers**: gameplay tunables (`MAX_ZOMBIES`, `MAX_INPUT_CHARS`, `ZOMBIE_FRAME_COUNT`, `spawn_delay`, `screen_width`, `screen_height`) are declared as module-level `const`/`var` at the top of `src/main.zig`. Add new tunables alongside them rather than inlining.
+- **Magic numbers**: gameplay tunables (`MAX_ZOMBIES`, `MAX_INPUT_CHARS`, `ZOMBIE_FRAME_COUNT`, `WAVE_TRANSITION_DURATION`, `WAVE_TABLE`, `screen_width`, `screen_height`) are declared as module-level `const`/`var` at the top of `src/main.zig`. Add new tunables alongside them rather than inlining.
 - **Assets**: loaded by relative path from the working directory (`"assets/zombie-hit.wav"`, `"assets/z_spritesheet.png"`). The game therefore must be run from the repo root, or `zig build run` (which runs from the install directory) with assets copied — keep this in mind when adding new asset loads.
 - **Comments**: short `//` comments near non-obvious game-loop transitions. Avoid doc-comment walls; the code in `src/main.zig` favors inline single-line comments at branch points.
 

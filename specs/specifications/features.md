@@ -15,11 +15,15 @@
   - [F-09 Blinking Cursor](#f-09-blinking-cursor)
   - [F-10 Kill Mechanic](#f-10-kill-mechanic)
   - [F-11 Game-Over Overlay](#f-11-game-over-overlay)
+  - [F-12 Wave HUD](#f-12-wave-hud)
+  - [F-13 Wave Transition](#f-13-wave-transition)
+  - [F-14 Endless Wave Scaling](#f-14-endless-wave-scaling)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
   - [Journey 3: Input Ignored Outside Text Box](#journey-3-input-ignored-outside-text-box)
   - [Journey 4: Buffer Full and Backspace](#journey-4-buffer-full-and-backspace)
+  - [Journey 5: Wave Completion and Transition](#journey-5-wave-completion-and-transition)
 - [State Machines](#state-machines)
   - [Game State](#game-state)
   - [Zombie Lifecycle State](#zombie-lifecycle-state)
@@ -38,12 +42,15 @@ graph TB
         Killing["F-10 Kill Mechanic"]
         GameOver["F-05 Game Over Detection"]
         Restart["F-06 Restart"]
+        WaveSystem["F-14 Wave Progression"]
+        WaveTransition["F-13 Wave Transition"]
     end
 
     subgraph Presentation
         Animation["F-02 Spritesheet Animation"]
         NameLabel["F-03 Name Label"]
         GameOverOverlay["F-11 Game-Over Overlay"]
+        HUD["F-12 Wave HUD"]
     end
 
     subgraph Interaction
@@ -57,10 +64,16 @@ graph TB
     Keyboard --> Killing
     GameOver --> GameOverOverlay
     Restart --> Spawning
+    Restart --> WaveSystem
     Spawning --> Animation
     Spawning --> NameLabel
     TextBox --> Keyboard
     TextBox --> BlinkingCursor
+    WaveSystem --> Spawning
+    WaveSystem --> HUD
+    Killing --> WaveTransition
+    WaveTransition --> WaveSystem
+    WaveTransition --> Keyboard
 ```
 
 ---
@@ -69,27 +82,30 @@ graph TB
 
 ### F-01 Zombie Spawning
 
-**Description.** Every 3.0 seconds the game allocates a new `Zombie` struct on the heap and stores its pointer in the first available `null` slot of the fixed-size `zombies` pool. The zombie is initialised at a random horizontal position, at the top of the screen, with a fixed downward speed and a randomly-chosen display name drawn from the 49-entry `ZombieNames` array. If no free slot exists the spawn attempt is silently discarded.
+**Description.** The game allocates a new `Zombie` struct on the heap and stores its pointer in the first available `null` slot of the fixed-size `zombies` pool. The zombie is initialised at a random horizontal position, at the top of the screen, with the current wave's fall speed, and a randomly-chosen display name drawn from the 49-entry `ZombieNames` array. Spawning fires on a per-wave timer (inherited from `WaveConfig.spawn_delay`) and is capped at the current wave's `pool_size` — once the wave's quota is exhausted no further spawns occur until the next wave. If no free slot exists the spawn attempt is silently retried next frame with the timer held hot.
 
-**User-facing behavior.** New zombies appear at the top of the window approximately every 3 seconds at unpredictable horizontal positions, each labelled with a different first name.
+**User-facing behavior.** New zombies appear at the top of the window at intervals and speeds that increase with each wave. Each wave has a finite number of zombies to spawn.
 
 **System behavior.**
-- `spawn_timer` is incremented each frame with `raylib.GetFrameTime()` (`src/main.zig:109`).
-- When `spawn_timer >= spawn_delay` (3.0 s), `spawnZombie` is called with `try` (`src/main.zig:113`).
-- `spawnZombie` iterates `zombies[0..MAX_ZOMBIES]`; the first `null` slot is filled (`src/main.zig:261–282`).
-- `allocator.create(Zombie)` allocates heap memory; `errdefer allocator.destroy` prevents leaks on failure (`src/main.zig:264–265`).
-- Horizontal position is `intRangeLessThan(u32, 10, 750)` cast to `f32` (`src/main.zig:267`).
-- Name index is `intRangeLessThan(usize, 0, ZombieNames.len)` (`src/main.zig:268`).
-- `spawn_timer` is reset to `0.0` only when a slot was actually claimed; when the pool is full, the timer stays hot so spawns retry next frame as soon as a slot frees.
+- `spawn_timer` is incremented each frame with `raylib.GetFrameTime()` (`src/main.zig:126`).
+- `getWaveConfig(current_wave)` resolves the current wave's `spawn_delay` and `pool_size` each frame (`src/main.zig:123`).
+- When `spawn_timer >= wave_cfg.spawn_delay` AND `wave_spawned < wave_cfg.pool_size`, `spawnZombie` is called (`src/main.zig:129`).
+- On a successful spawn, `spawn_timer = 0.0` and `wave_spawned += 1` (`src/main.zig:132–134`).
+- `spawnZombie` iterates `zombies[0..MAX_ZOMBIES]`; the first `null` slot is filled (`src/main.zig:389–412`).
+- `allocator.create(Zombie)` allocates heap memory; `errdefer allocator.destroy` prevents leaks on failure (`src/main.zig:393`).
+- Horizontal position: `raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)` → [10, 749] (`src/main.zig:395`).
+- Name index: `raylib.GetRandomValue(0, ZombieNames.len - 1)` (`src/main.zig:396`).
+- Spawn speed: `getWaveConfig(current_wave).fall_speed` (`src/main.zig:402`).
 
 **Key source references.**
 - `src/main.zig:7` — `MAX_ZOMBIES = 100`
-- `src/main.zig:21–22` — `spawn_delay`, `spawn_timer`
-- `src/main.zig:109–115` — timer increment and spawn trigger
-- `src/main.zig:260–283` — `spawnZombie` function
+- `src/main.zig:36` — `spawn_timer`
+- `src/main.zig:74–75` — `ZOMBIE_SPAWN_X_MIN`, `ZOMBIE_SPAWN_X_MAX`
+- `src/main.zig:123–134` — timer increment, spawn gate, and spawn trigger
+- `src/main.zig:388–412` — `spawnZombie` function
 - `src/zombie_names.zig:1` — `ZombieNames` array (49 entries)
 
-**Dependencies.** Relies on the `ZombieNames` pool (F-03 for rendering), `std.heap.page_allocator` being available, and the `!is_game_over` guard at `src/main.zig:73`.
+**Dependencies.** Relies on the `ZombieNames` pool (F-03 for rendering), `std.heap.page_allocator` being available, and the `!is_game_over and !is_transitioning` guard at `src/main.zig:103`.
 
 ---
 
@@ -140,22 +156,22 @@ graph TB
 
 ### F-04 Falling Motion
 
-**Description.** Every frame during the update phase, each active zombie's `y` coordinate is incremented by its `speed` value (fixed at 0.5 pixels per frame for all zombies). This moves zombies steadily downward from `y = 0` toward `y = screen_height`.
+**Description.** Every frame during the update phase, each active zombie's `y` coordinate is incremented by its `speed` value. Speed is set at spawn time from the current wave's `fall_speed` parameter (ranging from 0.5 px/frame in wave 1 to 2.0 px/frame in wave 16+) and is never mutated after spawn. This moves zombies steadily downward from `y = 0` toward `y = screen_height` at a rate that increases with each wave.
 
-**User-facing behavior.** Zombies descend at a constant speed from the top of the window toward the bottom.
+**User-facing behavior.** Zombies descend at a constant per-wave speed, falling faster in higher waves.
 
 **System behavior.**
-- `updateZombies()` is called each frame when `!is_game_over` (`src/main.zig:118`).
-- Per-zombie: `zomb.y += zomb.speed` (`src/main.zig:172`).
-- `speed` is always `0.5`; it is set at spawn time and never mutated (`src/main.zig:272`).
-- If a zombie is `!is_active` the loop continues without updating it (`src/main.zig:171`).
+- `updateZombies()` is called each frame when `!is_game_over and !is_transitioning` (`src/main.zig:138`).
+- Per-zombie: `zomb.y += zomb.speed` (`src/main.zig:302`).
+- `speed` is set once at spawn from `getWaveConfig(current_wave).fall_speed` (`src/main.zig:402`) and never mutated.
+- If a zombie is `!is_active` the loop skips it (`src/main.zig:301`).
 
 **Key source references.**
-- `src/main.zig:165–203` — `updateZombies` function
-- `src/main.zig:172` — position increment
-- `src/main.zig:272` — speed initialised at 0.5
+- `src/main.zig:298–332` — `updateZombies` function
+- `src/main.zig:302` — position increment
+- `src/main.zig:402` — speed set from wave config at spawn
 
-**Dependencies.** F-01 (zombies must be spawned and active), F-05 (falling eventually triggers game over).
+**Dependencies.** F-01 (zombies must be spawned and active), F-05 (falling eventually triggers game over), F-14 (wave config determines fall_speed).
 
 ---
 
@@ -182,20 +198,21 @@ graph TB
 
 ### F-06 Restart
 
-**Description.** While the game-over screen is displayed, pressing `KEY_ENTER` resets all mutable game state: the input buffer is cleared, `spawn_timer` is zeroed, `is_game_over` is set to `false`, and `resetZombies` frees and nulls every heap-allocated zombie in the pool.
+**Description.** While the game-over screen is displayed, pressing `KEY_ENTER` resets all mutable game state: the input buffer is cleared, `spawn_timer` is zeroed, wave state is returned to wave 1, `is_game_over` is set to `false`, and `resetZombies` frees and nulls every heap-allocated zombie in the pool.
 
-**User-facing behavior.** The player presses Enter on the game-over screen and the game immediately resumes from a clean state with no zombies on screen.
+**User-facing behavior.** The player presses Enter on the game-over screen and the game immediately restarts from wave 1 with a clean state and no zombies on screen.
 
 **System behavior.**
-- `raylib.IsKeyPressed(raylib.KEY_ENTER)` checked only when `is_game_over` is `true` (`src/main.zig:141`).
-- `letter_count = 0; name[0] = '\x00'` clears the input buffer (`src/main.zig:143–144`).
-- `spawn_timer = 0.0` resets the spawn countdown (`src/main.zig:145`).
-- `resetZombies(&allocator)` iterates all slots: `allocator.destroy(z); zombie.* = null` for every non-null entry (`src/main.zig:285–292`).
-- `is_game_over = false` re-enables the update phase (`src/main.zig:142`).
+- `raylib.IsKeyPressed(raylib.KEY_ENTER)` checked only when `is_game_over` is `true` (`src/main.zig:200`).
+- `is_game_over = false` re-enables the update phase (`src/main.zig:201`).
+- `letter_count = 0; name[letter_count] = '\x00'` clears the input buffer (`src/main.zig:202–203`).
+- `spawn_timer = 0.0` resets the spawn countdown (`src/main.zig:204`).
+- Wave state reset: `current_wave = 1`, `wave_kills = 0`, `wave_spawned = 0`, `is_transitioning = false`, `transition_timer = 0.0` (`src/main.zig:205–209`).
+- `resetZombies(ctx.allocator)` iterates all slots: `allocator.destroy(z); zombie.* = null` for every non-null entry (`src/main.zig:210`).
 
 **Key source references.**
-- `src/main.zig:141–149` — restart branch in main loop
-- `src/main.zig:285–292` — `resetZombies` function
+- `src/main.zig:200–210` — restart branch inside game-over block
+- `src/main.zig:431–438` — `resetZombies` function
 
 **Dependencies.** F-05 (restart is only reachable when game is over), F-11 (overlay must be visible for Enter to be processed here).
 
@@ -203,25 +220,25 @@ graph TB
 
 ### F-07 Text Input
 
-**Description.** Each frame the game reads characters from raylib's key-press queue and appends printable ASCII characters (codepoints 32–125) to the `name` buffer, up to a maximum of 9 characters. Backspace removes the last character. Input is accepted regardless of mouse position; the mouse-over state only controls the cursor icon and the blinking-underscore overlay (F-09).
+**Description.** Each frame the game reads characters from raylib's key-press queue and appends printable ASCII characters (codepoints 32–125) to the `name` buffer, up to a maximum of 9 characters. Backspace removes the last character. Input is accepted regardless of mouse position; the mouse-over state only controls the cursor icon and the blinking-underscore overlay (F-09). Input is entirely disabled during wave transitions.
 
-**User-facing behavior.** The player types and characters appear in the text box. Backspace deletes the last character. Moving the mouse over the text box switches the cursor to an I-beam and shows the blinking underscore, but is not required to type.
+**User-facing behavior.** The player types and characters appear in the text box. Backspace deletes the last character. During the 3-second wave-transition countdown, typing is ignored. Moving the mouse over the text box switches the cursor to an I-beam and shows the blinking underscore, but is not required to type.
 
 **System behavior.**
-- Mouse position checked each frame with `raylib.CheckCollisionPointRec` (`src/main.zig:76`).
-- `mouse_on_text = true` and `MOUSE_CURSOR_IBEAM` set on hover (`src/main.zig:77–78`).
-- `raylib.GetCharPressed()` polled in a `while (key > 0)` loop to drain the frame's key queue (`src/main.zig:80–90`).
-- Guard: `(key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)` (`src/main.zig:84`).
-- `name[letter_count] = @intCast(key)` appends the byte; `name[letter_count + 1] = '\x00'` maintains null termination (`src/main.zig:85–86`).
-- Backspace: `IsKeyPressed(KEY_BACKSPACE) and letter_count > 0` → decrement and re-null-terminate (`src/main.zig:93–96`).
-- Outside text box: `mouse_on_text = false`, `MOUSE_CURSOR_DEFAULT` (`src/main.zig:98–99`), `frames_counter` reset to 0 (`src/main.zig:105`).
+- Mouse position checked each frame with `raylib.CheckCollisionPointRec` (`src/main.zig:89`).
+- `mouse_on_text = true` and `MOUSE_CURSOR_IBEAM` set on hover (`src/main.zig:90–91`); otherwise `false` and `MOUSE_CURSOR_DEFAULT` (`src/main.zig:93–94`).
+- Input processing gated by `if (!is_game_over and !is_transitioning)` (`src/main.zig:103`).
+- `raylib.GetCharPressed()` polled in a `while (key > 0)` loop to drain the frame's key queue (`src/main.zig:107–115`).
+- Guard: `(key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)` (`src/main.zig:109`).
+- `name[letter_count] = @intCast(key)` appends the byte; `name[letter_count + 1] = '\x00'` maintains null termination (`src/main.zig:110–111`).
+- Backspace: `IsKeyPressed(KEY_BACKSPACE) and letter_count > 0` → decrement and re-null-terminate (`src/main.zig:118–120`).
 
 **Key source references.**
 - `src/main.zig:8` — `MAX_INPUT_CHARS = 9`
-- `src/main.zig:14–15` — `name` buffer and `letter_count`
-- `src/main.zig:76–100` — full input handling block
+- `src/main.zig:33–34` — `name` buffer and `letter_count`
+- `src/main.zig:103–121` — full input handling block (gated by `!is_game_over and !is_transitioning`)
 
-**Dependencies.** F-08 (text box rect defined there), F-09 (cursor blink uses `frames_counter` incremented here), F-10 (buffer content drives kill check).
+**Dependencies.** F-08 (text box rect defined there), F-09 (cursor blink uses `frames_counter` incremented here), F-10 (buffer content drives kill check), F-13 (transition disables input).
 
 ---
 
@@ -289,20 +306,86 @@ graph TB
 
 ### F-11 Game-Over Overlay
 
-**Description.** When `is_game_over` is `true`, the normal zombie draw pass is replaced by two centred text strings: `"GAME OVER"` in `RED` at font size 40, and `"Press ENTER to Restart"` in `GRAY` at font size 20, stacked vertically in the middle of the screen.
+**Description.** When `is_game_over` is `true`, the normal zombie draw pass is replaced by four centred text strings: `"GAME OVER"` in `RED` at font size 40, `"Wave reached: N"` in `GRAY` at font size 20, `"Required WPM: N"` in `GRAY` at font size 20, and `"Press ENTER to Restart"` in `GRAY` at font size 20, stacked vertically in the middle of the screen.
 
-**User-facing behavior.** After losing, the player sees a large red game-over message and a grey instruction to press Enter.
+**User-facing behavior.** After losing, the player sees a large red game-over message, the wave they reached and its typing speed requirement, and a grey instruction to press Enter.
 
 **System behavior.**
-- `drawZombies()` is guarded by `else` of the `if (is_game_over)` branch (`src/main.zig:150–153`); it is not called when game is over.
-- `"GAME OVER"` drawn at `(screen_width / 2 - 100, screen_height / 2 - 20)` (`src/main.zig:137`).
-- `"Press ENTER to Restart"` drawn at `(screen_width / 2 - 130, screen_height / 2 + 20)` (`src/main.zig:138`).
+- `drawZombies()` is called only in the `else` branch of the `if (is_game_over) … else if (is_transitioning) … else` chain (`src/main.zig:220–221`); it is not called when the game is over.
+- `"GAME OVER"` drawn at `(screen_width / 2 - 100, screen_height / 2 - 40)` in `RED` (`src/main.zig:187`).
+- `"Wave reached: N"` formatted with `std.fmt.bufPrintZ` and drawn centered via `drawCenteredText` at `y = screen_height / 2 + 5` in `GRAY` (`src/main.zig:190–191`).
+- `"Required WPM: N"` formatted and drawn centered at `y = screen_height / 2 + 30` in `GRAY` (`src/main.zig:194–195`).
+- `"Press ENTER to Restart"` drawn at `(screen_width / 2 - 130, screen_height / 2 + 60)` in `GRAY` (`src/main.zig:197`).
 - Input box and blinking cursor are still rendered (those draw calls are outside the conditional block).
 
 **Key source references.**
-- `src/main.zig:135–153` — game-over conditional block
+- `src/main.zig:186–211` — game-over conditional block
+- `src/main.zig:414–417` — `drawCenteredText` helper
 
-**Dependencies.** F-05 (sets `is_game_over = true`), F-06 (KEY_ENTER check lives inside this same block).
+**Dependencies.** F-05 (sets `is_game_over = true`), F-06 (KEY_ENTER check lives inside this same block), F-14 (wave/WPM values from `getWaveConfig`).
+
+---
+
+### F-12 Wave HUD
+
+**Description.** A single line of text is rendered centered at the top of the screen every frame while the game is not in the game-over state. It shows the current wave number, the wave's target WPM, and the player's kill count against the wave's pool size.
+
+**User-facing behavior.** The player always sees a status line such as `"WAVE 5 — 30 WPM — 7 / 13"` near the top of the screen, updating in real time as they kill zombies.
+
+**System behavior.**
+- Rendered inside the draw phase when `!is_game_over` (`src/main.zig:167`).
+- `getWaveConfig(current_wave)` is called to retrieve `target_wpm` and `pool_size` (`src/main.zig:168`).
+- Text is formatted via `std.fmt.bufPrintZ` into a 64-byte stack buffer (`src/main.zig:170`): `"WAVE {d} — {d} WPM — {d} / {d}"`.
+- Rendered centered at `y = 10`, font size 20, color `DARKGRAY` via `drawCenteredText` (`src/main.zig:171`).
+- `wave_kills` is the live kill counter, incremented in `updateZombies` on each kill (`src/main.zig:327`).
+
+**Key source references.**
+- `src/main.zig:167–172` — HUD draw block
+- `src/main.zig:414–417` — `drawCenteredText` helper
+
+**Dependencies.** F-10 (kill increments `wave_kills`), F-14 (wave config provides WPM and pool size).
+
+---
+
+### F-13 Wave Transition
+
+**Description.** When a wave is complete (all zombies spawned and killed), the game enters a 3-second transition state. During this state no zombies spawn, existing zombies do not move, input is ignored, and a centered countdown message is displayed. When the timer expires the next wave begins automatically.
+
+**User-facing behavior.** After clearing all zombies in a wave, the player sees a message like `"WAVE 2 — 18 WPM challenge — 3..."` that counts down from 3 to 1, then wave 2 begins.
+
+**System behavior.**
+- Wave completion detected when `wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size` (`src/main.zig:141`).
+- On completion: `is_transitioning = true`, `transition_timer = WAVE_TRANSITION_DURATION` (3.0 s) (`src/main.zig:143–144`).
+- Each frame while `is_transitioning`: `transition_timer -= raylib.GetFrameTime()` (`src/main.zig:149`).
+- When `transition_timer <= 0`: `current_wave += 1`, `wave_kills = 0`, `wave_spawned = 0`, `spawn_timer = 0.0`, `is_transitioning = false`, `resetZombies` called (`src/main.zig:151–156`).
+- Transition screen text: `"WAVE {next} — {wpm} WPM challenge — {ceil(timer)}..."` drawn centered at `y = screen_height / 2 - 15`, font size 30, `DARKGRAY` (`src/main.zig:218–219`).
+- Input guard `!is_transitioning` at `src/main.zig:103` prevents keystroke processing during the countdown.
+
+**Key source references.**
+- `src/main.zig:141–144` — wave completion detection and transition start
+- `src/main.zig:148–158` — transition countdown and wave advance
+- `src/main.zig:212–219` — transition screen draw
+
+**Dependencies.** F-01 (spawn halted during transition), F-07 (input gated by `!is_transitioning`), F-12 (HUD hidden during game-over but shown during transition), F-14 (wave config for next wave WPM).
+
+---
+
+### F-14 Endless Wave Scaling
+
+**Description.** Waves 1–15 use explicit difficulty parameters from the `WAVE_TABLE` compile-time array. Waves 16 and beyond use a formula: `target_wpm = 110`, `spawn_delay = 0.66 s`, `fall_speed = 2.0`, and `pool_size = 33 + 2 * (wave - 15)`. This means the game has no hard end — it continues indefinitely with growing zombie pools at maximum speed.
+
+**User-facing behavior.** After wave 15, difficulty stops increasing in speed and spawn rate but the number of zombies per wave grows by two every wave, creating an endurance test.
+
+**System behavior.**
+- `getWaveConfig(wave: u32) WaveConfig` returns `WAVE_TABLE[wave - 1]` for waves 1–15 (`src/main.zig:420`).
+- For `wave > 15` (i.e., `wave > WAVE_TABLE.len`): returns `WaveConfig{ .target_wpm = 110, .spawn_delay = 0.66, .fall_speed = 2.0, .pool_size = 33 + 2 * (wave - 15) }` (`src/main.zig:423–428`).
+- `WAVE_TABLE` is a compile-time `[15]WaveConfig` constant (`src/main.zig:14–30`).
+
+**Key source references.**
+- `src/main.zig:14–30` — `WAVE_TABLE` compile-time array (waves 1–15)
+- `src/main.zig:419–429` — `getWaveConfig` function with scaling formula
+
+**Dependencies.** F-01 (spawn uses `wave_cfg.spawn_delay` and `pool_size`), F-04 (fall speed from `wave_cfg.fall_speed`), F-12 (HUD reads `target_wpm`), F-13 (transition shows next wave WPM).
 
 ---
 
@@ -341,15 +424,16 @@ sequenceDiagram
     participant Game
     participant Zombie
 
-    Zombie->>Game: y advances 0.5px per frame via updateZombies
+    Zombie->>Game: y advances wave fall_speed px/frame via updateZombies
     Game->>Game: zomb.y >= screen_height (450)
     Game->>Game: is_game_over=true, updateZombies returns
-    Game->>Player: Draw "GAME OVER" + "Press ENTER to Restart"
+    Game->>Player: Draw "GAME OVER" + wave reached + WPM + "Press ENTER"
     Player->>Game: IsKeyPressed(KEY_ENTER)
-    Game->>Game: is_game_over=false
+    Game->>Game: is_game_over=false, current_wave=1
+    Game->>Game: wave_kills=0, wave_spawned=0, is_transitioning=false
     Game->>Game: letter_count=0, name[0]=0, spawn_timer=0
     Game->>Game: resetZombies → allocator.destroy each slot
-    Game->>Player: Normal game loop resumes, screen empty
+    Game->>Player: Game restarts at wave 1, screen empty
 ```
 
 ### Journey 3: Input Ignored Outside Text Box
@@ -369,6 +453,26 @@ sequenceDiagram
     Game->>Game: GetCharPressed() never called (inside else branch)
     Note over Game: name buffer unchanged
     Player->>Game: Name never matches any zombie
+```
+
+### Journey 5: Wave Completion and Transition
+
+```mermaid
+sequenceDiagram
+    participant Player
+    participant Game
+
+    Player->>Game: Types and matches last zombie name in wave N
+    Game->>Game: wave_kills += 1 (now equals pool_size)
+    Game->>Game: wave_kills >= pool_size AND wave_spawned >= pool_size
+    Game->>Game: is_transitioning=true, transition_timer=3.0
+    Game->>Player: HUD hidden; show "WAVE N+1 — WPM challenge — 3..."
+    Note over Game: Each frame: transition_timer -= GetFrameTime()
+    Game->>Player: Countdown updates: "...2...", "...1..."
+    Game->>Game: transition_timer <= 0
+    Game->>Game: current_wave += 1, wave_kills=0, wave_spawned=0
+    Game->>Game: spawn_timer=0, is_transitioning=false, resetZombies
+    Game->>Player: New wave begins, HUD shows "WAVE N+1 — WPM — 0 / pool"
 ```
 
 ### Journey 4: Buffer Full and Backspace
@@ -397,9 +501,11 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Playing : main() initialises
-    Playing --> GameOver : zomb.y >= screen_height\n(src/main.zig:175–176)
-    GameOver --> Playing : KEY_ENTER pressed\n(src/main.zig:141–149)
+    [*] --> Playing : main() initialises (wave 1)
+    Playing --> GameOver : zomb.y >= screen_height\n(src/main.zig:305–307)
+    Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\n(src/main.zig:141–144)
+    Transitioning --> Playing : transition_timer <= 0\ncurrent_wave += 1\n(src/main.zig:151–156)
+    GameOver --> Playing : KEY_ENTER pressed\ncurrent_wave reset to 1\n(src/main.zig:200–210)
 ```
 
 ### Zombie Lifecycle State
@@ -450,17 +556,23 @@ There is no pre-computed length field; `updateZombies` scans for `'\x00'` on eve
 **BR-06 — Killed zombies are not freed until restart (intentional memory hold).**
 `zomb.is_active = false` is the only mutation on kill (`src/main.zig:194`). `allocator.destroy` is never called for a killed zombie during normal play. Memory is only reclaimed by `resetZombies` on restart (`src/main.zig:285–292`). All 100 pool slots can therefore be occupied by killed-but-not-freed zombies over a long session.
 
-**BR-07 — Pool full keeps spawn timer hot.**
-`spawnZombie` iterates the pool looking for a `null` slot and returns `true` on claim, `false` when the pool is full. The caller only resets `spawn_timer` on a successful spawn, so a full pool retries every frame until a slot frees instead of silently stalling spawns.
+**BR-07 — Spawn is gated by both pool capacity and wave quota.**
+`spawnZombie` is only called when `spawn_timer >= wave_cfg.spawn_delay AND wave_spawned < wave_cfg.pool_size` (`src/main.zig:129`). Once the wave's full quota has been spawned, no further spawns occur regardless of the timer. Within the quota, if no free slot exists in `zombies[]`, the function returns `false` and the timer stays hot so the next freed slot is filled immediately.
 
 **BR-08 — Spawn x is bounded to [10, 750), not [0, 800).**
 `rng.random().intRangeLessThan(u32, 10, 750)` is used rather than the full screen width, leaving a 10-pixel margin at the left edge and a 50-pixel margin at the right (`src/main.zig:267`).
 
 **BR-09 — Animation uses hardcoded deltaTime, not actual frame time.**
-`drawZombies` sets `const deltaTime = 1.0 / 60.0` (`src/main.zig:206`) rather than calling `raylib.GetFrameTime()`. At frame rates other than 60 FPS the animation speed will be incorrect (too fast above 60 FPS, too slow below).
+`drawZombies` sets `const delta_time = 1.0 / 60.0` (`src/main.zig:335`) rather than calling `raylib.GetFrameTime()`. At frame rates other than 60 FPS the animation speed will be incorrect (too fast above 60 FPS, too slow below).
 
 **BR-10 — Game-over short-circuits remaining zombie updates.**
-`updateZombies` calls `return` immediately after setting `is_game_over = true` (`src/main.zig:177`). Zombies later in the pool array are not advanced or kill-checked on the triggering frame.
+`updateZombies` calls `return` immediately after setting `is_game_over = true` (`src/main.zig:306–307`). Zombies later in the pool array are not advanced or kill-checked on the triggering frame.
 
-**BR-11 — `input_text` and `input_length` are declared but unused (dead state).**
-`var input_text: [MAX_INPUT_CHARS]u8 = undefined` and `var input_length: usize = 0` are declared at module level (`src/main.zig:17–18`) but never read or written after declaration. They are inert globals with no effect on gameplay.
+**BR-11 — Wave kill counter increments on kill, never on spawn.**
+`wave_kills` is incremented only when a zombie's name matches the typed input (`src/main.zig:327`). It does not track how many zombies have spawned — that is `wave_spawned`. Both counters must reach `pool_size` for a wave to be considered complete.
+
+**BR-12 — Input is fully disabled during wave transitions.**
+The `!is_transitioning` guard at `src/main.zig:103` prevents `GetCharPressed` and `IsKeyPressed(KEY_BACKSPACE)` from being called during the 3-second countdown. Characters typed during a transition are silently discarded.
+
+**BR-13 — Wave transition clears all live zombies.**
+`resetZombies` is called at the end of each transition countdown (`src/main.zig:156`), freeing and nulling all heap-allocated zombies. This means any zombies remaining on screen when the transition begins are cleaned up before the next wave starts.

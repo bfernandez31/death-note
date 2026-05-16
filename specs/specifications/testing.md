@@ -35,12 +35,16 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Three `test "..." {}` blocks exist in `src/main.zig`:
+**Current state**: Seven `test "..." {}` blocks exist in `src/main.zig`:
 - `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
 - `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
+- `test "getWaveConfig returns correct values for wave 1"` — verifies wave 1 difficulty parameters
+- `test "getWaveConfig returns correct values for wave 15"` — verifies wave 15 (last explicit) parameters
+- `test "wave completes when kills equals pool size"` — asserts wave completion condition logic
+- `test "getWaveConfig scales correctly for wave 16+"` — verifies endless scaling formula (waves 16, 20, 100)
 - `test "frame index wraps after ZOMBIE_FRAME_COUNT"` — covers animation-frame wrap-around arithmetic
 
-All three are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
+All seven are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
 
 ---
 
@@ -51,7 +55,7 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(3 blocks — name match, input bounds, frame wrap)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(7 blocks — name match, input bounds, wave config×4, frame wrap)"]
     UNIT_NAMES["Unit tests\nsrc/zombie_names.zig\n(0 blocks — reachable via @import)"]
     RAYLIB_ZIG["src/raylib.zig\n(C interop wall — not unit-testable)"]
     INTEGRATION["Integration tests\n(none — requires real raylib window)"]
@@ -74,7 +78,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 3 | Pure-logic tests: name-match equality, input-buffer bounds enforcement, animation-frame wrap-around |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 7 | Pure-logic tests: name-match equality, input-buffer bounds enforcement, wave config correctness (waves 1, 15, 16+), wave completion logic, animation-frame wrap-around |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 
@@ -153,7 +157,7 @@ This is not currently set up and is not required by the project constitution. Un
 
 | Command | Purpose |
 |---|---|
-| `zig build test` | Compile and run all unit tests (uses `src/main.zig` as the root source file for test discovery) |
+| `zig build test` | Compile and run all 7 unit tests (uses `src/main.zig` as the root source file for test discovery) |
 | `zig build --summary all` | Type-check the entire codebase without running it; surfaces type errors and unreachable code |
 | `zig fmt --check .` | Formatting check across all `.zig` files; serves as a lint surrogate (no separate linter is configured) |
 | `zig build` | Full build; also type-checks as a side effect; the primary gate before merging |
