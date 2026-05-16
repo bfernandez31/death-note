@@ -1,35 +1,92 @@
 const std = @import("std");
 const raylib = @import("raylib.zig").c;
 
-// Importing the list of zombie names
 const ZombieNames = @import("zombie_names.zig").ZombieNames;
+const BossPhrases = @import("boss_phrases.zig").BossPhrases;
 
 const MAX_ZOMBIES = 100;
-const MAX_INPUT_CHARS = 9;
+const MAX_INPUT_CHARS = 40;
 
 const ZOMBIE_FRAME_COUNT = 17;
-const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1; // seconds per spritesheet frame
-const ZOMBIE_FALL_SPEED: f32 = 0.5;
+const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1;
 
-// Input buffer for characters
+// Wave system
+const WAVE_TRANSITION_RECAP_DURATION: f32 = 5.0;
+const WAVE_TRANSITION_COUNTDOWN_DURATION: f32 = 3.0;
+const WAVE_TRANSITION_TOTAL_DURATION: f32 = 8.0;
+const BOSS_WAVE_INTERVAL: u32 = 5;
+const BOSS_FALL_SPEED_FACTOR: f32 = 0.5;
+
+// Scoring
+const BASE_KILL_SCORE: u64 = 100;
+const BOSS_KILL_SCORE: u64 = 500;
+const WAVE_COMPLETION_BONUS_PER_WAVE: u64 = 200;
+
+// Difficulty scaling
+const BASE_SPAWN_DELAY: f32 = 3.0;
+const SPAWN_DELAY_DECAY: f32 = 0.85;
+const MIN_SPAWN_DELAY: f32 = 0.5;
+const BASE_FALL_SPEED: f32 = 0.5;
+const FALL_SPEED_GROWTH: f32 = 1.10;
+const MAX_FALL_SPEED: f32 = 2.0;
+const BASE_MAX_ACTIVE: u32 = 5;
+const MAX_ACTIVE_INCREMENT: u32 = 2;
+const CAP_MAX_ACTIVE: u32 = 30;
+const BASE_KILL_TARGET: u32 = 5;
+const KILL_TARGET_INCREMENT: u32 = 2;
+const CAP_KILL_TARGET: u32 = 40;
+const BASE_WAVE_DURATION: f32 = 30.0;
+const WAVE_DURATION_INCREMENT: f32 = 5.0;
+const CAP_WAVE_DURATION: f32 = 120.0;
+
+// Stats
+const WPM_WINDOW_SECONDS: f64 = 30.0;
+const WPM_BUFFER_SIZE: usize = 200;
+
+// High score persistence
+const HIGHSCORE_FILE = "highscore.dat";
+
+// Input buffer
 var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
 var letter_count: usize = 0;
 
-// Delay settings
-const spawn_delay: f32 = 3.0; // Delay in seconds between spawns
-var spawn_timer: f32 = 0.0; // Timer to track time since last spawn
+// Spawn timer
+var spawn_timer: f32 = 0.0;
 
 var is_game_over: bool = false;
 
-// Define the Zombie structure
+// Wave state
+var current_wave: u32 = 1;
+var wave_timer: f32 = 0.0;
+var wave_kill_count: u32 = 0;
+var is_wave_transitioning: bool = false;
+var wave_transition_timer: f32 = 0.0;
+var boss_alive: bool = false;
+
+// Score state
+var score: u64 = 0;
+var combo: u32 = 0;
+var best_score: u64 = 0;
+var best_score_loaded: bool = false;
+
+// Player stats
+var total_keystrokes: u64 = 0;
+var correct_keystrokes: u64 = 0;
+var total_kills: u32 = 0;
+var wpm_kill_times: [WPM_BUFFER_SIZE]f64 = [_]f64{0.0} ** WPM_BUFFER_SIZE;
+var wpm_kill_index: usize = 0;
+var wpm_kill_count: usize = 0;
+
 const Zombie = struct {
     x: f32,
     y: f32,
     speed: f32,
     name: [*:0]const u8,
     is_active: bool,
-    frame: f32, // Current animation frame
+    frame: f32,
     animation_timer: f32,
+    is_boss: bool,
+    phrase_progress: usize,
 };
 
 // Array to hold zombie pointers
@@ -96,7 +153,7 @@ fn frame(ctx: *FrameContext) void {
         spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
 
         // Check if enough time has passed to spawn a new zombie
-        if (spawn_timer >= spawn_delay) {
+        if (spawn_timer >= BASE_SPAWN_DELAY) {
             // Only reset the timer when a slot was actually claimed; if the pool is full,
             // keep trying every frame so a freed slot is reused immediately instead of
             // stalling spawns indefinitely.
@@ -323,11 +380,13 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
             new_zombie.* = Zombie{
                 .x = x,
                 .y = 0.0,
-                .speed = ZOMBIE_FALL_SPEED,
+                .speed = BASE_FALL_SPEED,
                 .name = ZombieNames[name_index],
                 .is_active = true,
                 .frame = 0,
                 .animation_timer = 0,
+                .is_boss = false,
+                .phrase_progress = 0,
             };
             zombies[i] = new_zombie;
             return true;

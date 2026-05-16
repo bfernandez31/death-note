@@ -18,11 +18,11 @@
 
 **Purpose**: Create new data file and declare all new constants, state variables, and struct extensions needed across all user stories.
 
-- [ ] T001 [P] Create boss phrase data table in `src/boss_phrases.zig` following the exact pattern of `src/zombie_names.zig` — a `pub const BossPhrases` array of `[*:0]const u8` containing the 15 curated phrases from data-model.md section 2.6
-- [ ] T002 Declare all new constants and tunables as module-level `const` at the top of `src/main.zig` (grouped by concern: wave system, scoring, difficulty scaling, stats, input, high score persistence) per data-model.md section 4. Update `MAX_INPUT_CHARS` from `9` to `40` and resize the input buffer accordingly
-- [ ] T003 Extend the `Zombie` struct in `src/main.zig` with `is_boss: bool` and `phrase_progress: usize` fields (data-model.md section 2.1). Update `spawnZombie` to initialize these new fields (`is_boss = false`, `phrase_progress = 0`) for normal zombies
-- [ ] T004 Add all new module-level state variables in `src/main.zig`: wave state (data-model.md section 2.2), score state (section 2.4), player stats (section 2.5). Add `@import("boss_phrases.zig")` alongside the existing `ZombieNames` import
-- [ ] T005 Verify `zig build` compiles cleanly with all new declarations (state is declared but not yet wired into the game loop)
+- [x] T001 [P] Create boss phrase data table in `src/boss_phrases.zig` following the exact pattern of `src/zombie_names.zig` — a `pub const BossPhrases` array of `[*:0]const u8` containing the 15 curated phrases from data-model.md section 2.6
+- [x] T002 Declare all new constants and tunables as module-level `const` at the top of `src/main.zig` (grouped by concern: wave system, scoring, difficulty scaling, stats, input, high score persistence) per data-model.md section 4. Update `MAX_INPUT_CHARS` from `9` to `40` and resize the input buffer accordingly
+- [x] T003 Extend the `Zombie` struct in `src/main.zig` with `is_boss: bool` and `phrase_progress: usize` fields (data-model.md section 2.1). Update `spawnZombie` to initialize these new fields (`is_boss = false`, `phrase_progress = 0`) for normal zombies
+- [x] T004 Add all new module-level state variables in `src/main.zig`: wave state (data-model.md section 2.2), score state (section 2.4), player stats (section 2.5). Add `@import("boss_phrases.zig")` alongside the existing `ZombieNames` import
+- [x] T005 Verify `zig build` compiles cleanly with all new declarations (state is declared but not yet wired into the game loop)
 
 **Checkpoint**: Project compiles with all new data structures and constants. No behavior changes yet.
 

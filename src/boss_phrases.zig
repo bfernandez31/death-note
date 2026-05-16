@@ -1,0 +1,17 @@
+pub const BossPhrases = [_][*:0]const u8{
+    "undead apocalypse",
+    "brains for dinner",
+    "rise from the grave",
+    "night of the dead",
+    "zombie horde attacks",
+    "flesh eating fiend",
+    "walking nightmare",
+    "escape the cemetery",
+    "dawn of darkness",
+    "cursed reanimation",
+    "unholy resurrection",
+    "graveyard shift now",
+    "rotting with rage",
+    "shambling menace",
+    "tomb of terror",
+};
