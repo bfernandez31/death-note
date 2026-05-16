@@ -152,6 +152,9 @@ fn frame(ctx: *FrameContext) void {
     if (!is_game_over and !is_transitioning) {
         var typed_this_frame: bool = false;
 
+        // Accept keystrokes regardless of mouse position so players can start typing
+        // immediately on load (especially on web, where focus is on the canvas, not the
+        // text box hit-test rectangle).
         var key = raylib.GetCharPressed();
         while (key > 0) {
             if ((key >= 32) and (key <= 125) and (letter_count < getCurrentMaxInput())) {
@@ -309,8 +312,11 @@ fn frame(ctx: *FrameContext) void {
     } else {
         drawZombies();
         drawBoss();
-        drawPopups();
     }
+    // Popups layer on top of every state so the visual feedback for the kill that
+    // ended the wave (transition branch) or that coincided with the floor-cross
+    // game-over (game_over branch) is never silently dropped.
+    drawPopups();
     // Draw blinking underscore char
     if (ctx.mouse_on_text and letter_count < getCurrentMaxInput() and ((ctx.frames_counter / 20) % 2) == 0) {
         raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, raylib.MAROON);
@@ -596,8 +602,11 @@ fn drawBoss() void {
         raylib.DrawRectangle(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.LIGHTGRAY);
 
         if (boss_phrase_len > 0) {
+            // c_int * usize is not implicitly coercible — promote lengths to c_int for arithmetic.
+            const phrase_len_i: c_int = @intCast(boss_phrase_len);
+            const letter_count_i: c_int = @intCast(letter_count);
             const fill_width: c_int = if (typedIsBossPrefix())
-                @intCast(BOSS_HEALTH_BAR_WIDTH * (boss_phrase_len - letter_count) / boss_phrase_len)
+                @divTrunc(BOSS_HEALTH_BAR_WIDTH * (phrase_len_i - letter_count_i), phrase_len_i)
             else
                 BOSS_HEALTH_BAR_WIDTH;
             raylib.DrawRectangle(bar_x, bar_y, fill_width, BOSS_HEALTH_BAR_HEIGHT, raylib.RED);
