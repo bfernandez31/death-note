@@ -111,16 +111,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Extend tests in `src/main.zig`: add `test "boss wave detection"` verifying `wave % BOSS_WAVE_INTERVAL == 0` is true for waves 5, 10, 15 and false for 1, 3, 7
-- [ ] T034 [P] [US3] Extend tests in `src/main.zig`: add `test "boss fall speed"` verifying boss speed = normal speed * `BOSS_FALL_SPEED_FACTOR` (0.5x)
+- [x] T033 [P] [US3] Extend tests in `src/main.zig`: add `test "boss wave detection"` verifying `wave % BOSS_WAVE_INTERVAL == 0` is true for waves 5, 10, 15 and false for 1, 3, 7
+- [x] T034 [P] [US3] Extend tests in `src/main.zig`: add `test "boss fall speed"` verifying boss speed = normal speed * `BOSS_FALL_SPEED_FACTOR` (0.5x)
 
 ### Implementation for User Story 3
 
-- [ ] T035 [US3] Add boss spawning logic in `src/main.zig`: when `current_wave % BOSS_WAVE_INTERVAL == 0` and `wave_kill_count >= waveKillTarget(current_wave)`, spawn a boss zombie using `spawnZombie` (or a variant) that selects a phrase from `BossPhrases`, sets `is_boss = true`, speed = `waveFallSpeed(current_wave) * BOSS_FALL_SPEED_FACTOR`, and sets `boss_alive = true`
-- [ ] T036 [US3] Modify `updateZombies` in `src/main.zig` to handle boss phrase matching: for boss zombies check if typed buffer matches the first `letter_count` characters of the phrase. If full match → kill boss, clear buffer, set `boss_alive = false`, award `BOSS_KILL_SCORE * comboMultiplier(combo)`. Update `phrase_progress` on each keystroke that extends the match
-- [ ] T037 [US3] Draw boss progress indicator in `drawZombies` in `src/main.zig`: below the boss sprite draw a progress bar (`raylib.DrawRectangle` for background and filled portions) showing `phrase_progress / phrase_length`. Display the phrase text above the boss with typed portion in green and remaining in red
-- [ ] T038 [US3] Wire boss-alive check into wave completion in `src/main.zig`: if boss is alive when timer expires → timer pauses (`wave_timer` stops advancing). Wave cannot transition until `boss_alive == false`
-- [ ] T039 [US3] Verify `zig build` and `zig build test` both pass cleanly
+- [x] T035 [US3] Add boss spawning logic in `src/main.zig`: when `current_wave % BOSS_WAVE_INTERVAL == 0` and `wave_kill_count >= waveKillTarget(current_wave)`, spawn a boss zombie using `spawnZombie` (or a variant) that selects a phrase from `BossPhrases`, sets `is_boss = true`, speed = `waveFallSpeed(current_wave) * BOSS_FALL_SPEED_FACTOR`, and sets `boss_alive = true`
+- [x] T036 [US3] Modify `updateZombies` in `src/main.zig` to handle boss phrase matching: for boss zombies check if typed buffer matches the first `letter_count` characters of the phrase. If full match → kill boss, clear buffer, set `boss_alive = false`, award `BOSS_KILL_SCORE * comboMultiplier(combo)`. Update `phrase_progress` on each keystroke that extends the match
+- [x] T037 [US3] Draw boss progress indicator in `drawZombies` in `src/main.zig`: below the boss sprite draw a progress bar (`raylib.DrawRectangle` for background and filled portions) showing `phrase_progress / phrase_length`. Display the phrase text above the boss with typed portion in green and remaining in red
+- [x] T038 [US3] Wire boss-alive check into wave completion in `src/main.zig`: if boss is alive when timer expires → timer pauses (`wave_timer` stops advancing). Wave cannot transition until `boss_alive == false`
+- [x] T039 [US3] Verify `zig build` and `zig build test` both pass cleanly
 
 **Checkpoint**: Boss zombies appear every 5 waves with phrase typing, progress bar, and wave-blocking. Normal zombies can still cause game-over during boss fights.
 

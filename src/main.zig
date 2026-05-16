@@ -62,6 +62,7 @@ var wave_kill_count: u32 = 0;
 var is_wave_transitioning: bool = false;
 var wave_transition_timer: f32 = 0.0;
 var boss_alive: bool = false;
+var boss_spawned_this_wave: bool = false;
 
 // Score state
 var score: u64 = 0;
@@ -137,6 +138,7 @@ fn frame(ctx: *FrameContext) void {
                 wave_timer = 0.0;
                 is_wave_transitioning = false;
                 wave_transition_timer = 0.0;
+                boss_spawned_this_wave = false;
                 resetZombies(ctx.allocator);
             }
         } else {
@@ -175,7 +177,16 @@ fn frame(ctx: *FrameContext) void {
 
             updateZombies();
 
-            if (wave_kill_count >= waveKillTarget(current_wave) and !boss_alive) {
+            const is_boss_wave = (current_wave % BOSS_WAVE_INTERVAL == 0);
+            const target_met = wave_kill_count >= waveKillTarget(current_wave);
+
+            // Spawn boss when kill target met on boss waves
+            if (is_boss_wave and target_met and !boss_spawned_this_wave) {
+                _ = spawnBoss(ctx.allocator) catch {};
+                boss_spawned_this_wave = true;
+            }
+
+            if (target_met and !boss_alive) {
                 score += WAVE_COMPLETION_BONUS_PER_WAVE * current_wave;
                 is_wave_transitioning = true;
                 wave_transition_timer = 0.0;
@@ -309,6 +320,13 @@ fn updateZombies() void {
             const zomb_name_length = cstrLen(zomb.name);
             const zomb_name_slice = zomb.name[0..zomb_name_length];
 
+            if (zomb.is_boss) {
+                // Boss: update phrase progress based on how many chars match from the start
+                if (letter_count > 0 and std.mem.startsWith(u8, zomb_name_slice, typed_name)) {
+                    zomb.phrase_progress = letter_count;
+                }
+            }
+
             if (std.mem.eql(u8, typed_name, zomb_name_slice)) {
                 zomb.is_active = false;
                 letter_count = 0;
@@ -434,7 +452,8 @@ fn drawZombies() void {
                 .height = @as(f32, @floatFromInt(zombie_texture.height)),
             };
 
-            const scale = 0.2; // Adjust the scale factor to make the zombie smaller
+            const scale: f32 = if (zomb.is_boss) 0.35 else 0.2;
+            const tint = if (zomb.is_boss) raylib.Color{ .r = 200, .g = 50, .b = 50, .a = 255 } else raylib.WHITE;
             raylib.DrawTexturePro(
                 zombie_texture,
                 src_rect,
@@ -444,14 +463,33 @@ fn drawZombies() void {
                     .width = frame_width * scale,
                     .height = @as(f32, @floatFromInt(zombie_texture.height)) * scale,
                 },
-                raylib.Vector2{ .x = 0, .y = 0 }, // Origin for scaling
-                0.0, // Rotation
-                raylib.WHITE,
+                raylib.Vector2{ .x = 0, .y = 0 },
+                0.0,
+                tint,
             );
 
-            // Draw the zombie's name above the zombie
-            const text_pos = raylib.Vector2{ .x = pos.x, .y = pos.y - 20.0 }; // Adjust Y position as needed
-            raylib.DrawText(zomb.name, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y), 20, raylib.DARKGREEN); // Adjust font size and color as needed
+            if (zomb.is_boss) {
+                const phrase_len = cstrLen(zomb.name);
+                const sprite_h = @as(f32, @floatFromInt(zombie_texture.height)) * scale;
+                const bar_y: c_int = @intFromFloat(pos.y + sprite_h + 2.0);
+                const bar_w: c_int = 80;
+                const bar_h: c_int = 6;
+                const bar_x: c_int = @intFromFloat(pos.x);
+
+                // Background
+                raylib.DrawRectangle(bar_x, bar_y, bar_w, bar_h, raylib.LIGHTGRAY);
+                // Filled portion
+                if (phrase_len > 0) {
+                    const fill_f = @as(f32, @floatFromInt(zomb.phrase_progress)) / @as(f32, @floatFromInt(phrase_len));
+                    const fill_w: c_int = @intFromFloat(fill_f * @as(f32, @floatFromInt(bar_w)));
+                    raylib.DrawRectangle(bar_x, bar_y, fill_w, bar_h, raylib.GREEN);
+                }
+
+                // Phrase text above boss
+                raylib.DrawText(zomb.name, @intFromFloat(pos.x), @as(c_int, @intFromFloat(pos.y)) - 20, 16, raylib.RED);
+            } else {
+                raylib.DrawText(zomb.name, @intFromFloat(pos.x), @as(c_int, @intFromFloat(pos.y)) - 20, 20, raylib.DARKGREEN);
+            }
         }
     }
 }
@@ -489,6 +527,34 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
                 .phrase_progress = 0,
             };
             zombies[i] = new_zombie;
+            return true;
+        }
+    }
+    return false;
+}
+
+fn spawnBoss(allocator: *std.mem.Allocator) !bool {
+    for (zombies, 0..) |zombie, i| {
+        if (zombie == null) {
+            const new_zombie = try allocator.create(Zombie);
+            errdefer allocator.destroy(new_zombie);
+
+            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)));
+            const phrase_index: usize = @intCast(raylib.GetRandomValue(0, @intCast(BossPhrases.len - 1)));
+
+            new_zombie.* = Zombie{
+                .x = x,
+                .y = 0.0,
+                .speed = waveFallSpeed(current_wave) * BOSS_FALL_SPEED_FACTOR,
+                .name = BossPhrases[phrase_index],
+                .is_active = true,
+                .frame = 0,
+                .animation_timer = 0,
+                .is_boss = true,
+                .phrase_progress = 0,
+            };
+            zombies[i] = new_zombie;
+            boss_alive = true;
             return true;
         }
     }
@@ -579,6 +645,7 @@ fn resetGameState(allocator: *std.mem.Allocator) void {
     is_wave_transitioning = false;
     wave_transition_timer = 0.0;
     boss_alive = false;
+    boss_spawned_this_wave = false;
     score = 0;
     combo = 0;
     total_keystrokes = 0;
@@ -767,6 +834,22 @@ test "wave completion bonus" {
     try std.testing.expectEqual(@as(u64, 200), WAVE_COMPLETION_BONUS_PER_WAVE * 1);
     try std.testing.expectEqual(@as(u64, 1000), WAVE_COMPLETION_BONUS_PER_WAVE * 5);
     try std.testing.expectEqual(@as(u64, 2000), WAVE_COMPLETION_BONUS_PER_WAVE * 10);
+}
+
+test "boss wave detection" {
+    try std.testing.expect(5 % BOSS_WAVE_INTERVAL == 0);
+    try std.testing.expect(10 % BOSS_WAVE_INTERVAL == 0);
+    try std.testing.expect(15 % BOSS_WAVE_INTERVAL == 0);
+    try std.testing.expect(1 % BOSS_WAVE_INTERVAL != 0);
+    try std.testing.expect(3 % BOSS_WAVE_INTERVAL != 0);
+    try std.testing.expect(7 % BOSS_WAVE_INTERVAL != 0);
+}
+
+test "boss fall speed" {
+    const normal_speed = waveFallSpeed(5);
+    const boss_speed = normal_speed * BOSS_FALL_SPEED_FACTOR;
+    try std.testing.expect(boss_speed < normal_speed);
+    try std.testing.expectApproxEqAbs(normal_speed * 0.5, boss_speed, 0.01);
 }
 
 test "wave state resets on new wave" {
