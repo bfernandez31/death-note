@@ -8,7 +8,7 @@
 - [Testing Patterns](#testing-patterns)
 - [Coverage](#coverage)
 - [Test Commands](#test-commands)
-- [Recommended Initial Tests](#recommended-initial-tests)
+- [Test Coverage Summary](#test-coverage-summary)
 
 ---
 
@@ -35,12 +35,15 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Three `test "..." {}` blocks exist in `src/main.zig`:
-- `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
-- `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
-- `test "frame index wraps after ZOMBIE_FRAME_COUNT"` — covers animation-frame wrap-around arithmetic
+**Current state**: 21 `test "..." {}` blocks exist in `src/main.zig`, covering the following categories:
 
-All three are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
+- **Core mechanics**: name-match equality, input-buffer bounds, frame-index wrap, cstrLen helper
+- **Combo system**: comboMultiplier tier boundaries, score calculation with combo multiplier
+- **Wave system**: waveSpawnDelay, waveFallSpeed, waveMaxActive, waveKillTarget, waveDuration, boss wave detection, boss fall speed, wave state resets, wave transition timer progression, wave completion bonus
+- **Live stats**: calculateWpm, accuracy calculation (accuracyPercent), WPM drops to zero after window expires
+- **Persistence**: high score is monotonic
+
+All 21 are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
 
 ---
 
@@ -51,7 +54,7 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(3 blocks — name match, input bounds, frame wrap)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(21 blocks — core mechanics, combo, waves, stats, persistence)"]
     UNIT_NAMES["Unit tests\nsrc/zombie_names.zig\n(0 blocks — reachable via @import)"]
     RAYLIB_ZIG["src/raylib.zig\n(C interop wall — not unit-testable)"]
     INTEGRATION["Integration tests\n(none — requires real raylib window)"]
@@ -74,7 +77,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 3 | Pure-logic tests: name-match equality, input-buffer bounds enforcement, animation-frame wrap-around |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 21 | Pure-logic tests covering core mechanics (name match, input bounds, frame wrap, cstrLen), combo system (multiplier tiers, score calculation), wave system (spawn delay, fall speed, max active, kill target, duration, boss detection, boss speed, state resets, transition timer, completion bonus), live stats (WPM, accuracy, WPM window expiry), and persistence (high score monotonicity) |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 
@@ -82,11 +85,11 @@ All paths through the automated test system flow through `zig build test` → `b
 
 ## Testing Patterns
 
-The following patterns are established by the codebase and its constitution, even though no `test` blocks have been written yet. They represent the agreed-upon approach for when tests are added.
+The following patterns are established by the codebase and its constitution, demonstrated by the 21 existing test blocks.
 
-### Inline test blocks (scaffolded but unused)
+### Inline test blocks
 
-Zig convention places `test "..." { ... }` blocks directly inside the module under test — not in separate `_test.zig` files. New tests for gameplay logic go into `src/main.zig`; tests for name-array properties go into `src/zombie_names.zig`. No `tests/`, `test/`, `__tests__/`, or `spec/` directory is needed or should be created.
+Zig convention places `test "..." { ... }` blocks directly inside the module under test — not in separate `_test.zig` files. All 21 tests reside in `src/main.zig`; tests for name-array properties go into `src/zombie_names.zig`. No `tests/`, `test/`, `__tests__/`, or `spec/` directory is needed or should be created.
 
 ### Reachability from `src/main.zig`
 
@@ -94,7 +97,7 @@ The `test_step` in `build.zig` specifies `src/main.zig` as the sole `root_source
 
 ### Keeping raylib out of testable helpers
 
-Mocking is not idiomatic in Zig. The preferred approach (per the constitution) is to keep raylib calls out of pure-logic helpers and unit-test those helpers in isolation. For example, the name-matching logic in `updateZombies` (lines 180–200 of `src/main.zig`) could be extracted into a standalone function that takes only a typed-name slice and a zombie-name pointer — that function would have no raylib dependency and could be tested directly. Any function that calls `raylib.*` symbols cannot run in the test binary without a live window and audio device.
+Mocking is not idiomatic in Zig. The preferred approach (per the constitution) is to keep raylib calls out of pure-logic helpers and unit-test those helpers in isolation. All 21 tests demonstrate this pattern — they exercise pure helper functions (`comboMultiplier`, `waveSpawnDelay`, `waveFallSpeed`, `waveMaxActive`, `waveKillTarget`, `waveDuration`, `calculateWpm`, `isValidPrefix`, `cstrLen`, `accuracyPercent`) directly, with no raylib dependency. Any function that calls `raylib.*` symbols cannot run in the test binary without a live window and audio device.
 
 ### Test data setup
 
@@ -162,18 +165,16 @@ All commands are run from the repository root. The `test` and `type_check` comma
 
 ---
 
-## Recommended Initial Tests
+## Test Coverage Summary
 
-The highest-leverage test blocks to add, given the current codebase:
+The 21 test blocks in `src/main.zig` cover the following pure-logic surfaces:
 
-- **`test "ZombieNames is non-empty and all entries are non-empty"` in `src/zombie_names.zig`**: assert `ZombieNames.len > 0` and that every entry has at least one non-null byte. This is a pure compile-time-array property test with zero dependencies. `src/zombie_names.zig` is already transitively reachable from `src/main.zig`, so no import change is needed. If reachability ever breaks, adding `_ = @import("zombie_names.zig");` to `src/main.zig` restores it.
+| Category | Tests | Functions / logic under test |
+|---|---|---|
+| Core mechanics | 4 | Name-match equality via `std.mem.eql`, input-buffer bounds (printable-ASCII gate, 40-char cap), frame-index wrap-around, `cstrLen` null-terminator scan |
+| Combo system | 2 | `comboMultiplier` tier boundaries (1×, 2×, 4×, 8×), score calculation with combo multiplier applied |
+| Wave system | 9 | `waveSpawnDelay` decreasing by wave, `waveFallSpeed` increasing by wave, `waveMaxActive` scaling, `waveKillTarget` scaling, `waveDuration` scaling, boss wave detection (every 5th wave), boss fall speed, wave state resets on transition, wave transition timer progression, wave completion bonus |
+| Live stats | 3 | `calculateWpm` words-per-minute from keystroke timestamps, `accuracyPercent` from hits/total, WPM drops to zero after the rolling window expires |
+| Persistence | 1 | High score value is monotonically non-decreasing (never drops below stored value) |
 
-- **`test "name match accepts byte-exact slice"` in `src/main.zig`**: exercise the `std.mem.eql(u8, typed_name, zomb_name_slice)` path directly by constructing a fixed `[*:0]const u8` zombie name, scanning it to a slice, constructing an identical `[]u8` typed-name buffer, and asserting equality. Then assert a one-character-off input does not match. This tests the core win condition without touching raylib.
-
-- **`test "C-string length scan stops at null terminator"` in `src/main.zig`**: replicate the `while (zomb.name[zomb_name_length] != '\x00')` loop from `updateZombies` as a standalone helper and assert it returns the correct length for known names (e.g. `"Zane"` → 4). This pins the boundary behavior that the match logic depends on.
-
-- **`test "spawnZombie writes into first null slot"` in `src/main.zig`**: initialize a local `[MAX_ZOMBIES]?*Zombie` array to all-null, call `spawnZombie` with `std.testing.allocator` and a deterministically seeded PRNG (`std.Random.DefaultPrng.init(0)`), and assert that exactly one slot is non-null and `is_active = true`. Call `resetZombies` at the end to satisfy the leak detector.
-
-- **`test "resetZombies nulls all slots"` in `src/main.zig`**: after calling `spawnZombie` one or more times with `std.testing.allocator`, call `resetZombies` and assert every slot in the array is `null`. This exercises the paired alloc/free lifecycle and confirms no use-after-free or missed slot.
-
-Note: none of the above tests reference `raylib.*` symbols. Any test block that calls `raylib.InitWindow`, `raylib.LoadSound`, or any other raylib API will fail to run in a headless CI environment because it requires a real window and audio device. Keep raylib strictly out of the testable helper surface.
+All tests are pure-logic with no raylib dependency. Any function that calls `raylib.*` symbols cannot run in the test binary without a live window and audio device — keep raylib strictly out of the testable helper surface.

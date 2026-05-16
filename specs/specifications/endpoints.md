@@ -97,7 +97,19 @@ defer raylib.UnloadTexture(zombie_texture);           // src/main.zig:61
 | `assets/spritesheet.png` | Present on disk; distinct from `z_spritesheet.png`; unreferenced |
 | `assets/JetBrainsMonoNerdFont-Thin.ttf` | Present on disk; no `LoadFont` call references it |
 
-All asset reads are **read-only** and occur at process startup. No asset is written, created, or modified at runtime.
+All asset reads are **read-only** and occur at process startup.
+
+**Runtime persistence — high score file:**
+
+| Item | Detail |
+|---|---|
+| Path (native) | `highscore.dat` — relative to working directory |
+| Read | `fopen("highscore.dat", "rb")` at startup; reads 8 bytes as a little-endian `u64`. If the file does not exist or the read fails, the high score defaults to zero. |
+| Write | `fopen("highscore.dat", "wb")` on game over; writes the current high score as an 8-byte little-endian `u64`. Only written when the new score exceeds the stored value. |
+| I/O API | C stdio functions (`fopen`, `fread`, `fwrite`, `fclose`) imported through `src/raylib.zig` — not Zig's `std.fs`. |
+| Path (web/WASM) | `localStorage.getItem('death-note-highscore')` / `localStorage.setItem(...)` via `emscripten_run_script_int` / `emscripten_run_script`. No filesystem access on the web target. |
+
+This file is **not** a bundled asset — it is runtime-generated persistence created on first game-over.
 
 ### 2.3 User Input Surface
 
@@ -116,7 +128,7 @@ Input is polled every frame inside the main game loop (`src/main.zig:71`). Input
 
 | Key / range | raylib call | Location | Effect |
 |---|---|---|---|
-| Printable ASCII 32–125 | `raylib.GetCharPressed()` (polled in a loop) | `src/main.zig:80–90` | Appends character to `name[]` buffer; null-terminates; rejects input beyond `MAX_INPUT_CHARS` (9) |
+| Printable ASCII 32–125 | `raylib.GetCharPressed()` (polled in a loop) | `src/main.zig:80–90` | Appends character to `name[]` buffer; null-terminates; rejects input beyond `MAX_INPUT_CHARS` (40) |
 | `KEY_BACKSPACE` | `raylib.IsKeyPressed(raylib.KEY_BACKSPACE)` | `src/main.zig:93` | Removes last character from `name[]`; null-terminates |
 
 **Keyboard input (active only when `is_game_over`):**
@@ -127,9 +139,9 @@ Input is polled every frame inside the main game loop (`src/main.zig:71`). Input
 
 **Input buffer constraints:**
 
-- Buffer: `var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1)` — 10 bytes, always null-terminated.
-- Maximum typed length: 9 characters (`MAX_INPUT_CHARS = 9`, `src/main.zig:8`).
-- Match check: performed each frame in `updateZombies` (`src/main.zig:193`) via `std.mem.eql(u8, typed_name, zomb_name_slice)`.
+- Buffer: `var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1)` — 41 bytes, always null-terminated.
+- Maximum typed length: 40 characters (`MAX_INPUT_CHARS = 40`, `src/main.zig`).
+- Match check: performed each frame in `updateZombies` via `std.mem.eql(u8, typed_name, zomb_name_slice)`.
 
 ### 2.4 Audio Output
 
@@ -186,7 +198,7 @@ For the in-memory data shape of the `Zombie` struct (the only persistent runtime
 
 ## 6. Input Flow Diagram
 
-The diagram below substitutes for a conventional API sequence diagram. It traces the path from a user keystroke through to either a zombie kill (with audio feedback) or a game-over condition.
+The diagram below substitutes for a conventional API sequence diagram. It traces the path from a user keystroke through prefix validation, combo tracking, score calculation with combo multiplier, and game-over conditions.
 
 ```mermaid
 sequenceDiagram
@@ -194,34 +206,45 @@ sequenceDiagram
     participant OS as OS / raylib event queue
     participant Loop as main game loop
     participant Input as Input handler
+    participant Prefix as isValidPrefix()
     participant Buffer as name[] buffer
     participant Update as updateZombies()
+    participant Combo as Combo tracker
+    participant Score as Score / High Score
     participant Audio as raylib audio device
 
     User->>OS: Physical keystroke (printable ASCII 32–125)
     OS->>Loop: raylib polls via GetCharPressed() each frame
     Loop->>Input: mouse_on_text == true AND !is_game_over
-    Input->>Buffer: Append character; null-terminate (src/main.zig:85–87)
+    Input->>Prefix: isValidPrefix(candidate) — check if any active zombie name starts with the typed text
+    alt Prefix matches at least one active zombie
+        Prefix->>Buffer: Append character; null-terminate
+    else No zombie name has this prefix
+        Prefix->>Input: Character rejected (not appended)
+    end
     Buffer->>Update: typed_name slice = name[0..letter_count]
 
-    alt Typed name matches a zombie's name
-        Update->>Update: zomb.is_active = false (src/main.zig:194)
-        Update->>Buffer: Reset: letter_count = 0, name[0] = 0 (src/main.zig:195–196)
-        Update->>Audio: raylib.PlaySound(zombie_kill_sound) (src/main.zig:199)
+    alt Typed name matches a zombie's name exactly
+        Update->>Update: zomb.is_active = false
+        Update->>Combo: Increment combo_count
+        Combo->>Score: Award points = base_score × comboMultiplier(combo_count)
+        Update->>Buffer: Reset: letter_count = 0, name[0] = 0
+        Update->>Audio: raylib.PlaySound(zombie_kill_sound)
         Audio-->>User: WAV playback via system audio device
     else Zombie reaches screen_height (y >= 450)
-        Update->>Loop: is_game_over = true (src/main.zig:176)
-        Loop-->>User: Renders "GAME OVER" + "Press ENTER to Restart" (src/main.zig:137–138)
+        Update->>Loop: is_game_over = true
+        Loop->>Score: Persist high score if new score > stored value (highscore.dat / localStorage)
+        Loop-->>User: Renders game-over stats screen (score, WPM, accuracy, high score)
     else No match yet
         Update->>Loop: Continue next frame; zombie y += speed
     end
 
     opt User presses KEY_BACKSPACE
-        Input->>Buffer: letter_count -= 1; null-terminate (src/main.zig:94–96)
+        Input->>Buffer: letter_count -= 1; null-terminate
     end
 
     opt is_game_over AND User presses KEY_ENTER
-        Loop->>Loop: is_game_over = false; reset state (src/main.zig:142–149)
-        Loop->>Loop: resetZombies() — free all heap Zombie structs (src/main.zig:148)
+        Loop->>Loop: is_game_over = false; reset state
+        Loop->>Loop: resetZombies() — free all heap Zombie structs
     end
 ```
