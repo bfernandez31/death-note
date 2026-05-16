@@ -217,8 +217,41 @@ fn frame(ctx: *FrameContext) void {
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
 
     if (is_game_over) {
-        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 20, 40, raylib.RED);
-        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 20, 20, raylib.GRAY);
+        // Save high score on first frame of game over
+        if (score > best_score) {
+            best_score = score;
+            best_score_loaded = true;
+            saveHighScore(score);
+        }
+
+        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 100, 40, raylib.RED);
+
+        if (score >= best_score and score > 0) {
+            raylib.DrawText("New High Score!", screen_width / 2 - 80, screen_height / 2 - 60, 20, raylib.ORANGE);
+        }
+
+        var wave_buf: [32]u8 = undefined;
+        const wave_text = std.fmt.bufPrint(&wave_buf, "Wave: {}", .{current_wave}) catch "Wave: --";
+        raylib.DrawText(@ptrCast(wave_text.ptr), screen_width / 2 - 80, screen_height / 2 - 30, 20, raylib.DARKGRAY);
+
+        var score_buf: [32]u8 = undefined;
+        const score_text = std.fmt.bufPrint(&score_buf, "Score: {}", .{score}) catch "Score: --";
+        raylib.DrawText(@ptrCast(score_text.ptr), screen_width / 2 - 80, screen_height / 2 - 5, 20, raylib.DARKGRAY);
+
+        var best_buf: [32]u8 = undefined;
+        const best_text = std.fmt.bufPrint(&best_buf, "Best: {}", .{best_score}) catch "Best: --";
+        raylib.DrawText(@ptrCast(best_text.ptr), screen_width / 2 - 80, screen_height / 2 + 20, 20, raylib.DARKGRAY);
+
+        const accuracy: u64 = if (total_keystrokes > 0) (correct_keystrokes * 100) / total_keystrokes else 100;
+        var acc_buf: [32]u8 = undefined;
+        const acc_text = std.fmt.bufPrint(&acc_buf, "Accuracy: {}%", .{accuracy}) catch "Accuracy: --%";
+        raylib.DrawText(@ptrCast(acc_text.ptr), screen_width / 2 - 80, screen_height / 2 + 45, 20, raylib.DARKGRAY);
+
+        var kills_buf: [32]u8 = undefined;
+        const kills_text = std.fmt.bufPrint(&kills_buf, "Kills: {}", .{total_kills}) catch "Kills: --";
+        raylib.DrawText(@ptrCast(kills_text.ptr), screen_width / 2 - 80, screen_height / 2 + 70, 20, raylib.DARKGRAY);
+
+        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 105, 20, raylib.GRAY);
 
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
             resetGameState(ctx.allocator);
@@ -273,7 +306,13 @@ pub fn main() !void {
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
 
-    raylib.SetTargetFPS(60); // Set target frames per second
+    raylib.SetTargetFPS(60);
+
+    const loaded = loadHighScore();
+    if (loaded > 0) {
+        best_score = loaded;
+        best_score_loaded = true;
+    }
 
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
@@ -561,6 +600,36 @@ fn spawnBoss(allocator: *std.mem.Allocator) !bool {
     return false;
 }
 
+fn loadHighScore() u64 {
+    if (comptime @import("builtin").target.os.tag == .emscripten) {
+        const val = raylib.emscripten_run_script_int("(function(){var v=localStorage.getItem('death-note-highscore');return v?parseInt(v,10)||0:0;})()");
+        return if (val > 0) @intCast(val) else 0;
+    } else {
+        const fp = raylib.fopen(HIGHSCORE_FILE, "rb") orelse return 0;
+        defer _ = raylib.fclose(fp);
+        var buf: [8]u8 = undefined;
+        const n = raylib.fread(&buf, 1, 8, fp);
+        if (n < 8) return 0;
+        return std.mem.readInt(u64, &buf, .little);
+    }
+}
+
+fn saveHighScore(s: u64) void {
+    if (comptime @import("builtin").target.os.tag == .emscripten) {
+        var js_buf: [128]u8 = undefined;
+        const js = std.fmt.bufPrint(&js_buf, "localStorage.setItem('death-note-highscore','{}')", .{s}) catch return;
+        if (js.len < js_buf.len) {
+            js_buf[js.len] = 0;
+            raylib.emscripten_run_script(@ptrCast(&js_buf));
+        }
+    } else {
+        const fp = raylib.fopen(HIGHSCORE_FILE, "wb") orelse return;
+        defer _ = raylib.fclose(fp);
+        const bytes = std.mem.toBytes(std.mem.nativeTo(u64, s, .little));
+        _ = raylib.fwrite(&bytes, 1, 8, fp);
+    }
+}
+
 fn cstrLen(s: [*:0]const u8) usize {
     var len: usize = 0;
     while (s[len] != '\x00') len += 1;
@@ -834,6 +903,27 @@ test "wave completion bonus" {
     try std.testing.expectEqual(@as(u64, 200), WAVE_COMPLETION_BONUS_PER_WAVE * 1);
     try std.testing.expectEqual(@as(u64, 1000), WAVE_COMPLETION_BONUS_PER_WAVE * 5);
     try std.testing.expectEqual(@as(u64, 2000), WAVE_COMPLETION_BONUS_PER_WAVE * 10);
+}
+
+test "high score is monotonic" {
+    const old_best = best_score;
+    defer best_score = old_best;
+
+    best_score = 100;
+    // Score lower than best: should not update
+    const lower: u64 = 50;
+    if (lower > best_score) best_score = lower;
+    try std.testing.expectEqual(@as(u64, 100), best_score);
+
+    // Score higher than best: should update
+    const higher: u64 = 200;
+    if (higher > best_score) best_score = higher;
+    try std.testing.expectEqual(@as(u64, 200), best_score);
+
+    // Equal score: should not update (strict >)
+    const equal: u64 = 200;
+    if (equal > best_score) best_score = equal;
+    try std.testing.expectEqual(@as(u64, 200), best_score);
 }
 
 test "boss wave detection" {

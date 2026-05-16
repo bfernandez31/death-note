@@ -134,16 +134,16 @@
 
 ### Tests for User Story 4
 
-- [ ] T040 [P] [US4] Extend tests in `src/main.zig`: add `test "high score is monotonic"` verifying that `best_score` only updates when `score > best_score` and never decrements
+- [x] T040 [P] [US4] Extend tests in `src/main.zig`: add `test "high score is monotonic"` verifying that `best_score` only updates when `score > best_score` and never decrements
 
 ### Implementation for User Story 4
 
-- [ ] T041 [US4] Expand the game-over screen drawing in `frame()` in `src/main.zig`: display wave reached (`current_wave`), final score (`score`), best score (`best_score` with "New High Score!" if applicable), average WPM, accuracy (`(correct_keystrokes * 100) / total_keystrokes`), and total kills (`total_kills`) using `raylib.DrawText`
-- [ ] T042 [US4] Implement `loadHighScore() u64` in `src/main.zig` per contracts/high-score-persistence.md: native path uses `std.fs.cwd().openFile` to read 8-byte LE u64 from `HIGHSCORE_FILE` (return 0 on error); web path uses `emscripten_run_script_int` via `raylib` import. Gate with `comptime builtin.target.os.tag == .emscripten`
-- [ ] T043 [US4] Implement `saveHighScore(score: u64) void` in `src/main.zig` per contracts/high-score-persistence.md: native path uses `std.fs.cwd().createFile` to write 8-byte LE u64 to `HIGHSCORE_FILE`; web path uses `emscripten_run_script` for `localStorage.setItem`. Errors silently ignored (FR-022)
-- [ ] T044 [US4] Call `loadHighScore()` once during startup in `main()` in `src/main.zig` (after raylib init, before game loop). Set `best_score` and `best_score_loaded = true` on success
-- [ ] T045 [US4] Call `saveHighScore(score)` in the game-over handler in `src/main.zig` when `score > best_score`. Update `best_score = score` in memory. Wire into `resetGameState` to ensure `best_score` and `best_score_loaded` are NOT reset on restart
-- [ ] T046 [US4] Verify `zig build` and `zig build test` both pass cleanly
+- [x] T041 [US4] Expand the game-over screen drawing in `frame()` in `src/main.zig`: display wave reached (`current_wave`), final score (`score`), best score (`best_score` with "New High Score!" if applicable), average WPM, accuracy (`(correct_keystrokes * 100) / total_keystrokes`), and total kills (`total_kills`) using `raylib.DrawText`
+- [x] T042 [US4] Implement `loadHighScore() u64` in `src/main.zig` per contracts/high-score-persistence.md: native path uses `std.fs.cwd().openFile` to read 8-byte LE u64 from `HIGHSCORE_FILE` (return 0 on error); web path uses `emscripten_run_script_int` via `raylib` import. Gate with `comptime builtin.target.os.tag == .emscripten`
+- [x] T043 [US4] Implement `saveHighScore(score: u64) void` in `src/main.zig` per contracts/high-score-persistence.md: native path uses `std.fs.cwd().createFile` to write 8-byte LE u64 to `HIGHSCORE_FILE`; web path uses `emscripten_run_script` for `localStorage.setItem`. Errors silently ignored (FR-022)
+- [x] T044 [US4] Call `loadHighScore()` once during startup in `main()` in `src/main.zig` (after raylib init, before game loop). Set `best_score` and `best_score_loaded = true` on success
+- [x] T045 [US4] Call `saveHighScore(score)` in the game-over handler in `src/main.zig` when `score > best_score`. Update `best_score = score` in memory. Wire into `resetGameState` to ensure `best_score` and `best_score_loaded` are NOT reset on restart
+- [x] T046 [US4] Verify `zig build` and `zig build test` both pass cleanly
 
 **Checkpoint**: Game-over screen shows full stats. High score persists across sessions on both native and web.
 
