@@ -18,7 +18,7 @@
 
 **Purpose**: Create the boss phrase data file following the existing `src/zombie_names.zig` pattern.
 
-- [ ] T001 [P] Create `src/boss_phrases.zig` with `pub const BossPhrases` — a `[10][*:0]const u8` array of 10 lowercase phrases with spaces, all within 35 characters, following the `src/zombie_names.zig` pattern. Phrases: "the dead walk again", "bones remember every step", "silence feeds the horde", "no grave holds them long", "they rise when sun falls", "cold hands reach for you", "the earth spits them out", "shadows crawl at midnight", "a whisper wakes the dead", "run before they find you"
+- [x] T001 [P] Create `src/boss_phrases.zig` with `pub const BossPhrases` — a `[10][*:0]const u8` array of 10 lowercase phrases with spaces, all within 35 characters, following the `src/zombie_names.zig` pattern. Phrases: "the dead walk again", "bones remember every step", "silence feeds the horde", "no grave holds them long", "they rise when sun falls", "cold hands reach for you", "the earth spits them out", "shadows crawl at midnight", "a whisper wakes the dead", "run before they find you"
 
 **Checkpoint**: New file compiles — `zig build` succeeds
 
@@ -30,11 +30,11 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 Add `BossPhrases` import and boss constants at the top of `src/main.zig` (alongside existing constants at lines 7-12): `const BossPhrases = @import("boss_phrases.zig").BossPhrases;`, `const MAX_BOSS_INPUT_CHARS = 35;`, `const BOSS_SCALE: f32 = 0.4;`, `const BOSS_SPEED_MULTIPLIER: f32 = 0.5;`, `const BOSS_HEALTH_BAR_WIDTH: c_int = 200;`, `const BOSS_HEALTH_BAR_HEIGHT: c_int = 8;`
-- [ ] T003 Enlarge input buffer in `src/main.zig` (line 40): change `var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1)` to `var name = [_]u8{0} ** (MAX_BOSS_INPUT_CHARS + 1)` so the buffer can hold boss phrases
-- [ ] T004 Add boss state module-level variables after `transition_timer` (line 50) in `src/main.zig`: `var boss: ?*Zombie = null;`, `var boss_spawned_this_wave: bool = false;`, `var boss_phrase_len: usize = 0;`
-- [ ] T005 Add `getCurrentMaxInput() usize` helper function in `src/main.zig`: returns `MAX_BOSS_INPUT_CHARS` when `boss != null`, else `MAX_INPUT_CHARS`
-- [ ] T006 Add `resetBoss(allocator: *std.mem.Allocator) void` function in `src/main.zig`: if `boss` is non-null, destroy it and set `boss = null`; reset `boss_spawned_this_wave = false` and `boss_phrase_len = 0`
+- [x] T002 Add `BossPhrases` import and boss constants at the top of `src/main.zig` (alongside existing constants at lines 7-12): `const BossPhrases = @import("boss_phrases.zig").BossPhrases;`, `const MAX_BOSS_INPUT_CHARS = 35;`, `const BOSS_SCALE: f32 = 0.4;`, `const BOSS_SPEED_MULTIPLIER: f32 = 0.5;`, `const BOSS_HEALTH_BAR_WIDTH: c_int = 200;`, `const BOSS_HEALTH_BAR_HEIGHT: c_int = 8;`
+- [x] T003 Enlarge input buffer in `src/main.zig` (line 40): change `var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1)` to `var name = [_]u8{0} ** (MAX_BOSS_INPUT_CHARS + 1)` so the buffer can hold boss phrases
+- [x] T004 Add boss state module-level variables after `transition_timer` (line 50) in `src/main.zig`: `var boss: ?*Zombie = null;`, `var boss_spawned_this_wave: bool = false;`, `var boss_phrase_len: usize = 0;`
+- [x] T005 Add `getCurrentMaxInput() usize` helper function in `src/main.zig`: returns `MAX_BOSS_INPUT_CHARS` when `boss != null`, else `MAX_INPUT_CHARS`
+- [x] T006 Add `resetBoss(allocator: *std.mem.Allocator) void` function in `src/main.zig`: if `boss` is non-null, destroy it and set `boss = null`; reset `boss_spawned_this_wave = false` and `boss_phrase_len = 0`
 
 **Checkpoint**: Foundation ready — `zig build test` passes, all user stories can now proceed sequentially
 

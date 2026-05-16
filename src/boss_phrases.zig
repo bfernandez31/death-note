@@ -1,0 +1,1 @@
+pub const BossPhrases = [_][*:0]const u8{ "the dead walk again", "bones remember every step", "silence feeds the horde", "no grave holds them long", "they rise when sun falls", "cold hands reach for you", "the earth spits them out", "shadows crawl at midnight", "a whisper wakes the dead", "run before they find you" };

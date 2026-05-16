@@ -3,9 +3,15 @@ const raylib = @import("raylib.zig").c;
 
 // Importing the list of zombie names
 const ZombieNames = @import("zombie_names.zig").ZombieNames;
+const BossPhrases = @import("boss_phrases.zig").BossPhrases;
 
 const MAX_ZOMBIES = 100;
 const MAX_INPUT_CHARS = 9;
+const MAX_BOSS_INPUT_CHARS = 35;
+const BOSS_SCALE: f32 = 0.4;
+const BOSS_SPEED_MULTIPLIER: f32 = 0.5;
+const BOSS_HEALTH_BAR_WIDTH: c_int = 200;
+const BOSS_HEALTH_BAR_HEIGHT: c_int = 8;
 
 const ZOMBIE_FRAME_COUNT = 17;
 const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1; // seconds per spritesheet frame
@@ -37,7 +43,7 @@ const WAVE_TABLE = [_]WaveConfig{
 };
 
 // Input buffer for characters
-var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
+var name = [_]u8{0} ** (MAX_BOSS_INPUT_CHARS + 1);
 var letter_count: usize = 0;
 
 var spawn_timer: f32 = 0.0;
@@ -48,6 +54,10 @@ var wave_kills: u32 = 0;
 var wave_spawned: u32 = 0;
 var is_transitioning: bool = false;
 var transition_timer: f32 = 0.0;
+
+var boss: ?*Zombie = null;
+var boss_spawned_this_wave: bool = false;
+var boss_phrase_len: usize = 0;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -433,6 +443,19 @@ fn getWaveConfig(wave: u32) WaveConfig {
         .fall_speed = 2.0,
         .pool_size = 33 + 2 * (wave - 15),
     };
+}
+
+fn getCurrentMaxInput() usize {
+    return if (boss != null) MAX_BOSS_INPUT_CHARS else MAX_INPUT_CHARS;
+}
+
+fn resetBoss(allocator: *std.mem.Allocator) void {
+    if (boss) |b| {
+        allocator.destroy(b);
+        boss = null;
+    }
+    boss_spawned_this_wave = false;
+    boss_phrase_len = 0;
 }
 
 fn resetZombies(allocator: *std.mem.Allocator) void {
