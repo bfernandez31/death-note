@@ -18,9 +18,9 @@
 
 **Purpose**: Add all new constants, the `ScorePopup` struct, and module-level state variables needed by every user story.
 
-- [ ] T001 Add scoring, combo, and popup constants after existing constants (line ~20) in `src/main.zig`: `MAX_POPUPS = 32`, `POPUP_DURATION: f32 = 0.5`, `POPUP_RISE_PX: f32 = 30.0`, `SCORE_HUD_X: c_int = 10`, `SCORE_HUD_Y: c_int = 5`, `SCORE_HUD_SIZE: c_int = 24`, `COMBO_HUD_X: c_int = 10`, `COMBO_HUD_Y: c_int = 35`, `COMBO_HUD_SIZE: c_int = 18`, `POPUP_FONT_SIZE: c_int = 20`, `BOSS_TYPE_MULTIPLIER: f32 = 3.0`, `STANDARD_TYPE_MULTIPLIER: f32 = 1.0`
-- [ ] T002 Add `ScorePopup` struct definition after the `Zombie` struct in `src/main.zig`: fields `x: f32`, `y: f32`, `points: u64`, `timer: f32`, `active: bool`
-- [ ] T003 Add module-level state variables after existing game state vars (~line 62) in `src/main.zig`: `var score: u64 = 0`, `var combo_count: u32 = 0`, `var popups: [MAX_POPUPS]ScorePopup` (initialized to all-inactive), `var popup_next: usize = 0`
+- [x] T001 Add scoring, combo, and popup constants after existing constants (line ~20) in `src/main.zig`: `MAX_POPUPS = 32`, `POPUP_DURATION: f32 = 0.5`, `POPUP_RISE_PX: f32 = 30.0`, `SCORE_HUD_X: c_int = 10`, `SCORE_HUD_Y: c_int = 5`, `SCORE_HUD_SIZE: c_int = 24`, `COMBO_HUD_X: c_int = 10`, `COMBO_HUD_Y: c_int = 35`, `COMBO_HUD_SIZE: c_int = 18`, `POPUP_FONT_SIZE: c_int = 20`, `BOSS_TYPE_MULTIPLIER: f32 = 3.0`, `STANDARD_TYPE_MULTIPLIER: f32 = 1.0`
+- [x] T002 Add `ScorePopup` struct definition after the `Zombie` struct in `src/main.zig`: fields `x: f32`, `y: f32`, `points: u64`, `timer: f32`, `active: bool`
+- [x] T003 Add module-level state variables after existing game state vars (~line 62) in `src/main.zig`: `var score: u64 = 0`, `var combo_count: u32 = 0`, `var popups: [MAX_POPUPS]ScorePopup` (initialized to all-inactive), `var popup_next: usize = 0`
 
 ---
 
@@ -30,10 +30,10 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 Implement `getComboMultiplier` function in `src/main.zig` — input: `combo: u32`, output: `u64`. Tier lookup: 0–4→1, 5–9→2, 10–14→3, 15–19→4, 20+→5
-- [ ] T005 Implement `calculateScore` function in `src/main.zig` — input: `name_len: usize, y_pos: f32, is_boss: bool, combo: u32`, output: `u64`. Formula: `@intFromFloat(@round((@as(f32, @floatFromInt(name_len)) * 10.0 + @round(100.0 * (y_pos / @as(f32, @floatFromInt(screen_height))))) * type_mult)) * getComboMultiplier(combo)` where `type_mult` is `BOSS_TYPE_MULTIPLIER` (3.0) for boss, `STANDARD_TYPE_MULTIPLIER` (1.0) for standard
-- [ ] T006 Implement `spawnPopup` function in `src/main.zig` — input: `x: f32, y: f32, points: u64`. Writes to `popups[popup_next]` with `active = true`, `timer = POPUP_DURATION`, then advances `popup_next = (popup_next + 1) % MAX_POPUPS`
-- [ ] T007 Implement `typedMatchesAnyEnemy` function in `src/main.zig` — reads globals `name`, `letter_count`, `zombies`, `boss`, `boss_phrase_len`. Returns `true` if `letter_count == 0` or the typed text is a prefix of any active zombie name or the active boss phrase. Used for combo mismatch detection
+- [x] T004 Implement `getComboMultiplier` function in `src/main.zig` — input: `combo: u32`, output: `u64`. Tier lookup: 0–4→1, 5–9→2, 10–14→3, 15–19→4, 20+→5
+- [x] T005 Implement `calculateScore` function in `src/main.zig` — input: `name_len: usize, y_pos: f32, is_boss: bool, combo: u32`, output: `u64`. Formula: `@intFromFloat(@round((@as(f32, @floatFromInt(name_len)) * 10.0 + @round(100.0 * (y_pos / @as(f32, @floatFromInt(screen_height))))) * type_mult)) * getComboMultiplier(combo)` where `type_mult` is `BOSS_TYPE_MULTIPLIER` (3.0) for boss, `STANDARD_TYPE_MULTIPLIER` (1.0) for standard
+- [x] T006 Implement `spawnPopup` function in `src/main.zig` — input: `x: f32, y: f32, points: u64`. Writes to `popups[popup_next]` with `active = true`, `timer = POPUP_DURATION`, then advances `popup_next = (popup_next + 1) % MAX_POPUPS`
+- [x] T007 Implement `typedMatchesAnyEnemy` function in `src/main.zig` — reads globals `name`, `letter_count`, `zombies`, `boss`, `boss_phrase_len`. Returns `true` if `letter_count == 0` or the typed text is a prefix of any active zombie name or the active boss phrase. Used for combo mismatch detection
 
 **Checkpoint**: Foundation ready — user story implementation can now begin.
 
@@ -47,13 +47,13 @@
 
 ### Tests for User Story 1
 
-- [ ] T008 [US1] Add test `"calculateScore reference cases"` after existing tests in `src/main.zig` — verify all four FR-013 cases: `calculateScore(4, 0, false, 0)` → 40, `calculateScore(4, 0, false, 20)` → 200, `calculateScore(4, 440, false, 0)` → 138, `calculateScore(19, 300, true, 10)` → 2313
+- [x] T008 [US1] Add test `"calculateScore reference cases"` after existing tests in `src/main.zig` — verify all four FR-013 cases: `calculateScore(4, 0, false, 0)` → 40, `calculateScore(4, 0, false, 20)` → 200, `calculateScore(4, 440, false, 0)` → 138, `calculateScore(19, 300, true, 10)` → 2313
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Extend `updateZombies` kill site (~line 365) in `src/main.zig` — BEFORE `allocator.destroy(zomb)`: capture `zomb.x`, `zomb.y`, compute name length from `zomb.name`, call `calculateScore(name_len, zomb.y, false, combo_count)`, add result to `score`, increment `combo_count`, call `spawnPopup(zomb.x, zomb.y, points)`
-- [ ] T010 [US1] Extend `updateBoss` kill site (~line 484) in `src/main.zig` — BEFORE `allocator.destroy(b)`: capture `b.x`, `b.y`, call `calculateScore(boss_phrase_len, b.y, true, combo_count)`, add result to `score`, increment `combo_count`, call `spawnPopup(b.x, b.y, points)`
-- [ ] T011 [US1] Extend game restart handler (~lines 238–250) in `src/main.zig` — add `score = 0; combo_count = 0; popup_next = 0;` and loop over `&popups` setting each `.active = false`
+- [x] T009 [US1] Extend `updateZombies` kill site (~line 365) in `src/main.zig` — BEFORE `allocator.destroy(zomb)`: capture `zomb.x`, `zomb.y`, compute name length from `zomb.name`, call `calculateScore(name_len, zomb.y, false, combo_count)`, add result to `score`, increment `combo_count`, call `spawnPopup(zomb.x, zomb.y, points)`
+- [x] T010 [US1] Extend `updateBoss` kill site (~line 484) in `src/main.zig` — BEFORE `allocator.destroy(b)`: capture `b.x`, `b.y`, call `calculateScore(boss_phrase_len, b.y, true, combo_count)`, add result to `score`, increment `combo_count`, call `spawnPopup(b.x, b.y, points)`
+- [x] T011 [US1] Extend game restart handler (~lines 238–250) in `src/main.zig` — add `score = 0; combo_count = 0; popup_next = 0;` and loop over `&popups` setting each `.active = false`
 
 **Checkpoint**: At this point, killing enemies awards score, increments combo, and spawns popups. Score and combo reset on restart. User Story 1 is testable via `zig build test` (formula tests) and manual play (score accumulates per kill).
 
@@ -67,13 +67,13 @@
 
 ### Tests for User Story 2
 
-- [ ] T012 [US2] Add test `"getComboMultiplier tier boundaries"` in `src/main.zig` — verify: combo 0→1, 4→1, 5→2, 9→2, 10→3, 14→3, 15→4, 19→4, 20→5, 100→5
-- [ ] T013 [US2] Add test `"typedMatchesAnyEnemy mismatch detection"` in `src/main.zig` — set up `name` buffer and `letter_count` with a string that does NOT prefix-match any zombie in the `zombies` array, verify function returns `false`. Also test that `letter_count == 0` returns `true`
+- [x] T012 [US2] Add test `"getComboMultiplier tier boundaries"` in `src/main.zig` — verify: combo 0→1, 4→1, 5→2, 9→2, 10→3, 14→3, 15→4, 19→4, 20→5, 100→5
+- [x] T013 [US2] Add test `"typedMatchesAnyEnemy mismatch detection"` in `src/main.zig` — set up `name` buffer and `letter_count` with a string that does NOT prefix-match any zombie in the `zombies` array, verify function returns `false`. Also test that `letter_count == 0` returns `true`
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Add combo mismatch check in `frame()` after the character-input loop and before `updateZombies` in `src/main.zig` — track whether any new character was typed in the input loop (set a `var typed_this_frame: bool = false` flag), and if flag is set and `!typedMatchesAnyEnemy()`: set `combo_count = 0`. Backspace must NOT set the flag
-- [ ] T015 [US2] Add `combo_count = 0` at wave transition start (~line 180, where `is_transitioning = true`) in `src/main.zig`
+- [x] T014 [US2] Add combo mismatch check in `frame()` after the character-input loop and before `updateZombies` in `src/main.zig` — track whether any new character was typed in the input loop (set a `var typed_this_frame: bool = false` flag), and if flag is set and `!typedMatchesAnyEnemy()`: set `combo_count = 0`. Backspace must NOT set the flag
+- [x] T015 [US2] Add `combo_count = 0` at wave transition start (~line 180, where `is_transitioning = true`) in `src/main.zig`
 
 **Checkpoint**: Combo now correctly increments on kills, resets on mismatch or wave transition, and is preserved on backspace. User Story 2 is testable via `zig build test` (multiplier tiers, mismatch detection) and manual play.
 
@@ -91,8 +91,8 @@ No automated tests — HUD rendering is verified manually (TS-4). See manual tes
 
 ### Implementation for User Story 3
 
-- [ ] T016 [US3] Add score HUD rendering in the active-gameplay draw section (after existing wave HUD) in `src/main.zig` — format `"Score: {d}"` using `std.fmt.bufPrintZ` into a `[32]u8` buffer, draw at `(SCORE_HUD_X, SCORE_HUD_Y)` with font size `SCORE_HUD_SIZE` and color `raylib.DARKGREEN`
-- [ ] T017 [US3] Add combo HUD rendering below score HUD in `src/main.zig` — format `"Combo: {d} x{d}"` using `std.fmt.bufPrintZ` into a `[32]u8` buffer, draw at `(COMBO_HUD_X, COMBO_HUD_Y)` with font size `COMBO_HUD_SIZE`. Color: combo < 5 → `raylib.DARKGRAY`, 5–14 → `raylib.ORANGE`, 15+ → `raylib.RED`
+- [x] T016 [US3] Add score HUD rendering in the active-gameplay draw section (after existing wave HUD) in `src/main.zig` — format `"Score: {d}"` using `std.fmt.bufPrintZ` into a `[32]u8` buffer, draw at `(SCORE_HUD_X, SCORE_HUD_Y)` with font size `SCORE_HUD_SIZE` and color `raylib.DARKGREEN`
+- [x] T017 [US3] Add combo HUD rendering below score HUD in `src/main.zig` — format `"Combo: {d} x{d}"` using `std.fmt.bufPrintZ` into a `[32]u8` buffer, draw at `(COMBO_HUD_X, COMBO_HUD_Y)` with font size `COMBO_HUD_SIZE`. Color: combo < 5 → `raylib.DARKGRAY`, 5–14 → `raylib.ORANGE`, 15+ → `raylib.RED`
 
 **Checkpoint**: Score and combo are now visible to the player during gameplay. User Story 3 is testable via manual play — verify HUD positions, formats, and color tier transitions.
 
@@ -106,13 +106,13 @@ No automated tests — HUD rendering is verified manually (TS-4). See manual tes
 
 ### Tests for User Story 4
 
-- [ ] T018 [US4] Add test `"popup pool circular recycling"` in `src/main.zig` — call `spawnPopup` 33 times, verify `popup_next` wraps to 1 (slot 0 overwritten) and `popups[0].active == true` with the 33rd popup's data
+- [x] T018 [US4] Add test `"popup pool circular recycling"` in `src/main.zig` — call `spawnPopup` 33 times, verify `popup_next` wraps to 1 (slot 0 overwritten) and `popups[0].active == true` with the 33rd popup's data
 
 ### Implementation for User Story 4
 
-- [ ] T019 [US4] Implement `drawPopups` function in `src/main.zig` — for each active popup: compute progress as `1.0 - (timer / POPUP_DURATION)`, draw Y as `y - (POPUP_RISE_PX * progress)`, alpha as `@intFromFloat((timer / POPUP_DURATION) * 255.0)`, color as `raylib.Color{ .r = 255, .g = 203, .b = 0, .a = alpha }`, format text as `"+{d}"` via `bufPrintZ`, draw with `raylib.DrawText`
-- [ ] T020 [US4] Add popup timer update in the update phase of `frame()` in `src/main.zig` (after `updateBoss`, outside the `!is_game_over` gate so popups fade during game-over) — for each active popup: decrement `timer` by `raylib.GetFrameTime()`, if `timer <= 0` set `active = false`
-- [ ] T021 [US4] Call `drawPopups()` in the draw section alongside `drawZombies()` and `drawBoss()` in the active-gameplay else branch of `src/main.zig`
+- [x] T019 [US4] Implement `drawPopups` function in `src/main.zig` — for each active popup: compute progress as `1.0 - (timer / POPUP_DURATION)`, draw Y as `y - (POPUP_RISE_PX * progress)`, alpha as `@intFromFloat((timer / POPUP_DURATION) * 255.0)`, color as `raylib.Color{ .r = 255, .g = 203, .b = 0, .a = alpha }`, format text as `"+{d}"` via `bufPrintZ`, draw with `raylib.DrawText`
+- [x] T020 [US4] Add popup timer update in the update phase of `frame()` in `src/main.zig` (after `updateBoss`, outside the `!is_game_over` gate so popups fade during game-over) — for each active popup: decrement `timer` by `raylib.GetFrameTime()`, if `timer <= 0` set `active = false`
+- [x] T021 [US4] Call `drawPopups()` in the draw section alongside `drawZombies()` and `drawBoss()` in the active-gameplay else branch of `src/main.zig`
 
 **Checkpoint**: Kill popups now appear, animate, and recycle correctly. User Story 4 is testable via `zig build test` (circular recycling) and manual play (visual animation).
 
@@ -126,11 +126,11 @@ No automated tests — HUD rendering is verified manually (TS-4). See manual tes
 
 ### Tests for User Story 5
 
-- [ ] T022 [US5] Add test `"score and combo reset on restart"` in `src/main.zig` — set `score` to a non-zero value, `combo_count` to a non-zero value, `popup_next` to a non-zero value, activate a popup, then simulate the reset logic (set all to 0, deactivate popups), and verify all values are reset
+- [x] T022 [US5] Add test `"score and combo reset on restart"` in `src/main.zig` — set `score` to a non-zero value, `combo_count` to a non-zero value, `popup_next` to a non-zero value, activate a popup, then simulate the reset logic (set all to 0, deactivate popups), and verify all values are reset
 
 ### Implementation for User Story 5
 
-- [ ] T023 [US5] Add score display to game-over screen rendering in `src/main.zig` — format `"Score: {d}"` using `bufPrintZ`, draw centered below existing game-over info using `drawCenteredText`
+- [x] T023 [US5] Add score display to game-over screen rendering in `src/main.zig` — format `"Score: {d}"` using `bufPrintZ`, draw centered below existing game-over info using `drawCenteredText`
 
 **Checkpoint**: All user stories are now independently functional. Score persists through gameplay and displays on game over.
 
@@ -140,8 +140,8 @@ No automated tests — HUD rendering is verified manually (TS-4). See manual tes
 
 **Purpose**: Verify all tests pass and document manual testing requirements.
 
-- [ ] T024 Run `zig build test` to verify all new and existing tests pass in `src/main.zig`
-- [ ] T025 Run `zig build` to verify clean compilation with no errors
+- [x] T024 Run `zig build test` to verify all new and existing tests pass in `src/main.zig`
+- [x] T025 Run `zig build` to verify clean compilation with no errors
 
 ---
 

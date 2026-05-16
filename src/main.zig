@@ -19,6 +19,19 @@ const ZOMBIE_FRAME_COUNT = 17;
 const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1; // seconds per spritesheet frame
 const WAVE_TRANSITION_DURATION: f32 = 3.0;
 
+const MAX_POPUPS = 32;
+const POPUP_DURATION: f32 = 0.5;
+const POPUP_RISE_PX: f32 = 30.0;
+const SCORE_HUD_X: c_int = 10;
+const SCORE_HUD_Y: c_int = 5;
+const SCORE_HUD_SIZE: c_int = 24;
+const COMBO_HUD_X: c_int = 10;
+const COMBO_HUD_Y: c_int = 35;
+const COMBO_HUD_SIZE: c_int = 18;
+const POPUP_FONT_SIZE: c_int = 20;
+const BOSS_TYPE_MULTIPLIER: f32 = 3.0;
+const STANDARD_TYPE_MULTIPLIER: f32 = 1.0;
+
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
@@ -61,6 +74,11 @@ var boss: ?*Zombie = null;
 var boss_spawned_this_wave: bool = false;
 var boss_phrase_len: usize = 0;
 
+var score: u64 = 0;
+var combo_count: u32 = 0;
+var popups = [_]ScorePopup{.{ .x = 0, .y = 0, .points = 0, .timer = 0, .active = false }} ** MAX_POPUPS;
+var popup_next: usize = 0;
+
 // Define the Zombie structure
 const Zombie = struct {
     x: f32,
@@ -70,6 +88,14 @@ const Zombie = struct {
     is_active: bool,
     frame: f32, // Current animation frame
     animation_timer: f32,
+};
+
+const ScorePopup = struct {
+    x: f32,
+    y: f32,
+    points: u64,
+    timer: f32,
+    active: bool,
 };
 
 // Array to hold zombie pointers
@@ -124,23 +150,26 @@ fn frame(ctx: *FrameContext) void {
     }
 
     if (!is_game_over and !is_transitioning) {
-        // Accept keystrokes regardless of mouse position so players can start typing
-        // immediately on load (especially on web, where focus is on the canvas, not the
-        // text box hit-test rectangle).
+        var typed_this_frame: bool = false;
+
         var key = raylib.GetCharPressed();
         while (key > 0) {
             if ((key >= 32) and (key <= 125) and (letter_count < getCurrentMaxInput())) {
-                name[letter_count] = @intCast(key); // Add character to input buffer
-                name[letter_count + 1] = '\x00'; // Null-terminate the string
+                name[letter_count] = @intCast(key);
+                name[letter_count + 1] = '\x00';
                 letter_count += 1;
+                typed_this_frame = true;
             }
-            key = raylib.GetCharPressed(); // Check next character in the queue
+            key = raylib.GetCharPressed();
         }
 
-        // Handle backspace
         if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
             letter_count -= 1;
-            name[letter_count] = '\x00'; // Null-terminate after backspace
+            name[letter_count] = '\x00';
+        }
+
+        if (typed_this_frame and !typedMatchesAnyEnemy()) {
+            combo_count = 0;
         }
 
         const wave_cfg = getWaveConfig(current_wave);
@@ -178,6 +207,7 @@ fn frame(ctx: *FrameContext) void {
         if (!is_game_over and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
             is_transitioning = true;
             transition_timer = WAVE_TRANSITION_DURATION;
+            combo_count = 0;
         }
     }
 
@@ -195,6 +225,13 @@ fn frame(ctx: *FrameContext) void {
         }
     }
 
+    for (&popups) |*p| {
+        if (p.active) {
+            p.timer -= raylib.GetFrameTime();
+            if (p.timer <= 0) p.active = false;
+        }
+    }
+
     // Draw
     raylib.BeginDrawing();
     defer raylib.EndDrawing();
@@ -207,6 +244,15 @@ fn frame(ctx: *FrameContext) void {
         var hud_buf: [64]u8 = undefined;
         const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
         drawCenteredText(hud_text.ptr, 10, 20, raylib.DARKGRAY);
+
+        var score_buf: [32]u8 = undefined;
+        const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d}", .{score}) catch "Score: ?";
+        raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, raylib.DARKGREEN);
+
+        var combo_buf: [32]u8 = undefined;
+        const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
+        const combo_color = if (combo_count >= 15) raylib.RED else if (combo_count >= 5) raylib.ORANGE else raylib.DARKGRAY;
+        raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, combo_color);
     }
 
     raylib.DrawRectangleRec(ctx.text_box, raylib.LIGHTGRAY);
@@ -232,7 +278,11 @@ fn frame(ctx: *FrameContext) void {
         const go_wpm_text = std.fmt.bufPrintZ(&go_wpm_buf, "Required WPM: {d}", .{getWaveConfig(current_wave).target_wpm}) catch "Required WPM: ?";
         drawCenteredText(go_wpm_text.ptr, screen_height / 2 + 30, 20, raylib.GRAY);
 
-        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 60, 20, raylib.GRAY);
+        var go_score_buf: [32]u8 = undefined;
+        const go_score_text = std.fmt.bufPrintZ(&go_score_buf, "Score: {d}", .{score}) catch "Score: ?";
+        drawCenteredText(go_score_text.ptr, screen_height / 2 + 55, 20, raylib.GRAY);
+
+        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 85, 20, raylib.GRAY);
 
         // Restart game if Enter is pressed
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
@@ -245,6 +295,10 @@ fn frame(ctx: *FrameContext) void {
             wave_spawned = 0;
             is_transitioning = false;
             transition_timer = 0.0;
+            score = 0;
+            combo_count = 0;
+            popup_next = 0;
+            for (&popups) |*p| p.active = false;
             resetZombies(ctx.allocator);
             resetBoss(ctx.allocator);
         }
@@ -259,6 +313,7 @@ fn frame(ctx: *FrameContext) void {
     } else {
         drawZombies();
         drawBoss();
+        drawPopups();
     }
     // Draw blinking underscore char
     if (ctx.mouse_on_text and letter_count < getCurrentMaxInput() and ((ctx.frames_counter / 20) % 2) == 0) {
@@ -363,6 +418,10 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
             const zomb_name_slice = zomb.name[0..zomb_name_length];
 
             if (std.mem.eql(u8, typed_name, zomb_name_slice)) {
+                const points = calculateScore(zomb_name_length, zomb.y, false, combo_count);
+                score += points;
+                combo_count += 1;
+                spawnPopup(zomb.x, zomb.y, points);
                 allocator.destroy(zomb);
                 slot.* = null;
                 letter_count = 0;
@@ -481,6 +540,10 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
         }
 
         if (letter_count == boss_phrase_len and typedIsBossPrefix()) {
+            const points = calculateScore(boss_phrase_len, b.y, true, combo_count);
+            score += points;
+            combo_count += 1;
+            spawnPopup(b.x, b.y, points);
             allocator.destroy(b);
             boss = null;
             letter_count = 0;
@@ -606,6 +669,56 @@ fn resetZombies(allocator: *std.mem.Allocator) void {
             allocator.destroy(z);
             zombie.* = null;
         }
+    }
+}
+
+fn getComboMultiplier(combo: u32) u64 {
+    if (combo >= 20) return 5;
+    if (combo >= 15) return 4;
+    if (combo >= 10) return 3;
+    if (combo >= 5) return 2;
+    return 1;
+}
+
+fn calculateScore(name_len: usize, y_pos: f32, is_boss: bool, combo: u32) u64 {
+    const type_mult: f32 = if (is_boss) BOSS_TYPE_MULTIPLIER else STANDARD_TYPE_MULTIPLIER;
+    const height_score = @round(100.0 * (y_pos / @as(f32, @floatFromInt(screen_height))));
+    const base = @as(f32, @floatFromInt(name_len)) * 10.0 + height_score;
+    return @as(u64, @intFromFloat(@round(base * type_mult))) * getComboMultiplier(combo);
+}
+
+fn spawnPopup(x: f32, y: f32, points: u64) void {
+    popups[popup_next] = ScorePopup{ .x = x, .y = y, .points = points, .timer = POPUP_DURATION, .active = true };
+    popup_next = (popup_next + 1) % MAX_POPUPS;
+}
+
+fn typedMatchesAnyEnemy() bool {
+    if (letter_count == 0) return true;
+    const typed = name[0..letter_count];
+    for (zombies) |slot| {
+        if (slot) |zomb| {
+            if (!zomb.is_active) continue;
+            var zomb_name_length: usize = 0;
+            while (zomb.name[zomb_name_length] != '\x00') zomb_name_length += 1;
+            if (letter_count <= zomb_name_length and std.mem.eql(u8, typed, zomb.name[0..letter_count])) return true;
+        }
+    }
+    if (boss) |b| {
+        if (letter_count <= boss_phrase_len and std.mem.eql(u8, typed, b.name[0..letter_count])) return true;
+    }
+    return false;
+}
+
+fn drawPopups() void {
+    for (&popups) |*p| {
+        if (!p.active) continue;
+        const progress = 1.0 - (p.timer / POPUP_DURATION);
+        const draw_y = p.y - (POPUP_RISE_PX * progress);
+        const alpha: u8 = @intFromFloat((p.timer / POPUP_DURATION) * 255.0);
+        const color = raylib.Color{ .r = 255, .g = 203, .b = 0, .a = alpha };
+        var buf: [32]u8 = undefined;
+        const text = std.fmt.bufPrintZ(&buf, "+{d}", .{p.points}) catch "+?";
+        raylib.DrawText(text.ptr, @intFromFloat(p.x), @intFromFloat(draw_y), POPUP_FONT_SIZE, color);
     }
 }
 
@@ -824,4 +937,102 @@ test "wave completion requires boss kill on boss waves" {
 
     // Non-boss wave: pool done → must complete regardless of boss state
     try std.testing.expect(pool_done and computeBossDone(non_boss_wave));
+}
+
+test "calculateScore reference cases" {
+    try std.testing.expectEqual(@as(u64, 40), calculateScore(4, 0, false, 0));
+    try std.testing.expectEqual(@as(u64, 200), calculateScore(4, 0, false, 20));
+    try std.testing.expectEqual(@as(u64, 138), calculateScore(4, 440, false, 0));
+    try std.testing.expectEqual(@as(u64, 2313), calculateScore(19, 300, true, 10));
+}
+
+test "getComboMultiplier tier boundaries" {
+    try std.testing.expectEqual(@as(u64, 1), getComboMultiplier(0));
+    try std.testing.expectEqual(@as(u64, 1), getComboMultiplier(4));
+    try std.testing.expectEqual(@as(u64, 2), getComboMultiplier(5));
+    try std.testing.expectEqual(@as(u64, 2), getComboMultiplier(9));
+    try std.testing.expectEqual(@as(u64, 3), getComboMultiplier(10));
+    try std.testing.expectEqual(@as(u64, 3), getComboMultiplier(14));
+    try std.testing.expectEqual(@as(u64, 4), getComboMultiplier(15));
+    try std.testing.expectEqual(@as(u64, 4), getComboMultiplier(19));
+    try std.testing.expectEqual(@as(u64, 5), getComboMultiplier(20));
+    try std.testing.expectEqual(@as(u64, 5), getComboMultiplier(100));
+}
+
+test "typedMatchesAnyEnemy mismatch detection" {
+    const saved_letter_count = letter_count;
+    const saved_name = name;
+    const saved_boss = boss;
+    const saved_boss_phrase_len = boss_phrase_len;
+    const saved_zombies = zombies;
+    defer {
+        letter_count = saved_letter_count;
+        name = saved_name;
+        boss = saved_boss;
+        boss_phrase_len = saved_boss_phrase_len;
+        zombies = saved_zombies;
+    }
+
+    for (&zombies) |*slot| slot.* = null;
+    boss = null;
+    boss_phrase_len = 0;
+
+    letter_count = 0;
+    try std.testing.expect(typedMatchesAnyEnemy());
+
+    name[0] = 'Z';
+    name[1] = 'Z';
+    name[2] = 'Z';
+    name[3] = '\x00';
+    letter_count = 3;
+    try std.testing.expect(!typedMatchesAnyEnemy());
+}
+
+test "popup pool circular recycling" {
+    const saved_popups = popups;
+    const saved_next = popup_next;
+    defer {
+        popups = saved_popups;
+        popup_next = saved_next;
+    }
+
+    popup_next = 0;
+    for (&popups) |*p| p.active = false;
+
+    var i: usize = 0;
+    while (i < 33) : (i += 1) {
+        spawnPopup(@floatFromInt(i), @floatFromInt(i), @intCast(i + 1));
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), popup_next);
+    try std.testing.expect(popups[0].active);
+    try std.testing.expectEqual(@as(u64, 33), popups[0].points);
+}
+
+test "score and combo reset on restart" {
+    const saved_score = score;
+    const saved_combo = combo_count;
+    const saved_next = popup_next;
+    const saved_popups = popups;
+    defer {
+        score = saved_score;
+        combo_count = saved_combo;
+        popup_next = saved_next;
+        popups = saved_popups;
+    }
+
+    score = 999;
+    combo_count = 10;
+    popup_next = 5;
+    popups[0].active = true;
+
+    score = 0;
+    combo_count = 0;
+    popup_next = 0;
+    for (&popups) |*p| p.active = false;
+
+    try std.testing.expectEqual(@as(u64, 0), score);
+    try std.testing.expectEqual(@as(u32, 0), combo_count);
+    try std.testing.expectEqual(@as(usize, 0), popup_next);
+    try std.testing.expect(!popups[0].active);
 }
