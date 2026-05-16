@@ -251,8 +251,7 @@ fn frame(ctx: *FrameContext) void {
 
         var combo_buf: [32]u8 = undefined;
         const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
-        const combo_color = if (combo_count >= 15) raylib.RED else if (combo_count >= 5) raylib.ORANGE else raylib.DARKGRAY;
-        raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, combo_color);
+        raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
     }
 
     raylib.DrawRectangleRec(ctx.text_box, raylib.LIGHTGRAY);
@@ -295,10 +294,7 @@ fn frame(ctx: *FrameContext) void {
             wave_spawned = 0;
             is_transitioning = false;
             transition_timer = 0.0;
-            score = 0;
-            combo_count = 0;
-            popup_next = 0;
-            for (&popups) |*p| p.active = false;
+            resetScoreState();
             resetZombies(ctx.allocator);
             resetBoss(ctx.allocator);
         }
@@ -680,6 +676,19 @@ fn getComboMultiplier(combo: u32) u64 {
     return 1;
 }
 
+fn getComboColor(combo: u32) raylib.Color {
+    if (combo >= 15) return raylib.RED;
+    if (combo >= 5) return raylib.ORANGE;
+    return raylib.DARKGRAY;
+}
+
+fn resetScoreState() void {
+    score = 0;
+    combo_count = 0;
+    popup_next = 0;
+    for (&popups) |*p| p.active = false;
+}
+
 fn calculateScore(name_len: usize, y_pos: f32, is_boss: bool, combo: u32) u64 {
     const type_mult: f32 = if (is_boss) BOSS_TYPE_MULTIPLIER else STANDARD_TYPE_MULTIPLIER;
     const height_score = @round(100.0 * (y_pos / @as(f32, @floatFromInt(screen_height))));
@@ -1009,7 +1018,7 @@ test "popup pool circular recycling" {
     try std.testing.expectEqual(@as(u64, 33), popups[0].points);
 }
 
-test "score and combo reset on restart" {
+test "resetScoreState clears score, combo, and popups" {
     const saved_score = score;
     const saved_combo = combo_count;
     const saved_next = popup_next;
@@ -1026,10 +1035,7 @@ test "score and combo reset on restart" {
     popup_next = 5;
     popups[0].active = true;
 
-    score = 0;
-    combo_count = 0;
-    popup_next = 0;
-    for (&popups) |*p| p.active = false;
+    resetScoreState();
 
     try std.testing.expectEqual(@as(u64, 0), score);
     try std.testing.expectEqual(@as(u32, 0), combo_count);
