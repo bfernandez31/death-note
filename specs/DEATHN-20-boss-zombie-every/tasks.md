@@ -50,15 +50,15 @@
 **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 **RULE (constitution): Extend existing test blocks in `src/main.zig` — do not create new test files.**
 
-- [ ] T007 [US1] Add test `"boss wave detection"` in `src/main.zig` — verify `wave % 5 == 0` is true for waves 5, 10, 15, 20 and false for waves 1, 4, 6, 14
-- [ ] T008 [US1] Add test `"boss spawn threshold calculation"` in `src/main.zig` — verify `(pool_size + 1) / 2` yields: wave 5 (pool_size=13) threshold=7, wave 10 (pool_size=23) threshold=12, wave 20 (pool_size=43) threshold=22
+- [x] T007 [US1] Add test `"boss wave detection"` in `src/main.zig` — verify `wave % 5 == 0` is true for waves 5, 10, 15, 20 and false for waves 1, 4, 6, 14
+- [x] T008 [US1] Add test `"boss spawn threshold calculation"` in `src/main.zig` — verify `(pool_size + 1) / 2` yields: wave 5 (pool_size=13) threshold=7, wave 10 (pool_size=23) threshold=12, wave 20 (pool_size=43) threshold=22
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Add `spawnBoss(allocator: *std.mem.Allocator) !void` function in `src/main.zig` following the `spawnZombie` pattern (line 395): allocate `Zombie` with `try allocator.create(Zombie)`, use `errdefer allocator.destroy(new_boss)`, set `x` to horizontal center (`screen_width / 2.0 - 30.0`), `y = 0.0`, `speed = getWaveConfig(current_wave).fall_speed * BOSS_SPEED_MULTIPLIER`, select random phrase from `BossPhrases`, assign to `boss`, set `boss_spawned_this_wave = true`, precompute `boss_phrase_len` by scanning to null terminator
-- [ ] T010 [US1] Add boss spawn trigger in `frame()` after `updateZombies(ctx.allocator)` call (line 141) and before wave completion check (line 145) in `src/main.zig`: if `current_wave % 5 == 0 and !boss_spawned_this_wave and boss == null`, compute threshold as `(wave_cfg.pool_size + 1) / 2`, if `wave_kills >= threshold` then call `spawnBoss(ctx.allocator) catch {}`
-- [ ] T011 [US1] Add `drawBoss() void` function in `src/main.zig`: if `boss` is null return; animate using same spritesheet logic as `drawZombies` (lines 351-359); compute source rectangle; draw with `DrawTexturePro` using `BOSS_SCALE` (0.4) and `raylib.RED` tint; draw phrase text above sprite at `(boss_x, boss_y - 30)` with font size 20 and dark red color `raylib.Color{ .r = 139, .g = 0, .b = 0, .a = 255 }`
-- [ ] T012 [US1] Call `drawBoss()` in the draw phase of `src/main.zig` alongside `drawZombies()` (line 225, inside the `else` branch that draws active gameplay)
+- [x] T009 [US1] Add `spawnBoss(allocator: *std.mem.Allocator) !void` function in `src/main.zig` following the `spawnZombie` pattern (line 395): allocate `Zombie` with `try allocator.create(Zombie)`, use `errdefer allocator.destroy(new_boss)`, set `x` to horizontal center (`screen_width / 2.0 - 30.0`), `y = 0.0`, `speed = getWaveConfig(current_wave).fall_speed * BOSS_SPEED_MULTIPLIER`, select random phrase from `BossPhrases`, assign to `boss`, set `boss_spawned_this_wave = true`, precompute `boss_phrase_len` by scanning to null terminator
+- [x] T010 [US1] Add boss spawn trigger in `frame()` after `updateZombies(ctx.allocator)` call (line 141) and before wave completion check (line 145) in `src/main.zig`: if `current_wave % 5 == 0 and !boss_spawned_this_wave and boss == null`, compute threshold as `(wave_cfg.pool_size + 1) / 2`, if `wave_kills >= threshold` then call `spawnBoss(ctx.allocator) catch {}`
+- [x] T011 [US1] Add `drawBoss() void` function in `src/main.zig`: if `boss` is null return; animate using same spritesheet logic as `drawZombies` (lines 351-359); compute source rectangle; draw with `DrawTexturePro` using `BOSS_SCALE` (0.4) and `raylib.RED` tint; draw phrase text above sprite at `(boss_x, boss_y - 30)` with font size 20 and dark red color `raylib.Color{ .r = 139, .g = 0, .b = 0, .a = 255 }`
+- [x] T012 [US1] Call `drawBoss()` in the draw phase of `src/main.zig` alongside `drawZombies()` (line 225, inside the `else` branch that draws active gameplay)
 
 **Checkpoint**: Boss spawns visually on wave 5 at 50% kills — visible on screen with distinct look
 

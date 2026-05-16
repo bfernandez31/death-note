@@ -150,6 +150,13 @@ fn frame(ctx: *FrameContext) void {
         // Update zombies (may set is_game_over if a zombie reaches the bottom)
         updateZombies(ctx.allocator);
 
+        if (current_wave % 5 == 0 and !boss_spawned_this_wave and boss == null) {
+            const threshold = (wave_cfg.pool_size + 1) / 2;
+            if (wave_kills >= threshold) {
+                spawnBoss(ctx.allocator) catch {};
+            }
+        }
+
         // Wave completion detection — guarded against is_game_over so a kill+death in the
         // same frame does not silently start a wave transition behind the game-over screen.
         if (!is_game_over and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size) {
@@ -233,6 +240,7 @@ fn frame(ctx: *FrameContext) void {
         drawCenteredText(wave_text.ptr, screen_height / 2 - 15, 30, raylib.DARKGRAY);
     } else {
         drawZombies();
+        drawBoss();
     }
     // Draw blinking underscore char
     if (ctx.mouse_on_text and letter_count < MAX_INPUT_CHARS and ((ctx.frames_counter / 20) % 2) == 0) {
@@ -445,6 +453,92 @@ fn getWaveConfig(wave: u32) WaveConfig {
     };
 }
 
+fn drawBoss() void {
+    if (boss) |b| {
+        const delta_time = 1.0 / 60.0;
+
+        b.animation_timer += delta_time;
+        if (b.animation_timer >= ZOMBIE_ANIMATION_FRAME_DURATION) {
+            b.frame += 1;
+            if (b.frame >= ZOMBIE_FRAME_COUNT) {
+                b.frame = 0;
+            }
+            b.animation_timer = 0;
+        }
+
+        const frame_width = @as(f32, @floatFromInt(@divTrunc(zombie_texture.width, ZOMBIE_FRAME_COUNT)));
+
+        const src_rect = raylib.Rectangle{
+            .x = b.frame * frame_width,
+            .y = 0,
+            .width = frame_width,
+            .height = @as(f32, @floatFromInt(zombie_texture.height)),
+        };
+
+        raylib.DrawTexturePro(
+            zombie_texture,
+            src_rect,
+            raylib.Rectangle{
+                .x = b.x,
+                .y = b.y,
+                .width = frame_width * BOSS_SCALE,
+                .height = @as(f32, @floatFromInt(zombie_texture.height)) * BOSS_SCALE,
+            },
+            raylib.Vector2{ .x = 0, .y = 0 },
+            0.0,
+            raylib.RED,
+        );
+
+        const boss_x: c_int = @intFromFloat(b.x);
+        const boss_y: c_int = @intFromFloat(b.y);
+        const dark_red = raylib.Color{ .r = 139, .g = 0, .b = 0, .a = 255 };
+        raylib.DrawText(b.name, boss_x, boss_y - 30, 20, dark_red);
+
+        const bar_x = boss_x;
+        const bar_y = boss_y - 42;
+        raylib.DrawRectangle(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.LIGHTGRAY);
+
+        if (boss_phrase_len > 0) {
+            const typed_name = name[0..letter_count];
+            const boss_slice = b.name[0..boss_phrase_len];
+            if (letter_count <= boss_phrase_len and std.mem.eql(u8, typed_name, boss_slice[0..letter_count])) {
+                const remaining = boss_phrase_len - letter_count;
+                const fill_width: c_int = @intCast(BOSS_HEALTH_BAR_WIDTH * remaining / boss_phrase_len);
+                raylib.DrawRectangle(bar_x, bar_y, fill_width, BOSS_HEALTH_BAR_HEIGHT, raylib.RED);
+            } else {
+                raylib.DrawRectangle(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.RED);
+            }
+        }
+
+        raylib.DrawRectangleLines(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.DARKGRAY);
+    }
+}
+
+fn spawnBoss(allocator: *std.mem.Allocator) !void {
+    const new_boss = try allocator.create(Zombie);
+    errdefer allocator.destroy(new_boss);
+
+    const frame_width = @as(f32, @floatFromInt(@divTrunc(zombie_texture.width, ZOMBIE_FRAME_COUNT)));
+    const phrase_index: usize = @intCast(raylib.GetRandomValue(0, @intCast(BossPhrases.len - 1)));
+    const phrase = BossPhrases[phrase_index];
+
+    new_boss.* = Zombie{
+        .x = screen_width / 2.0 - (frame_width * BOSS_SCALE / 2.0),
+        .y = 0.0,
+        .speed = getWaveConfig(current_wave).fall_speed * BOSS_SPEED_MULTIPLIER,
+        .name = phrase,
+        .is_active = true,
+        .frame = 0,
+        .animation_timer = 0,
+    };
+    boss = new_boss;
+    boss_spawned_this_wave = true;
+
+    var len: usize = 0;
+    while (phrase[len] != '\x00') len += 1;
+    boss_phrase_len = len;
+}
+
 fn getCurrentMaxInput() usize {
     return if (boss != null) MAX_BOSS_INPUT_CHARS else MAX_INPUT_CHARS;
 }
@@ -592,4 +686,29 @@ test "frame index wraps after ZOMBIE_FRAME_COUNT" {
     mid += 1;
     if (mid >= ZOMBIE_FRAME_COUNT) mid = 0;
     try std.testing.expect(mid > 0.0);
+}
+
+test "boss wave detection" {
+    try std.testing.expect(5 % 5 == 0);
+    try std.testing.expect(10 % 5 == 0);
+    try std.testing.expect(15 % 5 == 0);
+    try std.testing.expect(20 % 5 == 0);
+    try std.testing.expect(1 % 5 != 0);
+    try std.testing.expect(4 % 5 != 0);
+    try std.testing.expect(6 % 5 != 0);
+    try std.testing.expect(14 % 5 != 0);
+}
+
+test "boss spawn threshold calculation" {
+    const cfg5 = getWaveConfig(5);
+    try std.testing.expectEqual(@as(u32, 13), cfg5.pool_size);
+    try std.testing.expectEqual(@as(u32, 7), (cfg5.pool_size + 1) / 2);
+
+    const cfg10 = getWaveConfig(10);
+    try std.testing.expectEqual(@as(u32, 23), cfg10.pool_size);
+    try std.testing.expectEqual(@as(u32, 12), (cfg10.pool_size + 1) / 2);
+
+    const cfg20 = getWaveConfig(20);
+    try std.testing.expectEqual(@as(u32, 43), cfg20.pool_size);
+    try std.testing.expectEqual(@as(u32, 22), (cfg20.pool_size + 1) / 2);
 }
