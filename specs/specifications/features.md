@@ -22,6 +22,11 @@
   - [F-16 Boss Typing Mechanic](#f-16-boss-typing-mechanic)
   - [F-17 Boss Priority Over Regular Zombies](#f-17-boss-priority-over-regular-zombies)
   - [F-18 Boss Wave Completion Gate](#f-18-boss-wave-completion-gate)
+  - [F-19 Per-Kill Scoring](#f-19-per-kill-scoring)
+  - [F-20 Combo Counter](#f-20-combo-counter)
+  - [F-21 Score and Combo HUD](#f-21-score-and-combo-hud)
+  - [F-22 Floating Score Popup](#f-22-floating-score-popup)
+  - [F-23 Score on Game-Over Screen](#f-23-score-on-game-over-screen)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -60,6 +65,14 @@ graph TB
         NameLabel["F-03 Name Label"]
         GameOverOverlay["F-11 Game-Over Overlay"]
         HUD["F-12 Wave HUD"]
+        ScoreHUD["F-21 Score and Combo HUD"]
+        ScorePopup["F-22 Score Popup"]
+        GameOverScore["F-23 Score on Game-Over Screen"]
+    end
+
+    subgraph Scoring
+        Scoring["F-19 Per-Kill Scoring"]
+        Combo["F-20 Combo Counter"]
     end
 
     subgraph Interaction
@@ -90,6 +103,15 @@ graph TB
     BossTyping --> BossGate
     BossGate --> WaveTransition
     BossTyping --> GameOver
+    Killing --> Scoring
+    BossTyping --> Scoring
+    Scoring --> Combo
+    Scoring --> ScorePopup
+    Scoring --> ScoreHUD
+    Combo --> ScoreHUD
+    WaveTransition --> Combo
+    Restart --> Scoring
+    GameOverOverlay --> GameOverScore
 ```
 
 ---
@@ -493,6 +515,116 @@ graph TB
 
 ---
 
+### F-19 Per-Kill Scoring
+
+**Description.** Each time the player destroys an enemy — whether a standard zombie or a boss — the system calculates a score for that kill and adds it to a running 64-bit total. The formula is: `round((name_length × 10 + round(100 × y_position / screen_height)) × type_multiplier) × combo_multiplier`. Standard zombies use `type_multiplier = 1.0`; the boss uses `type_multiplier = 3.0`. The combo multiplier is supplied by the current combo tier (F-20). The score is stored as `var score: u64` at module scope and resets to 0 on game restart.
+
+**User-facing behavior.** Each kill increases the player's displayed score. Kills at the bottom of the screen are worth more than kills at the top. Boss kills are worth three times the base score. Higher combo multipliers amplify all of these effects.
+
+**System behavior.**
+- At each zombie kill site in `updateZombies` (`src/main.zig:417–420`): name length scanned, `calculateScore(name_len, zomb.y, false, combo_count)` called, result added to `score`, `combo_count` incremented, `spawnPopup` called.
+- At the boss kill site in `updateBoss` (`src/main.zig:539–542`): `calculateScore(boss_phrase_len, b.y, true, combo_count)` called with the same pattern.
+- `calculateScore(name_len, y_pos, is_boss, combo)` (`src/main.zig:692–697`): computes `type_mult` (3.0 for boss, 1.0 otherwise), `height_score = round(100 × y_pos / screen_height)`, `base = name_len × 10 + height_score`, returns `round(base × type_mult) × getComboMultiplier(combo)`.
+- `score` reset to 0 in the `resetScoreState` helper called by the restart handler.
+
+**Key source references.**
+- `src/main.zig:32–33` — `BOSS_TYPE_MULTIPLIER = 3.0`, `STANDARD_TYPE_MULTIPLIER = 1.0`
+- `src/main.zig:77` — `var score: u64 = 0`
+- `src/main.zig:692–697` — `calculateScore` function
+- `src/main.zig:686–689` — `resetScoreState` function
+
+**Dependencies.** F-10 (zombie kill triggers score), F-16 (boss kill triggers score), F-20 (combo multiplier input), F-22 (popup spawn), F-23 (final score displayed on game over).
+
+---
+
+### F-20 Combo Counter
+
+**Description.** The combo counter tracks consecutive successful kills. It increments by 1 on every kill (standard or boss). It resets to 0 when the player types a character that does not match the beginning of any active enemy's name or phrase. It also resets to 0 at the start of each wave transition. Pressing Backspace does not reset the combo.
+
+**User-facing behavior.** Players who chain kills without typing mismatched characters accumulate a multiplier (x1–x5) that amplifies their score. Typing a wrong character instantly breaks the chain. Starting a new wave also breaks the chain.
+
+**System behavior.**
+- `var combo_count: u32 = 0` (`src/main.zig:78`).
+- Incremented by 1 at each kill site (zombie: `src/main.zig:419`; boss: `src/main.zig:541`).
+- Mismatch check in `frame()` after the input loop (`src/main.zig:171–173`): a `typed_this_frame` flag is set when any non-backspace character is typed; if the flag is set and `!typedMatchesAnyEnemy()` the combo resets to 0. `typedMatchesAnyEnemy()` returns `true` if `letter_count == 0` or the typed text is a prefix of any active zombie name or the boss phrase.
+- Wave-transition reset at `src/main.zig:210`: `combo_count = 0` is set when `is_transitioning` becomes `true`.
+- Backspace does not set `typed_this_frame`; the combo is preserved.
+- `getComboMultiplier(combo)` (`src/main.zig:671–677`): 0–4→x1, 5–9→x2, 10–14→x3, 15–19→x4, 20+→x5.
+- Reset to 0 in `resetScoreState` on game restart.
+
+**Key source references.**
+- `src/main.zig:78` — `var combo_count: u32 = 0`
+- `src/main.zig:171–173` — mismatch detection and reset
+- `src/main.zig:210` — wave-transition reset
+- `src/main.zig:671–677` — `getComboMultiplier` function
+- `src/main.zig:704–720` — `typedMatchesAnyEnemy` function
+
+**Dependencies.** F-10 (kill increments combo), F-13 (wave transition resets combo), F-19 (combo feeds score formula), F-21 (combo displayed in HUD).
+
+---
+
+### F-21 Score and Combo HUD
+
+**Description.** Two persistent text lines appear at the top-left of the screen throughout active gameplay. The first shows the running score; the second shows the combo count and active multiplier. The combo line's color changes based on the current combo tier.
+
+**User-facing behavior.** The player always sees their current score and combo tier at a glance. The combo line changes from dark gray to orange at combo 5, and from orange to red at combo 15.
+
+**System behavior.**
+- Score line rendered at `(SCORE_HUD_X=10, SCORE_HUD_Y=5)`, font size `SCORE_HUD_SIZE=24`, color `DARKGREEN`, formatted as `"Score: {d}"` via `std.fmt.bufPrintZ` (`src/main.zig:248–250`).
+- Combo line rendered at `(COMBO_HUD_X=10, COMBO_HUD_Y=35)`, font size `COMBO_HUD_SIZE=18`, formatted as `"Combo: {d} x{d}"` (`src/main.zig:252–254`).
+- `getComboColor(combo)` (`src/main.zig:679–684`): combo ≥ 15 → `RED`, combo ≥ 5 → `ORANGE`, otherwise `DARKGRAY`.
+- Both lines rendered inside the `!is_game_over` draw block, after the wave HUD.
+
+**Key source references.**
+- `src/main.zig:25–30` — HUD position and size constants
+- `src/main.zig:248–254` — score and combo draw calls
+- `src/main.zig:679–684` — `getComboColor` function
+
+**Dependencies.** F-19 (score value), F-20 (combo count and multiplier), F-12 (HUD ordering in draw block).
+
+---
+
+### F-22 Floating Score Popup
+
+**Description.** When any enemy is destroyed, a gold "+{score}" text popup appears at the enemy's screen position. The popup rises upward by 30 pixels and fades from full opacity to invisible over 0.5 seconds with linear interpolation. Popups are managed in a fixed pool of 32 entries; when the pool is full the oldest entry is recycled (circular overwrite).
+
+**User-facing behavior.** Each kill produces a brief floating number at the kill location, giving immediate contextual feedback on the points earned. Multiple popups can be visible at once and each fades independently.
+
+**System behavior.**
+- `var popups: [MAX_POPUPS]ScorePopup` (`src/main.zig:79`), all initialised inactive. `var popup_next: usize = 0` (`src/main.zig:80`) is the circular write index.
+- `spawnPopup(x, y, points)` (`src/main.zig:699–701`): writes to `popups[popup_next]` with `active=true, timer=POPUP_DURATION`, advances `popup_next = (popup_next + 1) % MAX_POPUPS`.
+- Popup timer update in the update phase of `frame()`, outside the `!is_game_over` gate so popups continue fading on the game-over screen: each active popup has `timer -= GetFrameTime()`; when `timer <= 0`, `active = false`.
+- `drawPopups()` (`src/main.zig:721–736`): for each active popup, computes `progress = 1 - (timer / POPUP_DURATION)`, `draw_y = y - POPUP_RISE_PX × progress`, `alpha = (timer / POPUP_DURATION) × 255`, formats `"+{d}"` text, draws with `raylib.DrawText` in gold color (`r=255, g=203, b=0, a=alpha`).
+
+**Key source references.**
+- `src/main.zig:22–24` — `MAX_POPUPS=32`, `POPUP_DURATION=0.5`, `POPUP_RISE_PX=30.0`
+- `src/main.zig:79–80` — popup pool and write-index declarations
+- `src/main.zig:93–98` — `ScorePopup` struct definition
+- `src/main.zig:699–701` — `spawnPopup` function
+- `src/main.zig:721–736` — `drawPopups` function
+
+**Dependencies.** F-19 (points value from `calculateScore`), F-10 / F-16 (kill events spawn popups).
+
+---
+
+### F-23 Score on Game-Over Screen
+
+**Description.** When the game ends, the accumulated score is displayed on the game-over overlay alongside the wave-reached and required-WPM information. The score resets to 0 when the player presses Enter to restart.
+
+**User-facing behavior.** After losing, the player sees their final score on the game-over screen. Starting a new game always begins at score 0.
+
+**System behavior.**
+- In the `is_game_over` draw block (`src/main.zig:280–282`): `"Score: {d}"` formatted via `bufPrintZ`, drawn centered at `y = screen_height / 2 + 55` in `GRAY` font size 20 via `drawCenteredText`.
+- Score reset is handled by `resetScoreState` called from the restart handler; sets `score = 0`, `combo_count = 0`, `popup_next = 0`, and deactivates all popup pool entries.
+
+**Key source references.**
+- `src/main.zig:280–282` — score line in game-over draw block
+- `src/main.zig:686–689` — `resetScoreState` function (called by restart handler)
+
+**Dependencies.** F-19 (score value), F-05 (game over triggers display), F-06 (restart clears score).
+
+---
+
 ## User Journeys
 
 ### Journey 1: Successful Kill
@@ -516,8 +648,10 @@ sequenceDiagram
     Game->>Game: Append to name buffer (letter_count++)
     Game->>Game: updateZombies: std.mem.eql match found
     Game->>Zombie: is_active=false, buffer cleared
+    Game->>Game: calculateScore → score += points; combo_count += 1
+    Game->>Game: spawnPopup → "+{score}" popup at kill position
     Game->>Window: PlaySound(zombie_kill_sound)
-    Window->>Player: Zombie disappears, kill sound plays
+    Window->>Player: Zombie disappears, kill sound plays, popup rises and fades
 ```
 
 ### Journey 2: Missed Zombie and Restart
@@ -537,7 +671,8 @@ sequenceDiagram
     Game->>Game: wave_kills=0, wave_spawned=0, is_transitioning=false
     Game->>Game: letter_count=0, name[0]=0, spawn_timer=0
     Game->>Game: resetZombies → allocator.destroy each slot
-    Game->>Player: Game restarts at wave 1, screen empty
+    Game->>Game: resetScoreState → score=0, combo_count=0, popups deactivated
+    Game->>Player: Game restarts at wave 1, screen empty, score at 0
 ```
 
 ### Journey 3: Input Ignored Outside Text Box
@@ -713,3 +848,15 @@ While `boss != null` and the typed input is a non-empty valid prefix of the boss
 
 **BR-16 — Boss input buffer reverts to 9 on boss kill.**
 When `updateBoss` destroys the boss and sets `boss = null`, `getCurrentMaxInput()` returns 9 on the very next frame. The input buffer content is simultaneously cleared (`letter_count = 0`), so there is no state where the buffer holds more than 9 characters after boss death.
+
+**BR-17 — Per-kill score formula uses vertical position.**
+`calculateScore(name_len, y_pos, is_boss, combo)` returns `round(base × type_mult) × combo_mult`, where `base = name_len × 10 + round(100 × y_pos / screen_height)`. A zombie killed at `y = 0` (top) earns the minimum height bonus (0); one killed at `y = 450` (bottom) earns the maximum (100). Boss kills use `type_mult = 3.0`; standard zombie kills use `type_mult = 1.0`.
+
+**BR-18 — Combo resets on mismatch, not on backspace.**
+The combo resets to 0 only when a non-backspace character is typed that does not prefix-match any active enemy (including the boss phrase). Backspace does not set the mismatch flag and therefore never resets the combo. The combo also resets to 0 when a wave transition begins (`is_transitioning` set to `true`). The combo does not reset between waves while the player is still typing — only the explicit wave-transition event resets it.
+
+**BR-19 — Popup pool recycles oldest entry on overflow.**
+The 32-slot popup pool uses a circular write index (`popup_next`). When all 32 slots are active and a 33rd kill occurs, slot 0 (the oldest) is overwritten. A partially-faded popup may be abruptly replaced; this is acceptable and documented behavior.
+
+**BR-20 — Score accumulates across waves; resets only on restart.**
+`score` is never zeroed between waves. A wave transition does not reset the score — only the combo resets. Score is zeroed exclusively by `resetScoreState`, which is called from the game-restart handler (KEY_ENTER on the game-over screen).
