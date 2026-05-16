@@ -9,6 +9,7 @@
   - [3.2 ZombieNames](#32-zombienames)
   - [3.3 InputBuffer](#33-inputbuffer)
   - [3.4 GameState](#34-gamestate)
+  - [3.5 WaveConfig](#35-waveconfig)
 - [4. Enums and Constants](#4-enums-and-constants)
 - [5. State Machines](#5-state-machines)
   - [5.1 Game State Machine](#51-game-state-machine)
@@ -42,6 +43,11 @@ erDiagram
     GAME_STATE {
         bool is_game_over
         f32 spawn_timer
+        u32 current_wave
+        u32 wave_kills
+        u32 wave_spawned
+        bool is_transitioning
+        f32 transition_timer
         usize frames_counter
         bool mouse_on_text
     }
@@ -62,7 +68,7 @@ erDiagram
         ptr name
         bool is_active
         f32 frame
-        f32 animationTimer
+        f32 animation_timer
     }
 
     ZOMBIE_NAMES {
@@ -70,10 +76,19 @@ erDiagram
         int count
     }
 
+    WAVE_CONFIG {
+        u32 target_wpm
+        f32 spawn_delay
+        f32 fall_speed
+        u32 pool_size
+    }
+
     GAME_STATE ||--|| INPUT_BUFFER : "controls input into"
     GAME_STATE ||--|| ZOMBIE_POOL : "governs lifecycle of"
+    GAME_STATE ||--|| WAVE_CONFIG : "resolves per wave"
     ZOMBIE_POOL ||--o{ ZOMBIE : "holds up to 100"
     ZOMBIE }o--|| ZOMBIE_NAMES : "name points into"
+    WAVE_CONFIG ||--o{ ZOMBIE : "fall_speed set at spawn"
 ```
 
 ---
@@ -94,7 +109,7 @@ const Zombie = struct {
     name: [*:0]const u8,
     is_active: bool,
     frame: f32,
-    animationTimer: f32,
+    animation_timer: f32,
 };
 ```
 
@@ -104,13 +119,13 @@ const Zombie = struct {
 
 | Field | Type | Meaning | Constraints |
 |---|---|---|---|
-| `x` | `f32` | Horizontal screen position (pixels from left edge) | Set at spawn: `intRangeLessThan(u32, 10, 750)` cast to `f32`; never mutated after spawn |
+| `x` | `f32` | Horizontal screen position (pixels from left edge) | Set at spawn via `raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)` → [10, 749]; never mutated after spawn |
 | `y` | `f32` | Vertical screen position (pixels from top edge) | Initialised to `0.0`; incremented by `speed` every frame in `updateZombies` |
-| `speed` | `f32` | Pixels per frame the zombie descends | Fixed at `0.5` for every zombie; set once at spawn |
+| `speed` | `f32` | Pixels per frame the zombie descends | Set once at spawn from `getWaveConfig(current_wave).fall_speed`; ranges from 0.5 (wave 1) to 2.0 (wave 16+); never mutated after spawn |
 | `name` | `[*:0]const u8` | Pointer to a null-terminated C string from `ZombieNames` | Never copied; points directly into the compile-time `ZombieNames` array; never null |
 | `is_active` | `bool` | Whether the zombie is alive and should be updated/drawn | `true` at spawn; set to `false` when the player types the matching name; **memory is not freed on deactivation** |
 | `frame` | `f32` | Current animation frame index (0–16) | Incremented in `drawZombies` every 0.1 s; wraps to `0` when it reaches `ZOMBIE_FRAME_COUNT` (17) |
-| `animationTimer` | `f32` | Accumulated time since last frame advance (seconds) | Starts at `0`; reset to `0` each time a frame advance occurs |
+| `animation_timer` | `f32` | Accumulated time since last frame advance (seconds) | Starts at `0`; reset to `0` each time a frame advance occurs |
 
 **Relationships:**
 - `name` references one entry in the compile-time `ZombieNames` array (pointer, not a copy).
@@ -148,7 +163,7 @@ This is a compile-time constant array of 49 null-terminated C string pointers. I
 
 ### 3.3 InputBuffer
 
-**Source:** `src/main.zig`, lines 14–15
+**Source:** `src/main.zig`, lines 33–34
 
 **Definition:**
 
@@ -157,14 +172,7 @@ var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);  // 10 bytes, zero-initialised
 var letter_count: usize = 0;
 ```
 
-There is also a declared-but-unused pair:
-
-```zig
-var input_text: [MAX_INPUT_CHARS]u8 = undefined;  // unused
-var input_length: usize = 0;                       // unused
-```
-
-`input_text` and `input_length` are declared but never written or read anywhere in the codebase. The active input buffer is exclusively `name` + `letter_count`.
+The active input buffer is exclusively `name` + `letter_count`.
 
 | Component | Type | Size | Meaning |
 |---|---|---|---|
@@ -182,18 +190,23 @@ var input_length: usize = 0;                       // unused
 
 ### 3.4 GameState
 
-**Source:** `src/main.zig`, module-level globals
+**Source:** `src/main.zig`, module-level globals and `FrameContext`
 
-These variables collectively represent the running state of the game session. They are all module-level `var` declarations — there is no encapsulating struct.
+These variables collectively represent the running state of the game session.
 
-| Variable | Type | Initial value | Meaning |
-|---|---|---|---|
-| `is_game_over` | `bool` | `false` | When `true`, the update phase is skipped and the game-over overlay is rendered. Set to `true` when any zombie's `y >= screen_height`. Reset to `false` on `KEY_ENTER` press. |
-| `spawn_timer` | `f32` | `0.0` | Accumulated seconds since the last zombie spawn. Incremented each frame by `raylib.GetFrameTime()`. Reset to `0.0` only when `spawnZombie` actually claims a slot (a full pool keeps the timer hot so the next freed slot is filled immediately). Also reset on game restart. |
-| `frames_counter` | `usize` | `0` (in `FrameContext`) | Counts frames while the mouse is over the text input box. Updated every frame (including on the game-over screen) so the blinking-underscore overlay stays animated. Drives the blink via `(frames_counter / 20) % 2 == 0`; reset to `0` when the mouse leaves the text box. |
-| `mouse_on_text` | `bool` | `false` (in `FrameContext`) | `true` when `raylib.CheckCollisionPointRec` detects the mouse cursor over `text_box`. Controls the cursor icon (`IBEAM` vs `DEFAULT`) and the blinking-underscore overlay; keyboard input is captured every frame regardless of this flag. Lives on the per-frame `FrameContext` passed into `frame()`. |
+| Variable | Type | Initial value | Reset on restart | Meaning |
+|---|---|---|---|---|
+| `is_game_over` | `bool` | `false` | `false` | When `true`, the update phase is skipped and the game-over overlay is rendered. Set to `true` when any zombie's `y >= screen_height`. Reset on `KEY_ENTER` press. |
+| `spawn_timer` | `f32` | `0.0` | `0.0` | Accumulated seconds since the last zombie spawn. Incremented each frame by `raylib.GetFrameTime()`. Reset when `spawnZombie` claims a slot, on wave advance, and on game restart. |
+| `current_wave` | `u32` | `1` | `1` | The currently active wave number. Incremented at the end of each wave transition. Reset to `1` on game restart. |
+| `wave_kills` | `u32` | `0` | `0` | Count of zombies killed by the player in the current wave. Incremented in `updateZombies` on each name match. Reset to `0` at wave advance and restart. |
+| `wave_spawned` | `u32` | `0` | `0` | Count of zombies spawned in the current wave. Incremented in `frame()` on each successful spawn. Reset to `0` at wave advance and restart. |
+| `is_transitioning` | `bool` | `false` | `false` | `true` during the 3-second inter-wave countdown. Blocks spawning, zombie movement, and input. |
+| `transition_timer` | `f32` | `0.0` | `0.0` | Seconds remaining in the current wave transition. Decremented each frame while `is_transitioning`. |
+| `frames_counter` | `usize` | `0` (in `FrameContext`) | — | Counts frames while the mouse is over the text input box. Drives the blink via `(frames_counter / 20) % 2 == 0`; reset to `0` when the mouse leaves. |
+| `mouse_on_text` | `bool` | `false` (in `FrameContext`) | — | `true` when the mouse cursor is over `text_box`. Controls cursor icon and the blinking-underscore overlay. |
 
-**Note on `frames_counter` and `mouse_on_text`:** These are declared as `var` locals within `main()` (`var mouse_on_text = false; var frames_counter: usize = 0;`), not at module scope. They are documented here because they constitute observable game state, even though their scoping differs from the other globals.
+**Note on `frames_counter` and `mouse_on_text`:** These live on the `FrameContext` struct allocated in `main()`, not at module scope. They constitute observable game state, but their scoping differs from the other globals.
 
 **Additional module-level resource handles** (not game logic state, but part of the global module):
 
@@ -201,6 +214,36 @@ These variables collectively represent the running state of the game session. Th
 |---|---|---|
 | `zombie_texture` | `raylib.Texture2D` | GPU texture handle for the zombie spritesheet, loaded once from `assets/z_spritesheet.png` |
 | `zombie_kill_sound` | `raylib.Sound` | Audio handle loaded once from `assets/zombie-hit.wav`; played via `raylib.PlaySound` on zombie kill |
+
+---
+
+### 3.5 WaveConfig
+
+**Source:** `src/main.zig`, lines 56–61 (struct), lines 14–30 (compile-time table), lines 419–429 (lookup function)
+
+**Definition:**
+
+```zig
+const WaveConfig = struct {
+    target_wpm: u32,
+    spawn_delay: f32,
+    fall_speed: f32,
+    pool_size: u32,
+};
+```
+
+`WaveConfig` is a value type — it is never heap-allocated. Instances are returned by value from `getWaveConfig(wave: u32)`.
+
+| Field | Type | Meaning | Range |
+|---|---|---|---|
+| `target_wpm` | `u32` | Target typing speed for the wave in words per minute | 15 (wave 1) – 110 (wave 16+) |
+| `spawn_delay` | `f32` | Seconds between zombie spawns | 0.66 (wave 16+) – 4.80 (wave 1) |
+| `fall_speed` | `f32` | Pixels per frame each zombie descends | 0.5 (wave 1) – 2.0 (wave 16+) |
+| `pool_size` | `u32` | Total zombies to spawn in the wave | 5 (wave 1) – 33+2*(wave-15) (wave 16+) |
+
+**Lookup:** `fn getWaveConfig(wave: u32) WaveConfig` returns `WAVE_TABLE[wave - 1]` for waves 1–15 and computes the scaling formula for waves 16+.
+
+**Storage:** `WAVE_TABLE` is a `[15]WaveConfig` compile-time constant array (`src/main.zig:14–30`). No runtime allocation occurs.
 
 ---
 
@@ -215,8 +258,11 @@ There are no enums in this project. All constants are compile-time `const` value
 | `MAX_ZOMBIES` | `100` | `comptime_int` | Size of the `zombies` fixed pool array; also the maximum number of simultaneously live zombies |
 | `MAX_INPUT_CHARS` | `9` | `comptime_int` | Maximum number of characters the player can type; the `name` buffer is `MAX_INPUT_CHARS + 1` bytes to accommodate the null terminator |
 | `ZOMBIE_FRAME_COUNT` | `17` | `comptime_int` | Number of horizontal animation frames in `z_spritesheet.png`; used to compute `frame_width` and to wrap the animation counter |
-| `BUFFER_SIZE` | `16` | `comptime_int` | Declared but not actively used in any logic in the current codebase |
-| `spawn_delay` | `3.0` | `f32` | Seconds between zombie spawns; `spawnZombie` is called when `spawn_timer >= spawn_delay` |
+| `ZOMBIE_ANIMATION_FRAME_DURATION` | `0.1` | `f32` | Seconds between animation frame advances in `drawZombies` |
+| `WAVE_TRANSITION_DURATION` | `3.0` | `f32` | Seconds the inter-wave countdown lasts before the next wave begins |
+| `WAVE_TABLE` | `[15]WaveConfig` | compile-time array | Explicit difficulty parameters for waves 1–15 |
+| `ZOMBIE_SPAWN_X_MIN` | `10` | `c_int` | Left boundary for random zombie spawn x position (pixels from left edge) |
+| `ZOMBIE_SPAWN_X_MAX` | `749` | `c_int` | Right boundary for random zombie spawn x position (screen_width - 51) |
 | `screen_width` | `800` | `comptime_int` | Window width in pixels; passed to `raylib.InitWindow` and used for centering UI |
 | `screen_height` | `450` | `comptime_int` | Window height in pixels; a zombie reaching `y >= screen_height` triggers game over |
 
@@ -247,16 +293,21 @@ These are C constants imported from `raylib.h` via `src/raylib.zig` and referenc
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Playing : startup
+    [*] --> Playing : startup (wave 1)
+
+    Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\n(is_transitioning = true,\ntransition_timer = 3.0)
+
+    Transitioning --> Playing : transition_timer <= 0\n(current_wave += 1, wave counters reset,\nresetZombies called)
 
     Playing --> GameOver : zombie.y >= screen_height\n(updateZombies sets is_game_over = true)
 
-    GameOver --> Playing : KEY_ENTER pressed\n(is_game_over = false, letter_count = 0,\nspawn_timer = 0.0, resetZombies called)
+    GameOver --> Playing : KEY_ENTER pressed\n(is_game_over = false, current_wave = 1,\nwave counters reset, resetZombies called)
 ```
 
 **Notes:**
-- While in the `Playing` state the update phase runs every frame: input is captured, `spawn_timer` accumulates, `spawnZombie` may fire, and `updateZombies` runs.
-- While in the `GameOver` state the update phase is entirely skipped (gated by `if (!is_game_over)`); only the draw phase runs, showing the overlay.
+- While in the `Playing` state the update phase runs every frame: input is captured, `spawn_timer` accumulates, `spawnZombie` fires up to `pool_size` times, and `updateZombies` runs.
+- While in the `Transitioning` state the update phase is skipped (gated by `!is_transitioning`); only the transition countdown draw and the timer decrement run.
+- While in the `GameOver` state the update phase is entirely skipped (gated by `!is_game_over`); only the draw phase runs, showing the overlay.
 - `resetZombies` frees all heap-allocated `Zombie` instances and sets every pool slot to `null` before re-entering `Playing`.
 
 ---

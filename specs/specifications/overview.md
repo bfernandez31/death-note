@@ -14,11 +14,11 @@
 
 ## Project Summary
 
-death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800x450 window; the player destroys each zombie by clicking the input box and typing the zombie's displayed name exactly before it reaches the bottom of the screen. A missed zombie triggers game over, and pressing Enter restarts the round.
+death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×450 window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. Waves escalate in speed and zombie count using a per-wave difficulty table. A missed zombie triggers game over; pressing Enter restarts from wave 1.
 
 The game is a single-file-dominant desktop application aimed at anyone who wants a minimalist, fast-compilation typing challenge. There is no server, no persistence, and no network component: the entire experience runs locally from a single native executable (`death-note`) built with Zig's integrated build system.
 
-Core value comes from simplicity and hackability. The entire game logic lives in roughly 300 lines of idiomatic Zig (`src/main.zig`), with raylib handling all windowing, rendering, audio, and input. New zombie names, speed curves, or spawn rates can be tuned by editing a handful of compile-time constants at the top of that file, making the project an accessible starting point for Zig and raylib learners.
+Core value comes from simplicity and hackability. The entire game logic lives in `src/main.zig`, with raylib handling all windowing, rendering, audio, and input. Difficulty, wave parameters, and spawn timing are tuned by editing compile-time constants at the top of that file, making the project an accessible starting point for Zig and raylib learners.
 
 ---
 
@@ -51,6 +51,7 @@ graph TB
     ZombieNames["src/zombie_names.zig\n(name pool, 49 names)"]
     RaylibLib["raylib static library\n(rendering / audio / input)"]
     ZombiePool["Zombie pool\n[MAX_ZOMBIES]?*Zombie"]
+    WaveTable["WAVE_TABLE\n[15]WaveConfig compile-time"]
     Assets["assets/\n(spritesheet, wav, fonts)"]
     Window["OS window\n(800×450 @ 60 FPS)"]
     AudioDevice["OS audio device\n(WAV playback)"]
@@ -59,6 +60,7 @@ graph TB
     Main --> RaylibWrapper
     Main --> ZombieNames
     Main --> ZombiePool
+    Main --> WaveTable
     Main --> InputBuf
     RaylibWrapper --> RaylibLib
     RaylibLib --> Window
@@ -66,7 +68,7 @@ graph TB
     RaylibLib --> Assets
 ```
 
-The update phase runs only when `is_game_over` is false. `spawnZombie` fires every `spawn_delay` (3.0 s) and writes into the first null slot in `zombies`. `updateZombies` advances each active zombie's `y`, checks for a typed-name match via `std.mem.eql`, and sets `is_game_over = true` if any zombie crosses `screen_height`. `drawZombies` renders the spritesheet frame and name label for every active zombie. On game over, the draw phase shows a restart prompt; pressing Enter calls `resetZombies` to free all allocations and clears the input buffer.
+The game has three states: **Playing**, **Transitioning**, and **GameOver**. During `Playing`, the update phase runs: input is captured, `spawn_timer` accumulates, `spawnZombie` fires at the current wave's spawn rate up to the wave's `pool_size` quota, and `updateZombies` advances each zombie's `y` and checks for typed-name matches via `std.mem.eql`. When all wave zombies are spawned and killed, the game enters `Transitioning` — a 3-second countdown after which `current_wave` advances and the next wave begins. If any zombie's `y` crosses `screen_height`, the game enters `GameOver`; pressing Enter resets all state and restarts from wave 1. Fall speed and spawn timing scale per-wave using `getWaveConfig(current_wave)` backed by the compile-time `WAVE_TABLE`.
 
 ---
 
@@ -136,7 +138,7 @@ The following conventions are derived from `CLAUDE.md` and `.ai-board/memory/con
 
 **C interop wall.** `@cImport` appears only in `src/raylib.zig`. All game code imports that wrapper module and uses its re-exported symbols. Do not add `@cImport` anywhere else.
 
-**Named compile-time constants.** Magic numbers are not permitted inline. All tunables (`MAX_ZOMBIES`, `MAX_INPUT_CHARS`, `ZOMBIE_FRAME_COUNT`, `spawn_delay`, `screen_width`, `screen_height`) are declared at the top of `src/main.zig`. New tunables follow the same pattern.
+**Named compile-time constants.** Magic numbers are not permitted inline. All tunables (`MAX_ZOMBIES`, `MAX_INPUT_CHARS`, `ZOMBIE_FRAME_COUNT`, `WAVE_TRANSITION_DURATION`, `WAVE_TABLE`, `screen_width`, `screen_height`) are declared at the top of `src/main.zig`. New tunables follow the same pattern.
 
 **Naming discipline.**
 - Variables and runtime state: `snake_case` (`spawn_timer`, `is_game_over`, `letter_count`).
