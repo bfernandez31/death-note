@@ -35,7 +35,7 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Seven `test "..." {}` blocks exist in `src/main.zig`:
+**Current state**: Thirteen `test "..." {}` blocks exist in `src/main.zig`:
 - `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
 - `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
 - `test "getWaveConfig returns correct values for wave 1"` — verifies wave 1 difficulty parameters
@@ -43,8 +43,14 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 - `test "wave completes when kills equals pool size"` — asserts wave completion condition logic
 - `test "getWaveConfig scales correctly for wave 16+"` — verifies endless scaling formula (waves 16, 20, 100)
 - `test "frame index wraps after ZOMBIE_FRAME_COUNT"` — covers animation-frame wrap-around arithmetic
+- `test "boss wave detection"` — verifies `wave % 5 == 0` is true for waves 5, 10, 15, 20 and false for waves 1, 4, 6, 14
+- `test "boss spawn threshold calculation"` — verifies `(pool_size + 1) / 2` yields correct threshold for waves 5, 10, 20
+- `test "getCurrentMaxInput returns correct limits"` — verifies returns `MAX_INPUT_CHARS` when `boss == null` and `MAX_BOSS_INPUT_CHARS` when boss is set
+- `test "boss phrase validity"` — verifies all 10 phrases in `BossPhrases` are non-empty, ≤ 35 characters, and contain only lowercase letters and spaces
+- `test "input buffer capacity for boss phrases"` — verifies `name.len >= MAX_BOSS_INPUT_CHARS + 1`
+- `test "wave completion requires boss kill on boss waves"` — verifies the `boss_done` gate logic for boss waves vs. non-boss waves
 
-All seven are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
+All thirteen are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
 
 ---
 
@@ -55,8 +61,9 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(7 blocks — name match, input bounds, wave config×4, frame wrap)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(13 blocks — name match, input bounds, wave config×4, frame wrap,\nboss wave detection, boss threshold, boss input limit,\nboss phrase validity, buffer capacity, wave completion gate)"]
     UNIT_NAMES["Unit tests\nsrc/zombie_names.zig\n(0 blocks — reachable via @import)"]
+    UNIT_PHRASES["Unit tests\nsrc/boss_phrases.zig\n(0 blocks — reachable via @import)"]
     RAYLIB_ZIG["src/raylib.zig\n(C interop wall — not unit-testable)"]
     INTEGRATION["Integration tests\n(none — requires real raylib window)"]
     E2E["E2E / GUI tests\n(none — manual zig build run only)"]
@@ -65,6 +72,7 @@ graph TB
     ADD_TEST --> RUN_ARTIFACT
     RUN_ARTIFACT --> UNIT_MAIN
     RUN_ARTIFACT --> UNIT_NAMES
+    RUN_ARTIFACT --> UNIT_PHRASES
     UNIT_MAIN -.->|not testable in isolation| RAYLIB_ZIG
     INTEGRATION -.->|not feasible| RUN_ARTIFACT
     E2E -.->|not feasible| RUN_ARTIFACT
@@ -78,7 +86,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 7 | Pure-logic tests: name-match equality, input-buffer bounds enforcement, wave config correctness (waves 1, 15, 16+), wave completion logic, animation-frame wrap-around |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 13 | Pure-logic tests: name-match equality, input-buffer bounds, wave config (waves 1, 15, 16+), wave completion, frame wrap-around, boss wave detection, boss spawn threshold, boss input limit, boss phrase validity, buffer capacity, boss wave completion gate |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 
@@ -94,7 +102,7 @@ Zig convention places `test "..." { ... }` blocks directly inside the module und
 
 ### Reachability from `src/main.zig`
 
-The `test_step` in `build.zig` specifies `src/main.zig` as the sole `root_source_file`. Zig only discovers test blocks in modules that are reachable (directly or transitively) from that root. `src/zombie_names.zig` is already imported from `src/main.zig` via `const ZombieNames = @import("zombie_names.zig").ZombieNames;` (line 5), so test blocks added there are automatically discovered. `src/raylib.zig` is also imported, but its contents are a C-interop wall and not unit-testable.
+The `test_step` in `build.zig` specifies `src/main.zig` as the sole `root_source_file`. Zig only discovers test blocks in modules that are reachable (directly or transitively) from that root. `src/zombie_names.zig` is imported via `const ZombieNames = @import("zombie_names.zig").ZombieNames;` and `src/boss_phrases.zig` via `const BossPhrases = @import("boss_phrases.zig").BossPhrases;` — test blocks added to either are automatically discovered. `src/raylib.zig` is also imported, but its contents are a C-interop wall and not unit-testable.
 
 ### Keeping raylib out of testable helpers
 
@@ -157,7 +165,7 @@ This is not currently set up and is not required by the project constitution. Un
 
 | Command | Purpose |
 |---|---|
-| `zig build test` | Compile and run all 7 unit tests (uses `src/main.zig` as the root source file for test discovery) |
+| `zig build test` | Compile and run all 13 unit tests (uses `src/main.zig` as the root source file for test discovery) |
 | `zig build --summary all` | Type-check the entire codebase without running it; surfaces type errors and unreachable code |
 | `zig fmt --check .` | Formatting check across all `.zig` files; serves as a lint surrogate (no separate linter is configured) |
 | `zig build` | Full build; also type-checks as a side effect; the primary gate before merging |

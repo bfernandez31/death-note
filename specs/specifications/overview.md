@@ -14,7 +14,7 @@
 
 ## Project Summary
 
-death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×450 window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. Waves escalate in speed and zombie count using a per-wave difficulty table. A missed zombie triggers game over; pressing Enter restarts from wave 1.
+death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×450 window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. On every fifth wave a boss zombie spawns at 50% kills: larger, red-tinted, and requiring the player to type a full multi-word phrase to defeat it. Waves escalate in speed and zombie count using a per-wave difficulty table. A missed zombie or boss triggers game over; pressing Enter restarts from wave 1.
 
 The game is a single-file-dominant desktop application aimed at anyone who wants a minimalist, fast-compilation typing challenge. There is no server, no persistence, and no network component: the entire experience runs locally from a single native executable (`death-note`) built with Zig's integrated build system.
 
@@ -42,24 +42,28 @@ Core value comes from simplicity and hackability. The entire game logic lives in
 
 ## Architecture Overview
 
-death-note follows a classic game-loop architecture: initialize resources, loop over update-then-draw, teardown on exit. There are no layers of abstraction beyond a thin C-interop wall. The entire gameplay surface lives in `src/main.zig`; `src/raylib.zig` re-exports raylib symbols; `src/zombie_names.zig` supplies the name pool.
+death-note follows a classic game-loop architecture: initialize resources, loop over update-then-draw, teardown on exit. There are no layers of abstraction beyond a thin C-interop wall. The entire gameplay surface lives in `src/main.zig`; `src/raylib.zig` re-exports raylib symbols; `src/zombie_names.zig` supplies the zombie name pool; `src/boss_phrases.zig` supplies the boss phrase pool.
 
 ```mermaid
 graph TB
     Main["src/main.zig\n(game loop)"]
     RaylibWrapper["src/raylib.zig\n(C interop wall)"]
     ZombieNames["src/zombie_names.zig\n(name pool, 49 names)"]
+    BossPhrases["src/boss_phrases.zig\n(phrase pool, 10 phrases)"]
     RaylibLib["raylib static library\n(rendering / audio / input)"]
     ZombiePool["Zombie pool\n[MAX_ZOMBIES]?*Zombie"]
+    BossPtr["Boss pointer\n?*Zombie (0 or 1)"]
     WaveTable["WAVE_TABLE\n[15]WaveConfig compile-time"]
     Assets["assets/\n(spritesheet, wav, fonts)"]
     Window["OS window\n(800×450 @ 60 FPS)"]
     AudioDevice["OS audio device\n(WAV playback)"]
-    InputBuf["Input buffer\nname[MAX_INPUT_CHARS+1]"]
+    InputBuf["Input buffer\nname[MAX_BOSS_INPUT_CHARS+1]"]
 
     Main --> RaylibWrapper
     Main --> ZombieNames
+    Main --> BossPhrases
     Main --> ZombiePool
+    Main --> BossPtr
     Main --> WaveTable
     Main --> InputBuf
     RaylibWrapper --> RaylibLib
@@ -68,7 +72,7 @@ graph TB
     RaylibLib --> Assets
 ```
 
-The game has three states: **Playing**, **Transitioning**, and **GameOver**. During `Playing`, the update phase runs: input is captured, `spawn_timer` accumulates, `spawnZombie` fires at the current wave's spawn rate up to the wave's `pool_size` quota, and `updateZombies` advances each zombie's `y` and checks for typed-name matches via `std.mem.eql`. When all wave zombies are spawned and killed, the game enters `Transitioning` — a 3-second countdown after which `current_wave` advances and the next wave begins. If any zombie's `y` crosses `screen_height`, the game enters `GameOver`; pressing Enter resets all state and restarts from wave 1. Fall speed and spawn timing scale per-wave using `getWaveConfig(current_wave)` backed by the compile-time `WAVE_TABLE`.
+The game has three states: **Playing**, **Transitioning**, and **GameOver**. During `Playing`, the update phase runs: input is captured (limit dynamically 9 or 35 characters via `getCurrentMaxInput()`), `spawn_timer` accumulates, `spawnZombie` fires at the current wave's spawn rate, `updateBoss` advances the boss and checks for phrase completion, and `updateZombies` advances regular zombies and checks for name matches. On boss waves (multiples of 5), `spawnBoss` fires at 50% kills. When all pool zombies are spawned and killed — and the boss is defeated on boss waves — the game enters `Transitioning`: a 3-second countdown after which `current_wave` advances and the next wave begins. If any zombie or the boss crosses `screen_height`, the game enters `GameOver`; pressing Enter resets all state (including boss state) and restarts from wave 1.
 
 ---
 
@@ -89,9 +93,10 @@ death-note/
 │   └── memory/
 │       └── constitution.md  # Governance, code patterns, testing standards, security rules
 └── src/
-│   ├── main.zig           # Entry point, game loop, zombie lifecycle, input handling, rendering; FrameContext struct for WASM loop
+│   ├── main.zig           # Entry point, game loop, zombie and boss lifecycle, input handling, rendering; FrameContext struct for WASM loop
 │   ├── raylib.zig         # Thin @cImport wrapper; sole location for C header imports (includes emscripten.h on web target)
 │   ├── zombie_names.zig   # Compile-time array of 49 zero-terminated C-string zombie names
+│   ├── boss_phrases.zig   # Compile-time array of 10 zero-terminated C-string boss phrases (multi-word, ≤ 35 chars)
 │   └── web/
 │       └── shell.html     # Emscripten HTML shell: loading spinner, WebGL guard, canvas focus
 └── assets/
@@ -195,9 +200,10 @@ C4Context
 
 | Module | Path | Responsibility | Dependencies | Public Surface Area |
 |---|---|---|---|---|
-| Game entry point and loop | `src/main.zig` | Seeds PRNG, initializes window and audio device, runs the update-draw loop, manages zombie lifecycle (spawn / update / draw / reset), handles text input and game-over state | `src/raylib.zig`, `src/zombie_names.zig`, Zig stdlib (`std.Random`, `std.heap`, `std.mem`, `std.time`) | `pub fn main() !void` (executable entry point); all other declarations are file-private |
-| raylib C interop wrapper | `src/raylib.zig` | Sole location for `@cImport`; re-exports all symbols from `raylib.h`, `raymath.h`, and `rlgl.h` under the `raylib` namespace | raylib static library headers (`raylib.h`, `raymath.h`, `rlgl.h`) | `pub usingnamespace @cImport(…)` — the entire raylib, raymath, and rlgl C API surface |
+| Game entry point and loop | `src/main.zig` | Seeds PRNG, initializes window and audio device, runs the update-draw loop, manages zombie and boss lifecycle (spawn / update / draw / reset), handles text input and game-over state | `src/raylib.zig`, `src/zombie_names.zig`, `src/boss_phrases.zig`, Zig stdlib (`std.Random`, `std.heap`, `std.mem`, `std.time`) | `pub fn main() !void` (executable entry point); all other declarations are file-private |
+| raylib C interop wrapper | `src/raylib.zig` | Sole location for `@cImport`; re-exports all symbols from `raylib.h`, `raymath.h`, and `rlgl.h` under the `raylib` namespace | raylib static library headers (`raylib.h`, `raymath.h`, `rlgl.h`) | `pub const c = @cImport(…)` — the entire raylib, raymath, and rlgl C API surface |
 | Zombie name pool | `src/zombie_names.zig` | Provides a compile-time array of 49 null-terminated C-string first names used as zombie display names and kill targets | None | `pub const ZombieNames: [49][*:0]const u8` |
+| Boss phrase pool | `src/boss_phrases.zig` | Provides a compile-time array of 10 null-terminated C-string multi-word phrases used as boss kill targets | None | `pub const BossPhrases: [10][*:0]const u8` |
 | Build graph | `build.zig` | Declares the `death-note` executable, wires raylib as a static dependency, exposes `run`, `test`, and `web` build steps, propagates `optimize`, `raylib-optimize`, and `strip` options | Zig build system stdlib, `build.zig.zon` (raylib dependency) | `pub fn build(b: *std.Build) void` — consumed by `zig build` |
 | Web HTML shell | `src/web/shell.html` | Emscripten `--shell-file`; renders a loading spinner until `Module.onRuntimeInitialized`, performs WebGL availability detection, and ensures the canvas captures keyboard focus on click | None (static HTML/CSS/JS — no external dependencies per FR-011) | Consumed by the `web` build step via `emcc --shell-file` |
 | CI/CD workflow | `.github/workflows/deploy-web.yml` | GitHub Actions pipeline: installs pinned Zig and Emscripten toolchains, runs `zig build test` as a gate, builds the WASM bundle with `zig build web -Doptimize=ReleaseSmall`, and publishes the output to GitHub Pages | GitHub Actions, `actions/upload-pages-artifact`, `actions/deploy-pages` | Triggered by push to `main` and `workflow_dispatch` |

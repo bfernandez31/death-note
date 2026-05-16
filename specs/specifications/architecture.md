@@ -44,6 +44,7 @@ graph TB
         MAIN["src/main.zig\n(game loop, state, logic)"]
         RLIB["src/raylib.zig\n(C interop wrapper)"]
         NAMES["src/zombie_names.zig\n(name data table)"]
+        PHRASES["src/boss_phrases.zig\n(boss phrase data table)"]
     end
 
     subgraph External_OS["External / OS"]
@@ -58,6 +59,7 @@ graph TB
 
     MAIN --> RLIB
     MAIN --> NAMES
+    MAIN --> PHRASES
     RLIB --> RAYLIB_LIB
     RAYLIB_LIB --> WINDOW
     RAYLIB_LIB --> AUDIO
@@ -103,12 +105,13 @@ This codebase does not use a traditional layered architecture. All concerns coll
 
 | Layer | Files | Responsibilities |
 |---|---|---|
-| **Presentation / Rendering** | `src/main.zig` (functions `drawZombies`, lines 205–257; inline draw calls in main loop, lines 121–162) | Clears background, draws text input box, blinking cursor, zombie sprites (spritesheet slice via `DrawTexturePro`), zombie names, game-over overlay |
-| **Input** | `src/main.zig` (lines 76–106) | Mouse hit-test against text box rectangle; `GetCharPressed` loop to fill `name[]`; backspace handling; `KEY_ENTER` restart |
-| **Gameplay State** | `src/main.zig` (functions `updateZombies` lines 166–203, `spawnZombie` lines 260–283, `resetZombies` lines 285–292; module-level globals lines 7–44) | Zombie y-position advance, game-over detection, name-match comparison, spawn timer, pool management |
-| **Resources** | `src/main.zig` (lines 57–61); `assets/` directory | Load/unload `zombie-hit.wav` and `z_spritesheet.png` once at startup; assets referenced by relative path |
-| **C Interop** | `src/raylib.zig` (lines 1–5) | Single `pub usingnamespace @cImport` aggregating `raylib.h`, `raymath.h`, `rlgl.h`; all raylib symbols are re-exported from this module |
+| **Presentation / Rendering** | `src/main.zig` (`drawZombies`, `drawBoss`, inline draw calls) | Clears background, draws text input box, blinking cursor, zombie sprites, boss sprite (2× scale, red tint), boss phrase text, boss health bar, zombie names, game-over overlay |
+| **Input** | `src/main.zig` | Mouse hit-test against text box; `GetCharPressed` loop (limit via `getCurrentMaxInput()`); backspace handling; `KEY_ENTER` restart |
+| **Gameplay State** | `src/main.zig` (`updateZombies`, `updateBoss`, `spawnZombie`, `spawnBoss`, `resetZombies`, `resetBoss`; module-level globals) | Zombie and boss y-position advance, game-over detection, name/phrase-match comparison, spawn timer, pool management, boss priority, wave completion gate |
+| **Resources** | `src/main.zig`; `assets/` directory | Load/unload `zombie-hit.wav` and `z_spritesheet.png` once at startup; boss reuses both assets — no new resource loads |
+| **C Interop** | `src/raylib.zig` (lines 1–5) | Single `pub const c = @cImport(…)` aggregating `raylib.h`, `raymath.h`, `rlgl.h`; all raylib symbols are re-exported from this module |
 | **Name Data** | `src/zombie_names.zig` (line 1) | Compile-time array of 49 zero-terminated C string literals; no logic, no imports |
+| **Boss Phrase Data** | `src/boss_phrases.zig` (line 1) | Compile-time array of 10 zero-terminated C string literals (multi-word phrases ≤ 35 chars); no logic, no imports; follows `zombie_names.zig` pattern |
 
 > **Note on collapse**: Because Zig does not enforce package boundaries within a binary in the way that multi-crate or multi-module systems do, every layer above is reachable from every other layer within `src/main.zig`. The walling of C interop into `src/raylib.zig` is the sole enforced boundary.
 
@@ -178,13 +181,15 @@ graph LR
     MAIN["src/main.zig"]
     RLIB["src/raylib.zig"]
     NAMES["src/zombie_names.zig"]
+    PHRASES["src/boss_phrases.zig"]
     CIMPORT["@cImport\n(raylib.h, raymath.h, rlgl.h)"]
     RAYLIB_DEP["raylib dependency\n(build.zig.zon)"]
     BUILD["build.zig"]
 
     MAIN -->|"@import('raylib.zig')"| RLIB
     MAIN -->|"@import('zombie_names.zig')"| NAMES
-    RLIB -->|"pub usingnamespace"| CIMPORT
+    MAIN -->|"@import('boss_phrases.zig')"| PHRASES
+    RLIB -->|"pub const c = @cImport"| CIMPORT
     BUILD -->|"b.dependency('raylib')"| RAYLIB_DEP
     CIMPORT -.->|"headers from"| RAYLIB_DEP
 ```
