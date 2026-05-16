@@ -41,19 +41,19 @@
 **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 **RULE (constitution): Extend existing test blocks in `src/main.zig` — do not create new test files.**
 
-- [ ] T007 [US1] Add test `"getWaveConfig returns correct values for wave 1"` in `src/main.zig` — verify target_wpm=15, spawn_delay=4.80, fall_speed=0.5, pool_size=5
-- [ ] T008 [US1] Add test `"getWaveConfig returns correct values for wave 15"` in `src/main.zig` — verify target_wpm=100, spawn_delay=0.72, fall_speed=1.9, pool_size=33
-- [ ] T009 [US1] Add test `"wave completes when kills equals pool size"` in `src/main.zig` — set wave_spawned and wave_kills to pool_size, verify completion condition evaluates to true
+- [X] T007 [US1] Add test `"getWaveConfig returns correct values for wave 1"` in `src/main.zig` — verify target_wpm=15, spawn_delay=4.80, fall_speed=0.5, pool_size=5 ✅ DONE
+- [X] T008 [US1] Add test `"getWaveConfig returns correct values for wave 15"` in `src/main.zig` — verify target_wpm=100, spawn_delay=0.72, fall_speed=1.9, pool_size=33 ✅ DONE
+- [X] T009 [US1] Add test `"wave completes when kills equals pool size"` in `src/main.zig` — set wave_spawned and wave_kills to pool_size, verify completion condition evaluates to true ✅ DONE
 
 ### Implementation for User Story 1
 
 - [X] T010 [US1] Parameterize zombie speed in `spawnZombie` (line 326): change `.speed = ZOMBIE_FALL_SPEED` to `.speed = getWaveConfig(current_wave).fall_speed` in `src/main.zig` ✅ DONE
 - [X] T011 [US1] Parameterize spawn delay in frame function (line 99): change `spawn_timer >= spawn_delay` to `spawn_timer >= getWaveConfig(current_wave).spawn_delay` in `src/main.zig` ✅ DONE
-- [ ] T012 [US1] Gate spawning on pool_size: before the `spawnZombie` call (line 103), add condition `wave_spawned < getWaveConfig(current_wave).pool_size`. After successful spawn, increment `wave_spawned += 1` in `src/main.zig`
-- [ ] T013 [US1] Track wave kills: in `updateZombies` after `zomb.is_active = false` (line 248), increment `wave_kills += 1` in `src/main.zig`
-- [ ] T014 [US1] Add wave completion detection: after `updateZombies()` call (line 108), check if `wave_kills >= cfg.pool_size and wave_spawned >= cfg.pool_size`, then set `is_transitioning = true` and `transition_timer = WAVE_TRANSITION_DURATION` in `src/main.zig`
-- [ ] T015 [US1] Add wave transition countdown logic in the `frame` function: if `is_transitioning`, decrement `transition_timer` by `GetFrameTime()`. When timer <= 0: increment `current_wave`, reset `wave_kills = 0`, `wave_spawned = 0`, `spawn_timer = 0.0`, set `is_transitioning = false`, call `resetZombies(ctx.allocator)` in `src/main.zig`
-- [ ] T016 [US1] Add wave transition screen rendering in the draw phase of `src/main.zig`: when `is_transitioning`, draw "WAVE {n} — {wpm} WPM challenge — {countdown}..." centered on screen using `std.fmt.bufPrintZ` and `raylib.DrawText`
+- [X] T012 [US1] Gate spawning on pool_size: before the `spawnZombie` call (line 103), add condition `wave_spawned < getWaveConfig(current_wave).pool_size`. After successful spawn, increment `wave_spawned += 1` in `src/main.zig` ✅ DONE
+- [X] T013 [US1] Track wave kills: in `updateZombies` after `zomb.is_active = false` (line 248), increment `wave_kills += 1` in `src/main.zig` ✅ DONE
+- [X] T014 [US1] Add wave completion detection: after `updateZombies()` call (line 108), check if `wave_kills >= cfg.pool_size and wave_spawned >= cfg.pool_size`, then set `is_transitioning = true` and `transition_timer = WAVE_TRANSITION_DURATION` in `src/main.zig` ✅ DONE
+- [X] T015 [US1] Add wave transition countdown logic in the `frame` function: if `is_transitioning`, decrement `transition_timer` by `GetFrameTime()`. When timer <= 0: increment `current_wave`, reset `wave_kills = 0`, `wave_spawned = 0`, `spawn_timer = 0.0`, set `is_transitioning = false`, call `resetZombies(ctx.allocator)` in `src/main.zig` ✅ DONE
+- [X] T016 [US1] Add wave transition screen rendering in the draw phase of `src/main.zig`: when `is_transitioning`, draw "WAVE {n} — {wpm} WPM challenge — {countdown}..." centered on screen using `std.fmt.bufPrintZ` and `raylib.DrawText` ✅ DONE
 
 **Checkpoint**: Wave progression loop works — player can complete wave 1 and advance to wave 2 with correct difficulty parameters
 
@@ -81,7 +81,7 @@
 
 ### Implementation for User Story 4
 
-- [ ] T018 [US4] Gate the update phase in `frame` function: change `if (!is_game_over)` (line 75) to `if (!is_game_over and !is_transitioning)` in `src/main.zig` — this freezes input processing, spawning, and zombie movement during wave transition
+- [X] T018 [US4] Gate the update phase in `frame` function: change `if (!is_game_over)` (line 75) to `if (!is_game_over and !is_transitioning)` in `src/main.zig` — this freezes input processing, spawning, and zombie movement during wave transition ✅ DONE
 
 **Checkpoint**: Gameplay freezes completely during wave transition countdown
 

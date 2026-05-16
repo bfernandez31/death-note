@@ -100,7 +100,7 @@ fn frame(ctx: *FrameContext) void {
         ctx.frames_counter = 0;
     }
 
-    if (!is_game_over) {
+    if (!is_game_over and !is_transitioning) {
         // Accept keystrokes regardless of mouse position so players can start typing
         // immediately on load (especially on web, where focus is on the canvas, not the
         // text box hit-test rectangle).
@@ -124,17 +124,38 @@ fn frame(ctx: *FrameContext) void {
         spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
 
         // Check if enough time has passed to spawn a new zombie
-        if (spawn_timer >= getWaveConfig(current_wave).spawn_delay) {
-            // Only reset the timer when a slot was actually claimed; if the pool is full,
-            // keep trying every frame so a freed slot is reused immediately instead of
-            // stalling spawns indefinitely.
+        if (spawn_timer >= getWaveConfig(current_wave).spawn_delay and wave_spawned < getWaveConfig(current_wave).pool_size) {
             const spawned = spawnZombie(ctx.allocator) catch false;
-            if (spawned) spawn_timer = 0.0;
+            if (spawned) {
+                spawn_timer = 0.0;
+                wave_spawned += 1;
+            }
         }
 
         // Update zombies
         updateZombies();
+
+        // Wave completion detection
+        const cfg = getWaveConfig(current_wave);
+        if (wave_kills >= cfg.pool_size and wave_spawned >= cfg.pool_size) {
+            is_transitioning = true;
+            transition_timer = WAVE_TRANSITION_DURATION;
+        }
     }
+
+    // Wave transition countdown
+    if (is_transitioning) {
+        transition_timer -= raylib.GetFrameTime();
+        if (transition_timer <= 0) {
+            current_wave += 1;
+            wave_kills = 0;
+            wave_spawned = 0;
+            spawn_timer = 0.0;
+            is_transitioning = false;
+            resetZombies(ctx.allocator);
+        }
+    }
+
     // Draw
     raylib.BeginDrawing();
     defer raylib.EndDrawing();
@@ -168,8 +189,16 @@ fn frame(ctx: *FrameContext) void {
             // Reset all zombies
             resetZombies(ctx.allocator);
         }
+    } else if (is_transitioning) {
+        const next_wave = current_wave + 1;
+        const next_cfg = getWaveConfig(next_wave);
+        const countdown = @as(u32, @intFromFloat(@ceil(transition_timer)));
+
+        var wave_buf: [64]u8 = undefined;
+        const wave_text = std.fmt.bufPrintZ(&wave_buf, "WAVE {d} — {d} WPM challenge — {d}...", .{ next_wave, next_cfg.target_wpm, countdown }) catch "NEXT WAVE";
+        const wave_text_width = raylib.MeasureText(wave_text.ptr, 30);
+        raylib.DrawText(wave_text.ptr, @divTrunc(screen_width - wave_text_width, 2), screen_height / 2 - 15, 30, raylib.DARKGRAY);
     } else {
-        // Draw zombies if the game is not over
         drawZombies();
     }
     // Draw blinking underscore char
@@ -273,11 +302,10 @@ fn updateZombies() void {
 
             // Check for equality
             if (std.mem.eql(u8, typed_name, zomb_name_slice)) {
-                zomb.is_active = false; // Mark zombie as "removed"
+                zomb.is_active = false;
                 letter_count = 0;
                 name[letter_count] = '\x00';
-
-                // Play the zombie kill sound
+                wave_kills += 1;
                 raylib.PlaySound(zombie_kill_sound);
             }
         }
@@ -456,6 +484,32 @@ test "input buffer bounds" {
 
     // buffer remains null-terminated at position count
     try std.testing.expectEqual(@as(u8, '\x00'), buf[count]);
+}
+
+test "getWaveConfig returns correct values for wave 1" {
+    const cfg = getWaveConfig(1);
+    try std.testing.expectEqual(@as(u32, 15), cfg.target_wpm);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.80), cfg.spawn_delay, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), cfg.fall_speed, 0.01);
+    try std.testing.expectEqual(@as(u32, 5), cfg.pool_size);
+}
+
+test "getWaveConfig returns correct values for wave 15" {
+    const cfg = getWaveConfig(15);
+    try std.testing.expectEqual(@as(u32, 100), cfg.target_wpm);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.72), cfg.spawn_delay, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.9), cfg.fall_speed, 0.01);
+    try std.testing.expectEqual(@as(u32, 33), cfg.pool_size);
+}
+
+test "wave completes when kills equals pool size" {
+    const cfg = getWaveConfig(1);
+    const kills: u32 = cfg.pool_size;
+    const spawned: u32 = cfg.pool_size;
+    try std.testing.expect(kills >= cfg.pool_size and spawned >= cfg.pool_size);
+
+    const partial_kills: u32 = cfg.pool_size - 1;
+    try std.testing.expect(!(partial_kills >= cfg.pool_size and spawned >= cfg.pool_size));
 }
 
 // T005: frame-index wrap — mirrors the animation increment in drawZombies
