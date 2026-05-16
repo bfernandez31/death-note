@@ -1,8 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const raylib = @import("raylib.zig").c;
 
 const ZombieNames = @import("zombie_names.zig").ZombieNames;
 const BossPhrases = @import("boss_phrases.zig").BossPhrases;
+
+const is_emscripten = builtin.target.os.tag == .emscripten;
 
 const MAX_ZOMBIES = 100;
 const MAX_INPUT_CHARS = 40;
@@ -13,7 +16,7 @@ const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1;
 // Wave system
 const WAVE_TRANSITION_RECAP_DURATION: f32 = 5.0;
 const WAVE_TRANSITION_COUNTDOWN_DURATION: f32 = 3.0;
-const WAVE_TRANSITION_TOTAL_DURATION: f32 = 8.0;
+const WAVE_TRANSITION_TOTAL_DURATION: f32 = WAVE_TRANSITION_RECAP_DURATION + WAVE_TRANSITION_COUNTDOWN_DURATION;
 const BOSS_WAVE_INTERVAL: u32 = 5;
 const BOSS_FALL_SPEED_FACTOR: f32 = 0.5;
 
@@ -230,26 +233,12 @@ fn frame(ctx: *FrameContext) void {
             raylib.DrawText("New High Score!", screen_width / 2 - 80, screen_height / 2 - 60, 20, raylib.ORANGE);
         }
 
-        var wave_buf: [32]u8 = undefined;
-        const wave_text = std.fmt.bufPrint(&wave_buf, "Wave: {}", .{current_wave}) catch "Wave: --";
-        raylib.DrawText(@ptrCast(wave_text.ptr), screen_width / 2 - 80, screen_height / 2 - 30, 20, raylib.DARKGRAY);
-
-        var score_buf: [32]u8 = undefined;
-        const score_text = std.fmt.bufPrint(&score_buf, "Score: {}", .{score}) catch "Score: --";
-        raylib.DrawText(@ptrCast(score_text.ptr), screen_width / 2 - 80, screen_height / 2 - 5, 20, raylib.DARKGRAY);
-
-        var best_buf: [32]u8 = undefined;
-        const best_text = std.fmt.bufPrint(&best_buf, "Best: {}", .{best_score}) catch "Best: --";
-        raylib.DrawText(@ptrCast(best_text.ptr), screen_width / 2 - 80, screen_height / 2 + 20, 20, raylib.DARKGRAY);
-
-        const accuracy: u64 = if (total_keystrokes > 0) (correct_keystrokes * 100) / total_keystrokes else 100;
-        var acc_buf: [32]u8 = undefined;
-        const acc_text = std.fmt.bufPrint(&acc_buf, "Accuracy: {}%", .{accuracy}) catch "Accuracy: --%";
-        raylib.DrawText(@ptrCast(acc_text.ptr), screen_width / 2 - 80, screen_height / 2 + 45, 20, raylib.DARKGRAY);
-
-        var kills_buf: [32]u8 = undefined;
-        const kills_text = std.fmt.bufPrint(&kills_buf, "Kills: {}", .{total_kills}) catch "Kills: --";
-        raylib.DrawText(@ptrCast(kills_text.ptr), screen_width / 2 - 80, screen_height / 2 + 70, 20, raylib.DARKGRAY);
+        const stats_x = screen_width / 2 - 80;
+        drawTextFmt(stats_x, screen_height / 2 - 30, 20, raylib.DARKGRAY, "Wave: {}", .{current_wave});
+        drawTextFmt(stats_x, screen_height / 2 - 5, 20, raylib.DARKGRAY, "Score: {}", .{score});
+        drawTextFmt(stats_x, screen_height / 2 + 20, 20, raylib.DARKGRAY, "Best: {}", .{best_score});
+        drawTextFmt(stats_x, screen_height / 2 + 45, 20, raylib.DARKGRAY, "Accuracy: {}%", .{accuracyPercent()});
+        drawTextFmt(stats_x, screen_height / 2 + 70, 20, raylib.DARKGRAY, "Kills: {}", .{total_kills});
 
         raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 105, 20, raylib.GRAY);
 
@@ -317,7 +306,7 @@ pub fn main() !void {
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
     // c_allocator forwards to libc malloc/free, which emcc provides.
-    var allocator: std.mem.Allocator = if (@import("builtin").target.os.tag == .emscripten)
+    var allocator: std.mem.Allocator = if (is_emscripten)
         std.heap.c_allocator
     else
         std.heap.page_allocator;
@@ -329,7 +318,7 @@ pub fn main() !void {
         .frames_counter = 0,
     };
 
-    if (comptime @import("builtin").target.os.tag == .emscripten) {
+    if (comptime is_emscripten) {
         // The emscripten loop never returns, so the defers above do not fire in the web
         // build. Register cleanup_on_exit() as a best-effort mitigation; see its doc
         // comment for the limitations on browser tab close.
@@ -391,73 +380,47 @@ fn updateZombies() void {
 
 fn drawHud() void {
     // Top-left: wave
-    var wave_buf: [24]u8 = undefined;
-    const wave_text = std.fmt.bufPrint(&wave_buf, "Wave: {}", .{current_wave}) catch "Wave: --";
-    raylib.DrawText(@ptrCast(wave_text.ptr), 10, 5, 18, raylib.DARKGRAY);
+    drawTextFmt(10, 5, 18, raylib.DARKGRAY, "Wave: {}", .{current_wave});
 
     // Top-center: score and best
-    var score_buf: [32]u8 = undefined;
-    const score_text = std.fmt.bufPrint(&score_buf, "Score: {}", .{score}) catch "Score: --";
-    raylib.DrawText(@ptrCast(score_text.ptr), screen_width / 2 - 60, 5, 18, raylib.DARKGRAY);
-
+    drawTextFmt(screen_width / 2 - 60, 5, 18, raylib.DARKGRAY, "Score: {}", .{score});
     if (best_score_loaded and best_score > 0) {
-        var best_buf: [32]u8 = undefined;
-        const best_text = std.fmt.bufPrint(&best_buf, "Best: {}", .{best_score}) catch "Best: --";
-        raylib.DrawText(@ptrCast(best_text.ptr), screen_width / 2 + 60, 5, 16, raylib.GRAY);
+        drawTextFmt(screen_width / 2 + 60, 5, 16, raylib.GRAY, "Best: {}", .{best_score});
     }
 
     // Top-right: combo, WPM, accuracy
     const mult = comboMultiplier(combo);
-    var combo_buf: [32]u8 = undefined;
-    const combo_text = std.fmt.bufPrint(&combo_buf, "Combo: {} ({}x)", .{ combo, mult }) catch "Combo: --";
-    raylib.DrawText(@ptrCast(combo_text.ptr), screen_width - 180, 5, 16, if (combo >= 5) raylib.ORANGE else raylib.DARKGRAY);
+    const combo_color = if (combo >= 5) raylib.ORANGE else raylib.DARKGRAY;
+    drawTextFmt(screen_width - 180, 5, 16, combo_color, "Combo: {} ({}x)", .{ combo, mult });
 
     const wpm = calculateWpm(&wpm_kill_times, wpm_kill_count, raylib.GetTime());
-    var wpm_buf: [24]u8 = undefined;
-    const wpm_text = std.fmt.bufPrint(&wpm_buf, "WPM: {}", .{wpm}) catch "WPM: --";
-    raylib.DrawText(@ptrCast(wpm_text.ptr), screen_width - 90, 5, 16, raylib.DARKGRAY);
-
-    const accuracy: u64 = if (total_keystrokes > 0) (correct_keystrokes * 100) / total_keystrokes else 100;
-    var acc_buf: [24]u8 = undefined;
-    const acc_text = std.fmt.bufPrint(&acc_buf, "Acc: {}%", .{accuracy}) catch "Acc: --%";
-    raylib.DrawText(@ptrCast(acc_text.ptr), screen_width - 90, 22, 16, raylib.DARKGRAY);
+    drawTextFmt(screen_width - 90, 5, 16, raylib.DARKGRAY, "WPM: {}", .{wpm});
+    drawTextFmt(screen_width - 90, 22, 16, raylib.DARKGRAY, "Acc: {}%", .{accuracyPercent()});
 
     // Wave timer
     const duration = waveDuration(current_wave);
     const remaining = if (wave_timer < duration) duration - wave_timer else 0.0;
     const remaining_int: u32 = @intFromFloat(remaining);
-    var timer_buf: [24]u8 = undefined;
-    const timer_text = std.fmt.bufPrint(&timer_buf, "Time: {}s", .{remaining_int}) catch "Time: --";
-    raylib.DrawText(@ptrCast(timer_text.ptr), 10, 22, 16, if (remaining < 10.0) raylib.RED else raylib.DARKGRAY);
+    const timer_color = if (remaining < 10.0) raylib.RED else raylib.DARKGRAY;
+    drawTextFmt(10, 22, 16, timer_color, "Time: {}s", .{remaining_int});
 }
 
 fn drawWaveTransition() void {
     if (wave_transition_timer < WAVE_TRANSITION_RECAP_DURATION) {
         // Recap screen (first 5 seconds)
-        var wave_buf: [32]u8 = undefined;
-        const wave_text = std.fmt.bufPrint(&wave_buf, "Wave {} Complete!", .{current_wave}) catch "Wave Complete!";
-        raylib.DrawText(@ptrCast(wave_text.ptr), screen_width / 2 - 120, screen_height / 2 - 80, 30, raylib.DARKGREEN);
+        drawTextFmt(screen_width / 2 - 120, screen_height / 2 - 80, 30, raylib.DARKGREEN, "Wave {} Complete!", .{current_wave});
 
-        var kills_buf: [32]u8 = undefined;
-        const kills_text = std.fmt.bufPrint(&kills_buf, "Kills: {}", .{wave_kill_count}) catch "Kills: --";
-        raylib.DrawText(@ptrCast(kills_text.ptr), screen_width / 2 - 60, screen_height / 2 - 30, 20, raylib.DARKGRAY);
-
-        const accuracy = if (total_keystrokes > 0) (correct_keystrokes * 100) / total_keystrokes else 100;
-        var acc_buf: [32]u8 = undefined;
-        const acc_text = std.fmt.bufPrint(&acc_buf, "Accuracy: {}%", .{accuracy}) catch "Accuracy: --%";
-        raylib.DrawText(@ptrCast(acc_text.ptr), screen_width / 2 - 60, screen_height / 2, 20, raylib.DARKGRAY);
+        const recap_x = screen_width / 2 - 60;
+        drawTextFmt(recap_x, screen_height / 2 - 30, 20, raylib.DARKGRAY, "Kills: {}", .{wave_kill_count});
+        drawTextFmt(recap_x, screen_height / 2, 20, raylib.DARKGRAY, "Accuracy: {}%", .{accuracyPercent()});
 
         const wpm = calculateWpm(&wpm_kill_times, wpm_kill_count, raylib.GetTime());
-        var wpm_buf: [32]u8 = undefined;
-        const wpm_text = std.fmt.bufPrint(&wpm_buf, "WPM: {}", .{wpm}) catch "WPM: --";
-        raylib.DrawText(@ptrCast(wpm_text.ptr), screen_width / 2 - 60, screen_height / 2 + 30, 20, raylib.DARKGRAY);
+        drawTextFmt(recap_x, screen_height / 2 + 30, 20, raylib.DARKGRAY, "WPM: {}", .{wpm});
     } else {
         // Countdown (last 3 seconds)
         const remaining = WAVE_TRANSITION_TOTAL_DURATION - wave_transition_timer;
         const countdown: u32 = @intFromFloat(@ceil(remaining));
-        var cd_buf: [8]u8 = undefined;
-        const cd_text = std.fmt.bufPrint(&cd_buf, "{}", .{countdown}) catch "?";
-        raylib.DrawText(@ptrCast(cd_text.ptr), screen_width / 2 - 15, screen_height / 2 - 30, 60, raylib.RED);
+        drawTextFmt(screen_width / 2 - 15, screen_height / 2 - 30, 60, raylib.RED, "{}", .{countdown});
     }
 }
 
@@ -601,7 +564,7 @@ fn spawnBoss(allocator: *std.mem.Allocator) !bool {
 }
 
 fn loadHighScore() u64 {
-    if (comptime @import("builtin").target.os.tag == .emscripten) {
+    if (comptime is_emscripten) {
         const val = raylib.emscripten_run_script_int("(function(){var v=localStorage.getItem('death-note-highscore');return v?parseInt(v,10)||0:0;})()");
         return if (val > 0) @intCast(val) else 0;
     } else {
@@ -615,7 +578,7 @@ fn loadHighScore() u64 {
 }
 
 fn saveHighScore(s: u64) void {
-    if (comptime @import("builtin").target.os.tag == .emscripten) {
+    if (comptime is_emscripten) {
         var js_buf: [128]u8 = undefined;
         const js = std.fmt.bufPrint(&js_buf, "localStorage.setItem('death-note-highscore','{}')", .{s}) catch return;
         if (js.len < js_buf.len) {
@@ -634,6 +597,26 @@ fn cstrLen(s: [*:0]const u8) usize {
     var len: usize = 0;
     while (s[len] != '\x00') len += 1;
     return len;
+}
+
+// Format text into a stack buffer and draw it with raylib. 64 bytes is wider
+// than any HUD/stat string used in this file, so bufPrintZ cannot overflow.
+fn drawTextFmt(
+    x: c_int,
+    y: c_int,
+    font_size: c_int,
+    color: raylib.Color,
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
+    var buf: [64]u8 = undefined;
+    const text = std.fmt.bufPrintZ(&buf, fmt, args) catch return;
+    raylib.DrawText(text.ptr, x, y, font_size, color);
+}
+
+fn accuracyPercent() u64 {
+    if (total_keystrokes == 0) return 100;
+    return (correct_keystrokes * 100) / total_keystrokes;
 }
 
 fn comboMultiplier(c: u32) u32 {
