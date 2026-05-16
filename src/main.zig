@@ -162,6 +162,15 @@ fn frame(ctx: *FrameContext) void {
 
     raylib.ClearBackground(raylib.RAYWHITE);
 
+    // HUD: wave number, target WPM, kill progress (not shown during game-over)
+    if (!is_game_over) {
+        const hud_cfg = getWaveConfig(current_wave);
+        var hud_buf: [64]u8 = undefined;
+        const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} \xe2\x80\x94 {d} WPM \xe2\x80\x94 {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
+        const hud_width = raylib.MeasureText(hud_text.ptr, 20);
+        raylib.DrawText(hud_text.ptr, @divTrunc(screen_width - hud_width, 2), 10, 20, raylib.DARKGRAY);
+    }
+
     raylib.DrawRectangleRec(ctx.text_box, raylib.LIGHTGRAY);
     const border_color = if (ctx.mouse_on_text) raylib.RED else raylib.DARKGRAY;
     raylib.DrawRectangleLines(
@@ -175,9 +184,19 @@ fn frame(ctx: *FrameContext) void {
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
 
     if (is_game_over) {
-        // Display "Game Over" message
-        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 20, 40, raylib.RED);
-        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 20, 20, raylib.GRAY);
+        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 40, 40, raylib.RED);
+
+        var go_wave_buf: [32]u8 = undefined;
+        const go_wave_text = std.fmt.bufPrintZ(&go_wave_buf, "Wave reached: {d}", .{current_wave}) catch "Wave reached: ?";
+        const go_wave_w = raylib.MeasureText(go_wave_text.ptr, 20);
+        raylib.DrawText(go_wave_text.ptr, @divTrunc(screen_width - go_wave_w, 2), screen_height / 2 + 5, 20, raylib.GRAY);
+
+        var go_wpm_buf: [32]u8 = undefined;
+        const go_wpm_text = std.fmt.bufPrintZ(&go_wpm_buf, "Required WPM: {d}", .{getWaveConfig(current_wave).target_wpm}) catch "Required WPM: ?";
+        const go_wpm_w = raylib.MeasureText(go_wpm_text.ptr, 20);
+        raylib.DrawText(go_wpm_text.ptr, @divTrunc(screen_width - go_wpm_w, 2), screen_height / 2 + 30, 20, raylib.GRAY);
+
+        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 60, 20, raylib.GRAY);
 
         // Restart game if Enter is pressed
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
@@ -185,8 +204,11 @@ fn frame(ctx: *FrameContext) void {
             letter_count = 0;
             name[letter_count] = '\x00';
             spawn_timer = 0.0;
-
-            // Reset all zombies
+            current_wave = 1;
+            wave_kills = 0;
+            wave_spawned = 0;
+            is_transitioning = false;
+            transition_timer = 0.0;
             resetZombies(ctx.allocator);
         }
     } else if (is_transitioning) {
@@ -510,6 +532,20 @@ test "wave completes when kills equals pool size" {
 
     const partial_kills: u32 = cfg.pool_size - 1;
     try std.testing.expect(!(partial_kills >= cfg.pool_size and spawned >= cfg.pool_size));
+}
+
+test "getWaveConfig scales correctly for wave 16+" {
+    const cfg16 = getWaveConfig(16);
+    try std.testing.expectEqual(@as(u32, 110), cfg16.target_wpm);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.66), cfg16.spawn_delay, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), cfg16.fall_speed, 0.01);
+    try std.testing.expectEqual(@as(u32, 35), cfg16.pool_size);
+
+    const cfg20 = getWaveConfig(20);
+    try std.testing.expectEqual(@as(u32, 43), cfg20.pool_size);
+
+    const cfg100 = getWaveConfig(100);
+    try std.testing.expectEqual(@as(u32, 203), cfg100.pool_size);
 }
 
 // T005: frame-index wrap — mirrors the animation increment in drawZombies

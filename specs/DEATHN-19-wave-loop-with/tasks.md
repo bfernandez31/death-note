@@ -67,7 +67,7 @@
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Add HUD rendering after `ClearBackground` (line 114) and before textbox drawing in `src/main.zig`: format "WAVE {current_wave} — {target_wpm} WPM — {wave_kills} / {pool_size}" using `std.fmt.bufPrintZ` into a stack buffer, center horizontally with `raylib.MeasureText`, draw at y=10, font size 20, DARKGRAY color. HUD renders during both playing and transitioning states (not during game-over).
+- [X] T017 [US2] Add HUD rendering after `ClearBackground` (line 114) and before textbox drawing in `src/main.zig`: format "WAVE {current_wave} — {target_wpm} WPM — {wave_kills} / {pool_size}" using `std.fmt.bufPrintZ` into a stack buffer, center horizontally with `raylib.MeasureText`, draw at y=10, font size 20, DARKGRAY color. HUD renders during both playing and transitioning states (not during game-over). ✅ DONE
 
 **Checkpoint**: HUD visible and updates in real time as zombies are killed
 
@@ -95,8 +95,8 @@
 
 ### Implementation for User Story 3
 
-- [ ] T019 [US3] Update game-over text in draw phase (lines 130-131) of `src/main.zig`: keep "GAME OVER" (40pt, RED, centered), add "Wave reached: {current_wave}" (20pt, GRAY) and "Required WPM: {target_wpm}" (20pt, GRAY) using `std.fmt.bufPrintZ`, keep "Press ENTER to Restart"
-- [ ] T020 [US3] Reset wave state on restart (lines 134-141) in `src/main.zig`: after existing restart logic, add `current_wave = 1`, `wave_kills = 0`, `wave_spawned = 0`, `is_transitioning = false`, `transition_timer = 0.0`
+- [X] T019 [US3] Update game-over text in draw phase (lines 130-131) of `src/main.zig`: keep "GAME OVER" (40pt, RED, centered), add "Wave reached: {current_wave}" (20pt, GRAY) and "Required WPM: {target_wpm}" (20pt, GRAY) using `std.fmt.bufPrintZ`, keep "Press ENTER to Restart" ✅ DONE
+- [X] T020 [US3] Reset wave state on restart (lines 134-141) in `src/main.zig`: after existing restart logic, add `current_wave = 1`, `wave_kills = 0`, `wave_spawned = 0`, `is_transitioning = false`, `transition_timer = 0.0` ✅ DONE
 
 **Checkpoint**: Game-over screen shows wave/WPM info, restart returns to wave 1 cleanly
 
@@ -110,7 +110,7 @@
 
 ### Implementation for User Story 5
 
-- [ ] T021 [US5] Verify spawn gating logic in `src/main.zig` only checks `wave_spawned < pool_size` (wave pool limit) and the existing `zombies` slot array (MAX_ZOMBIES=100) — confirm there is no artificial cap on simultaneously active zombies. No code change expected; this is a verification task that the wave spawn gating from T012 does not inadvertently limit concurrent active zombies.
+- [X] T021 [US5] Verify spawn gating logic in `src/main.zig` only checks `wave_spawned < pool_size` (wave pool limit) and the existing `zombies` slot array (MAX_ZOMBIES=100) — confirm there is no artificial cap on simultaneously active zombies. No code change expected; this is a verification task that the wave spawn gating from T012 does not inadvertently limit concurrent active zombies. ✅ DONE
 
 **Checkpoint**: Zombies accumulate freely when player doesn't type; game-over only triggers on ground contact
 
@@ -125,7 +125,7 @@
 ### Tests for User Story 6
 **RULE (constitution): Extend existing test blocks in `src/main.zig`.**
 
-- [ ] T022 [US6] Add test `"getWaveConfig scales correctly for wave 16+"` in `src/main.zig` — verify wave 16: target_wpm=110, spawn_delay=0.66, fall_speed=2.0, pool_size=35. Verify wave 20: pool_size=43. Verify wave 100: pool_size=203.
+- [X] T022 [US6] Add test `"getWaveConfig scales correctly for wave 16+"` in `src/main.zig` — verify wave 16: target_wpm=110, spawn_delay=0.66, fall_speed=2.0, pool_size=35. Verify wave 20: pool_size=43. Verify wave 100: pool_size=203. ✅ DONE
 
 **Checkpoint**: Endless mode works correctly with scaling pool_size and capped parameters
 
