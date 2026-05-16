@@ -30,7 +30,8 @@ Core value comes from simplicity and hackability. The entire game logic lives in
 | Build system | Zig built-in (`build.zig`) | Same as language toolchain | Declarative build graph: executable, test step, raylib linkage, install step |
 | Package manifest | `build.zig.zon` | Same as language toolchain | Declares and pins the single external dependency (raylib) by URL and content hash |
 | Graphics / windowing / input / audio | raylib | Pinned to commit `52f2a10db610d0e9f619fd7c521db08a876547d0` | Window management, 2-D rendering, spritesheet animation, keyboard/mouse input, WAV playback |
-| C interop layer | `@cImport` (Zig built-in) | Same as language toolchain | Imports `raylib.h`, `raymath.h`, and `rlgl.h`; walled off in `src/raylib.zig` |
+| C interop layer | `@cImport` (Zig built-in) | Same as language toolchain | Imports `raylib.h`, `raymath.h`, `rlgl.h`, and (for WASM target) `emscripten/emscripten.h`; walled off in `src/raylib.zig` |
+| WebAssembly toolchain | Emscripten SDK | Pinned to `3.1.64` (build-time only; not required for native builds) | Compiles the game to WASM and provides WebGL / audio / input browser glue for the `zig build web` target |
 | Allocator | `std.heap.page_allocator` (Zig stdlib) | Same as language toolchain | Allocates individual `Zombie` structs at spawn time; freed on death or reset |
 | Random number generation | `std.Random.DefaultPrng` / `Xoshiro256` (Zig stdlib) | Same as language toolchain | Picks zombie spawn X position and name index |
 | Font | JetBrains Mono Nerd Font Thin (`assets/JetBrainsMonoNerdFont-Thin.ttf`) | Bundled asset | Available for UI text rendering |
@@ -73,19 +74,24 @@ The update phase runs only when `is_game_over` is false. `spawnZombie` fires eve
 
 ```
 death-note/
-├── build.zig              # Declarative build graph: exe, test step, raylib linkage, install
-├── build.zig.zon          # Package manifest; pins raylib by URL + SHA content hash
+├── build.zig              # Declarative build graph: exe, test step, raylib linkage, web (WASM) step, install
+├── build.zig.zon          # Package manifest; pins raylib by URL + SHA content hash (read-only)
 ├── CLAUDE.md              # Project conventions, commands, architecture reference for contributors and AI agents
-├── README.md              # One-line project description
+├── README.md              # One-line project description + web deployment link
 ├── .gitignore             # Standard Zig ignores (zig-cache/, zig-out/)
+├── .github/
+│   └── workflows/
+│       └── deploy-web.yml # GitHub Actions: build WASM bundle + publish to GitHub Pages on push to main
 ├── .ai-board/
 │   ├── config.yml         # ai-board harness configuration
 │   └── memory/
 │       └── constitution.md  # Governance, code patterns, testing standards, security rules
 └── src/
-│   ├── main.zig           # Entry point, game loop, zombie lifecycle, input handling, rendering (~293 lines)
-│   ├── raylib.zig         # Thin @cImport wrapper; sole location for C header imports
-│   └── zombie_names.zig   # Compile-time array of 49 zero-terminated C-string zombie names
+│   ├── main.zig           # Entry point, game loop, zombie lifecycle, input handling, rendering; FrameContext struct for WASM loop
+│   ├── raylib.zig         # Thin @cImport wrapper; sole location for C header imports (includes emscripten.h on web target)
+│   ├── zombie_names.zig   # Compile-time array of 49 zero-terminated C-string zombie names
+│   └── web/
+│       └── shell.html     # Emscripten HTML shell: loading spinner, WebGL guard, canvas focus
 └── assets/
     ├── z_spritesheet.png           # 17-frame horizontal walk-cycle spritesheet for zombies
     ├── zombie-hit.wav              # Sound effect played on zombie kill
@@ -108,6 +114,9 @@ All commands are run from the repository root. The game must be run from the roo
 | Build and run the game | `zig build run` |
 | Pass arguments to the game | `zig build run -- <args>` |
 | Run unit tests | `zig build test` |
+| **Build WebAssembly bundle** (requires Emscripten SDK 3.1.64) | `zig build web` |
+| Web release build (recommended for deploy) | `zig build web -Doptimize=ReleaseSmall` |
+| Serve web bundle locally | `python3 -m http.server 8000 --directory zig-out/web` |
 | Type-check (compile without running) | `zig build --summary all` |
 | Format check | `zig fmt --check .` |
 | Release build (optimize for speed) | `zig build -Doptimize=ReleaseFast` |
@@ -115,7 +124,7 @@ All commands are run from the repository root. The game must be run from the roo
 | Strip debug info | `zig build -Dstrip=true` |
 | List all build steps | `zig build --help` |
 
-No separate dependency installation step is needed: `zig build` fetches and compiles the pinned raylib commit automatically via the Zig package manager.
+No separate dependency installation step is needed for native builds: `zig build` fetches and compiles the pinned raylib commit automatically via the Zig package manager. For the `web` target, the Emscripten SDK (`emsdk`) must be installed and activated separately — see `specs/DEATHN-1-build-and-deploy/deployment-guide.md` for step-by-step instructions.
 
 ---
 
@@ -187,7 +196,9 @@ C4Context
 | Game entry point and loop | `src/main.zig` | Seeds PRNG, initializes window and audio device, runs the update-draw loop, manages zombie lifecycle (spawn / update / draw / reset), handles text input and game-over state | `src/raylib.zig`, `src/zombie_names.zig`, Zig stdlib (`std.Random`, `std.heap`, `std.mem`, `std.time`) | `pub fn main() !void` (executable entry point); all other declarations are file-private |
 | raylib C interop wrapper | `src/raylib.zig` | Sole location for `@cImport`; re-exports all symbols from `raylib.h`, `raymath.h`, and `rlgl.h` under the `raylib` namespace | raylib static library headers (`raylib.h`, `raymath.h`, `rlgl.h`) | `pub usingnamespace @cImport(…)` — the entire raylib, raymath, and rlgl C API surface |
 | Zombie name pool | `src/zombie_names.zig` | Provides a compile-time array of 49 null-terminated C-string first names used as zombie display names and kill targets | None | `pub const ZombieNames: [49][*:0]const u8` |
-| Build graph | `build.zig` | Declares the `death-note` executable, wires raylib as a static dependency, exposes `run` and `test` build steps, propagates `optimize`, `raylib-optimize`, and `strip` options | Zig build system stdlib, `build.zig.zon` (raylib dependency) | `pub fn build(b: *std.Build) void` — consumed by `zig build` |
+| Build graph | `build.zig` | Declares the `death-note` executable, wires raylib as a static dependency, exposes `run`, `test`, and `web` build steps, propagates `optimize`, `raylib-optimize`, and `strip` options | Zig build system stdlib, `build.zig.zon` (raylib dependency) | `pub fn build(b: *std.Build) void` — consumed by `zig build` |
+| Web HTML shell | `src/web/shell.html` | Emscripten `--shell-file`; renders a loading spinner until `Module.onRuntimeInitialized`, performs WebGL availability detection, and ensures the canvas captures keyboard focus on click | None (static HTML/CSS/JS — no external dependencies per FR-011) | Consumed by the `web` build step via `emcc --shell-file` |
+| CI/CD workflow | `.github/workflows/deploy-web.yml` | GitHub Actions pipeline: installs pinned Zig and Emscripten toolchains, runs `zig build test` as a gate, builds the WASM bundle with `zig build web -Doptimize=ReleaseSmall`, and publishes the output to GitHub Pages | GitHub Actions, `actions/upload-pages-artifact`, `actions/deploy-pages` | Triggered by push to `main` and `workflow_dispatch` |
 
 ---
 

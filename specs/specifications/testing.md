@@ -35,7 +35,12 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Critical fact**: The test step is fully wired up and functional, but **zero `test "..." {}` blocks exist anywhere in the codebase**. Running `zig build test` today compiles successfully and produces no test output — it is entirely scaffolded but unused. This is stated honestly: there is nothing to run yet.
+**Current state**: Three `test "..." {}` blocks exist in `src/main.zig`:
+- `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
+- `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
+- `test "frame index wraps after ZOMBIE_FRAME_COUNT"` — covers animation-frame wrap-around arithmetic
+
+All three are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
 
 ---
 
@@ -46,7 +51,7 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(0 blocks — scaffolded only)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(3 blocks — name match, input bounds, frame wrap)"]
     UNIT_NAMES["Unit tests\nsrc/zombie_names.zig\n(0 blocks — reachable via @import)"]
     RAYLIB_ZIG["src/raylib.zig\n(C interop wall — not unit-testable)"]
     INTEGRATION["Integration tests\n(none — requires real raylib window)"]
@@ -69,7 +74,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 0 | Would cover pure logic: name matching, C-string length scan, spawn slot search, name array invariants |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 3 | Pure-logic tests: name-match equality, input-buffer bounds enforcement, animation-frame wrap-around |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 

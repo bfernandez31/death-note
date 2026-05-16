@@ -189,9 +189,9 @@ These variables collectively represent the running state of the game session. Th
 | Variable | Type | Initial value | Meaning |
 |---|---|---|---|
 | `is_game_over` | `bool` | `false` | When `true`, the update phase is skipped and the game-over overlay is rendered. Set to `true` when any zombie's `y >= screen_height`. Reset to `false` on `KEY_ENTER` press. |
-| `spawn_timer` | `f32` | `0.0` | Accumulated seconds since the last zombie spawn. Incremented each frame by `raylib.GetFrameTime()`. Reset to `0.0` when a spawn fires and on game restart. |
-| `frames_counter` | `usize` | `0` (local to `main`) | Counts frames while the mouse is over the text input box. Used to drive the blinking underscore cursor: blinks when `(frames_counter / 20) % 2 == 0`. Reset to `0` when mouse leaves the text box. Declared as a local variable inside `main()`, not a module-level global. |
-| `mouse_on_text` | `bool` | `false` (local to `main`) | `true` when `raylib.CheckCollisionPointRec` detects the mouse cursor over `text_box`. Controls whether keyboard input is captured and which cursor icon is shown. Declared as a local variable inside `main()`, not a module-level global. |
+| `spawn_timer` | `f32` | `0.0` | Accumulated seconds since the last zombie spawn. Incremented each frame by `raylib.GetFrameTime()`. Reset to `0.0` only when `spawnZombie` actually claims a slot (a full pool keeps the timer hot so the next freed slot is filled immediately). Also reset on game restart. |
+| `frames_counter` | `usize` | `0` (in `FrameContext`) | Counts frames while the mouse is over the text input box. Updated every frame (including on the game-over screen) so the blinking-underscore overlay stays animated. Drives the blink via `(frames_counter / 20) % 2 == 0`; reset to `0` when the mouse leaves the text box. |
+| `mouse_on_text` | `bool` | `false` (in `FrameContext`) | `true` when `raylib.CheckCollisionPointRec` detects the mouse cursor over `text_box`. Controls the cursor icon (`IBEAM` vs `DEFAULT`) and the blinking-underscore overlay; keyboard input is captured every frame regardless of this flag. Lives on the per-frame `FrameContext` passed into `frame()`. |
 
 **Note on `frames_counter` and `mouse_on_text`:** These are declared as `var` locals within `main()` (`var mouse_on_text = false; var frames_counter: usize = 0;`), not at module scope. They are documented here because they constitute observable game state, even though their scoping differs from the other globals.
 

@@ -20,13 +20,11 @@
 
 ## Automation Overview
 
-**No CI/CD platform is configured in this repository.**
-
-The following locations were checked and confirmed absent:
+**GitHub Actions is configured as the CI/CD platform for this repository.**
 
 | Location | Expected artifact | Present? |
 |---|---|---|
-| `.github/workflows/` | GitHub Actions workflow YAML files | No — `.github/` directory does not exist |
+| `.github/workflows/` | GitHub Actions workflow YAML files | Yes — `deploy-web.yml` builds the WASM bundle and publishes it to GitHub Pages |
 | `.gitlab-ci.yml` | GitLab CI pipeline definition | No |
 | `Jenkinsfile` | Jenkins declarative or scripted pipeline | No |
 | `.circleci/` | CircleCI pipeline configuration | No |
@@ -34,7 +32,7 @@ The following locations were checked and confirmed absent:
 | `Dockerfile` / `docker-compose.yml` | Container build and orchestration | No |
 | `bin/` or `scripts/` | Shell script automation directories | No |
 
-The sole automation layer is the **Zig build graph** declared in `build.zig`. This file defines three named steps (`install` as default, `run`, and `test`), wires up the raylib dependency fetch and compilation, and exposes build option flags. No external runner, scheduler, or CI agent is involved.
+The primary build automation layer is the **Zig build graph** declared in `build.zig`. This file defines four named steps (`install` as default, `run`, `test`, and `web`), wires up the raylib dependency fetch and compilation, and exposes build option flags. A GitHub Actions workflow (`.github/workflows/deploy-web.yml`) provides CI build gating and automated deployment to GitHub Pages on every push to `main` and on manual dispatch.
 
 Additionally, the `.ai-board/config.yml` harness file defines four command aliases used by the ai-board tooling:
 
@@ -77,12 +75,28 @@ These aliases are conventions for the ai-board agent harness and do not represen
 ### test
 
 - **Trigger**: `zig build test`
-- **Purpose**: Compile a test binary rooted at `src/main.zig` (using `b.addTest`) and execute it via `b.addRunArtifact`. The test runner discovers all `test "…" { … }` blocks reachable from `src/main.zig` (including transitively imported modules). At present, no `test` blocks exist in the source tree — the step is scaffolded and functional but will report zero tests run.
+- **Purpose**: Compile a test binary rooted at `src/main.zig` (using `b.addTest`) and execute it via `b.addRunArtifact`. The test runner discovers all `test "…" { … }` blocks reachable from `src/main.zig` (including transitively imported modules). Three unit tests are currently defined covering name-match equality, input-buffer bounds, and frame-index wrap-around.
 - **Key inputs**: `src/main.zig` (root source file for test artifact)
 - **Key outputs**: Pass/fail report printed to stdout; non-zero exit code on failure
 - **Source**: `build.zig` lines 72–84 (`b.addTest`, `b.addRunArtifact`, `b.step("test", …)`)
 
-*No other workflow steps exist in this repository.*
+### web
+
+- **Trigger**: `zig build web` (requires Emscripten SDK 3.1.64 active on `PATH` via `source ~/emsdk/emsdk_env.sh`)
+- **Purpose**: Compile the game as a WebAssembly binary for browser deployment. The step compiles `src/main.zig` for `wasm32-emscripten`, builds raylib for `PLATFORM_WEB` (OpenGL ES 2.0), and links everything with `emcc` into a static web bundle at `zig-out/web/`. All assets in `assets/` are bundled into the Emscripten virtual filesystem via `--preload-file`. The HTML shell at `src/web/shell.html` wraps the output, providing a loading indicator and WebGL availability guard.
+- **Key inputs**:
+  - `src/main.zig` (compiled for `wasm32-emscripten`; branches at `comptime` on `builtin.target.os.tag == .emscripten`)
+  - `src/raylib.zig` (conditionally includes `emscripten/emscripten.h` when target is Emscripten)
+  - `src/web/shell.html` (Emscripten `--shell-file`)
+  - `assets/` directory (bundled via `--preload-file`)
+  - raylib dependency (built from the same pinned source via `PLATFORM=PLATFORM_WEB`)
+  - Emscripten SDK (`emcc` must be on `PATH`)
+- **Key outputs**: `zig-out/web/{index.html, index.js, index.wasm, index.data}` — a self-contained static bundle serveable by any HTTP server
+- **Build options honored**:
+  - `-Doptimize=ReleaseSmall` (recommended for deployment; reduces WASM bundle size)
+  - `-Dstrip=true` (strips debug symbols)
+- **Precondition failure**: If `emcc` is not found on `PATH`, the step fails immediately with a clear error message before any compilation begins.
+- **Source**: `build.zig` web step
 
 ---
 
@@ -124,10 +138,23 @@ graph LR
     B --> C[compile test binary]
     C --> D[addRunArtifact run_exe_unit_tests]
     D --> E[execute test binary]
-    E --> F{test blocks found?}
-    F -- yes --> G[run test blocks]
-    F -- none --> H[report 0 tests run]
-    G --> I[pass/fail output]
+    E --> F[run 3 test blocks]
+    F --> G[pass/fail output]
+```
+
+### Deploy Pipeline
+
+```mermaid
+graph LR
+    A[push to main / workflow_dispatch] --> B[checkout repo]
+    B --> C[setup Zig toolchain]
+    C --> D[setup Emscripten SDK 3.1.64]
+    D --> E[zig build test]
+    E --> F[zig build web -Doptimize=ReleaseSmall]
+    F --> G{build succeeded?}
+    G -- yes --> H[upload zig-out/web as Pages artifact]
+    H --> I[deploy to GitHub Pages]
+    G -- no --> J[fail job / preserve live version]
 ```
 
 ---
@@ -141,13 +168,16 @@ No shell scripts exist in this repository. All developer commands are `zig` CLI 
 | `zig build` | Build (install) the `death-note` executable | Output: `zig-out/bin/death-note`; default Debug mode |
 | `zig build run` | Build then execute the game | Runs from install dir; asset path caveat applies |
 | `zig build run -- <args>` | Build then execute with CLI args forwarded | Args passed to process but not consumed by `main.zig` |
-| `zig build test` | Run unit tests declared in `src/main.zig` | Currently 0 test blocks; step scaffolded |
+| `zig build test` | Run unit tests declared in `src/main.zig` | 3 test blocks: name-match equality, input-buffer bounds, frame-index wrap |
+| `zig build web` | Build the WASM + HTML bundle | Requires Emscripten SDK 3.1.64 on `PATH`; output: `zig-out/web/` |
+| `zig build web -Doptimize=ReleaseSmall` | Web release build (recommended for deploy) | Smaller WASM binary; suitable for GitHub Pages |
+| `python3 -m http.server 8000 --directory zig-out/web` | Serve the web bundle locally | Open `http://localhost:8000` to test the WASM build |
 | `zig build --summary all` | Build with full summary output (type-check) | Useful for verifying compilation without running |
 | `zig fmt --check .` | Check formatting of all `.zig` files | Non-zero exit if any file would be reformatted |
 | `zig build -Doptimize=ReleaseFast` | Release build optimized for speed | Applies to both `death-note` and raylib |
 | `zig build -Draylib-optimize=ReleaseFast` | Optimize raylib only, keep default for game code | Useful for faster iteration with optimized lib |
 | `zig build -Dstrip=true` | Strip debug symbols from the executable | Reduces binary size; combine with `ReleaseFast` for distribution |
-| `zig build --help` | List all available build steps and options | Includes `install`, `run`, `test`, all `-D` flags |
+| `zig build --help` | List all available build steps and options | Includes `install`, `run`, `test`, `web`, all `-D` flags |
 
 ---
 
@@ -179,27 +209,32 @@ The assets loaded at runtime are:
 
 ## Deployment Pipeline
 
-**No deployment automation exists.**
+**GitHub Actions automates web deployment to GitHub Pages.** The workflow file is `.github/workflows/deploy-web.yml`.
 
-There is no release pipeline, no package registry, no auto-update mechanism, and no installer. Distribution is entirely manual.
-
-The intended distribution model is:
-
-1. Developer runs a release build: `zig build -Doptimize=ReleaseFast`
-2. The resulting binary `zig-out/bin/death-note` is taken together with the `assets/` directory
-3. Both are packaged and distributed manually (e.g., as a zip archive, shared directly)
-4. The recipient places the binary and `assets/` in the same directory and runs the binary from that directory
+- **Triggers**: push to `main`; manual `workflow_dispatch` from the Actions UI.
+- **Jobs**: `build` (compiles the WASM bundle and uploads it as a Pages artifact) then `deploy` (publishes the artifact to the live `https://<owner>.github.io/<repo>/` URL).
+- **Toolchain pinning**: the workflow pins both the Zig toolchain version (env var `ZIG_VERSION`) and the Emscripten SDK version (`3.1.64`). The emsdk install step is cached by SDK version to keep subsequent runs fast.
+- **Failure isolation**: if the `build` job fails, the `deploy` job is skipped and the previously deployed version remains live. The failing step is visible in the Actions UI with full logs.
+- **CI gate**: `zig build test` runs in the `build` job before `zig build web`, so a test regression blocks deployment.
 
 ```mermaid
-graph LR
-    A[source commit] --> B[developer machine]
-    B --> C[zig build -Doptimize=ReleaseFast]
-    C --> D[zig-out/bin/death-note]
-    C --> E[assets/ directory]
-    D --> F[manual packaging]
-    E --> F
-    F --> G[distribution to end user]
+sequenceDiagram
+    participant GitHub as GitHub (push / dispatch)
+    participant Build as build job
+    participant Pages as GitHub Pages
+    participant Player as Player browser
+
+    GitHub->>Build: trigger on push to main
+    Build->>Build: checkout + setup Zig + setup emsdk 3.1.64
+    Build->>Build: zig build test (gate)
+    Build->>Build: zig build web -Doptimize=ReleaseSmall
+    Build->>Pages: upload zig-out/web as artifact
+    Pages-->>Build: artifact accepted
+    Build->>Pages: deploy-pages action publishes
+    Pages-->>Player: https://<owner>.github.io/<repo>/ updated
 ```
+
+**Native distribution** (no change from before): the native binary continues to be distributable manually — build with `zig build -Doptimize=ReleaseFast`, package `zig-out/bin/death-note` together with the `assets/` directory, and the recipient runs the binary from the same directory as `assets/`.
 
 ---
 

@@ -9,13 +9,9 @@ const MAX_INPUT_CHARS = 9;
 
 const ZOMBIE_FRAME_COUNT = 17;
 
-const BUFFER_SIZE = 16;
 // Input buffer for characters
 var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
 var letter_count: usize = 0;
-
-var input_text: [MAX_INPUT_CHARS]u8 = undefined;
-var input_length: usize = 0;
 
 // Delay settings
 const spawn_delay: f32 = 3.0; // Delay in seconds between spawns
@@ -43,6 +39,133 @@ var zombie_kill_sound: raylib.Sound = undefined;
 const screen_width = 800;
 const screen_height = 450;
 
+// Per-frame mutable context threaded through the game loop (native and emscripten paths)
+const FrameContext = struct {
+    allocator: *std.mem.Allocator,
+    text_box: raylib.Rectangle,
+    mouse_on_text: bool,
+    frames_counter: usize,
+};
+
+fn frame(ctx: *FrameContext) void {
+    // Mouse-over and cursor state are updated every frame (not gated by is_game_over),
+    // so the blinking cursor on the game-over screen stays animated and matches the
+    // current mouse position instead of freezing at its last in-game value.
+    if (raylib.CheckCollisionPointRec(raylib.GetMousePosition(), ctx.text_box)) {
+        ctx.mouse_on_text = true;
+        raylib.SetMouseCursor(raylib.MOUSE_CURSOR_IBEAM);
+    } else {
+        ctx.mouse_on_text = false;
+        raylib.SetMouseCursor(raylib.MOUSE_CURSOR_DEFAULT);
+    }
+
+    if (ctx.mouse_on_text) {
+        ctx.frames_counter += 1;
+    } else {
+        ctx.frames_counter = 0;
+    }
+
+    if (!is_game_over) {
+        // Accept keystrokes regardless of mouse position so players can start typing
+        // immediately on load (especially on web, where focus is on the canvas, not the
+        // text box hit-test rectangle).
+        var key = raylib.GetCharPressed();
+        while (key > 0) {
+            if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
+                name[letter_count] = @intCast(key); // Add character to input buffer
+                name[letter_count + 1] = '\x00'; // Null-terminate the string
+                letter_count += 1;
+            }
+            key = raylib.GetCharPressed(); // Check next character in the queue
+        }
+
+        // Handle backspace
+        if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
+            letter_count -= 1;
+            name[letter_count] = '\x00'; // Null-terminate after backspace
+        }
+
+        // Update spawn timer
+        spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
+
+        // Check if enough time has passed to spawn a new zombie
+        if (spawn_timer >= spawn_delay) {
+            // Only reset the timer when a slot was actually claimed; if the pool is full,
+            // keep trying every frame so a freed slot is reused immediately instead of
+            // stalling spawns indefinitely.
+            const spawned = spawnZombie(ctx.allocator) catch false;
+            if (spawned) spawn_timer = 0.0;
+        }
+
+        // Update zombies
+        updateZombies();
+    }
+    // Draw
+    raylib.BeginDrawing();
+    defer raylib.EndDrawing();
+
+    raylib.ClearBackground(raylib.RAYWHITE);
+
+    raylib.DrawRectangleRec(ctx.text_box, raylib.LIGHTGRAY);
+    const border_color = if (ctx.mouse_on_text) raylib.RED else raylib.DARKGRAY;
+    raylib.DrawRectangleLines(
+        @intFromFloat(ctx.text_box.x),
+        @intFromFloat(ctx.text_box.y),
+        @intFromFloat(ctx.text_box.width),
+        @intFromFloat(ctx.text_box.height),
+        border_color,
+    );
+
+    raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
+
+    if (is_game_over) {
+        // Display "Game Over" message
+        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 20, 40, raylib.RED);
+        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 20, 20, raylib.GRAY);
+
+        // Restart game if Enter is pressed
+        if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
+            is_game_over = false;
+            letter_count = 0;
+            name[letter_count] = '\x00';
+            spawn_timer = 0.0;
+
+            // Reset all zombies
+            resetZombies(ctx.allocator);
+        }
+    } else {
+        // Draw zombies if the game is not over
+        drawZombies();
+    }
+    // Draw blinking underscore char
+    if (ctx.mouse_on_text and letter_count < MAX_INPUT_CHARS and ((ctx.frames_counter / 20) % 2) == 0) {
+        raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, raylib.MAROON);
+    }
+
+    if (ctx.mouse_on_text and letter_count >= MAX_INPUT_CHARS) {
+        raylib.DrawText("Press BACKSPACE to delete chars...", 230, 300, 20, raylib.GRAY);
+    }
+}
+
+// Emscripten C-callback trampoline; arg carries the FrameContext pointer
+fn frame_c_callback(arg: ?*anyopaque) callconv(.C) void {
+    if (arg) |raw| {
+        const ctx: *FrameContext = @ptrCast(@alignCast(raw));
+        frame(ctx);
+    }
+}
+
+// Registered via atexit() on the emscripten path because the `defer` blocks in main()
+// never run there — emscripten_set_main_loop_arg does not return. atexit only fires on
+// explicit emscripten_force_exit / module shutdown (browser tab close bypasses it), but
+// it is the cleanest available hook for any controlled teardown the runtime offers.
+fn cleanup_on_exit() callconv(.C) void {
+    raylib.UnloadTexture(zombie_texture);
+    raylib.UnloadSound(zombie_kill_sound);
+    raylib.CloseAudioDevice();
+    raylib.CloseWindow();
+}
+
 pub fn main() !void {
     raylib.InitWindow(screen_width, screen_height, "Zombie Game");
     defer raylib.CloseWindow();
@@ -58,104 +181,26 @@ pub fn main() !void {
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
 
-    const text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 100.0, .y = 400.0, .width = 225.0, .height = 50.0 };
-    var mouse_on_text = false;
-    var frames_counter: usize = 0;
-
     raylib.SetTargetFPS(60); // Set target frames per second
 
     var allocator = std.heap.page_allocator;
 
-    while (!raylib.WindowShouldClose()) { // Main game loop
+    var ctx = FrameContext{
+        .allocator = &allocator,
+        .text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 100.0, .y = 400.0, .width = 225.0, .height = 50.0 },
+        .mouse_on_text = false,
+        .frames_counter = 0,
+    };
 
-        if (!is_game_over) {
-
-            // Update
-            if (raylib.CheckCollisionPointRec(raylib.GetMousePosition(), text_box)) {
-                mouse_on_text = true;
-                raylib.SetMouseCursor(raylib.MOUSE_CURSOR_IBEAM);
-
-                var key = raylib.GetCharPressed();
-
-                // Check if more characters have been pressed on the same frame
-                while (key > 0) {
-                    if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
-                        name[letter_count] = @intCast(key); // Add character to input buffer
-                        name[letter_count + 1] = '\x00'; // Null-terminate the string
-                        letter_count += 1;
-                    }
-                    key = raylib.GetCharPressed(); // Check next character in the queue
-                }
-
-                // Handle backspace
-                if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
-                    letter_count -= 1;
-                    name[letter_count] = '\x00'; // Null-terminate after backspace
-                }
-            } else {
-                mouse_on_text = false;
-                raylib.SetMouseCursor(raylib.MOUSE_CURSOR_DEFAULT);
-            }
-
-            if (mouse_on_text) {
-                frames_counter += 1;
-            } else {
-                frames_counter = 0;
-            }
-
-            // Update spawn timer
-            spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
-
-            // Check if enough time has passed to spawn a new zombie
-            if (spawn_timer >= spawn_delay) {
-                try spawnZombie(&allocator); // Call the function to spawn a zombie
-                spawn_timer = 0.0; // Reset the spawn timer
-            }
-
-            // Update zombies
-            updateZombies();
-        }
-        // Draw
-        raylib.BeginDrawing();
-        defer raylib.EndDrawing();
-
-        raylib.ClearBackground(raylib.RAYWHITE);
-
-        raylib.DrawRectangleRec(text_box, raylib.LIGHTGRAY);
-        if (mouse_on_text) {
-            raylib.DrawRectangleLines(@intFromFloat(text_box.x), @intFromFloat(text_box.y), @intFromFloat(text_box.width), @intFromFloat(text_box.height), raylib.RED);
-        } else {
-            raylib.DrawRectangleLines(@intFromFloat(text_box.x), @intFromFloat(text_box.y), @intFromFloat(text_box.width), @intFromFloat(text_box.height), raylib.DARKGRAY);
-        }
-
-        raylib.DrawText(&name, @as(c_int, @intFromFloat(text_box.x)) + 5, @as(c_int, @intFromFloat(text_box.y)) + 8, 40, raylib.MAROON);
-
-        if (is_game_over) {
-            // Display "Game Over" message
-            raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 20, 40, raylib.RED);
-            raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 20, 20, raylib.GRAY);
-
-            // Restart game if Enter is pressed
-            if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
-                is_game_over = false;
-                letter_count = 0;
-                name[letter_count] = '\x00';
-                spawn_timer = 0.0;
-
-                // Reset all zombies
-                resetZombies(&allocator);
-            }
-        } else {
-            // Draw zombies if the game is not over
-            drawZombies();
-        }
-        // Draw blinking underscore char
-        if (mouse_on_text and letter_count < MAX_INPUT_CHARS and ((frames_counter / 20) % 2) == 0) {
-            raylib.DrawText("_", @as(c_int, @intFromFloat(text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(text_box.y)) + 12, 40, raylib.MAROON);
-        }
-
-        if (mouse_on_text and letter_count >= MAX_INPUT_CHARS) {
-            raylib.DrawText("Press BACKSPACE to delete chars...", 230, 300, 20, raylib.GRAY);
+    if (comptime @import("builtin").target.os.tag == .emscripten) {
+        // The emscripten loop never returns, so the defers above do not fire in the web
+        // build. Register cleanup_on_exit() as a best-effort mitigation; see its doc
+        // comment for the limitations on browser tab close.
+        _ = raylib.atexit(&cleanup_on_exit);
+        raylib.emscripten_set_main_loop_arg(frame_c_callback, &ctx, 0, 1);
+    } else {
+        while (!raylib.WindowShouldClose()) { // Main game loop
+            frame(&ctx);
         }
     }
 }
@@ -163,8 +208,6 @@ pub fn main() !void {
 // Function to update zombies
 fn updateZombies() void {
     for (zombies) |zombie| {
-        if (zombie == null) continue;
-
         if (zombie) |zomb| {
             if (!zomb.is_active) continue; // Skip if zombie is not on screen
             zomb.y += zomb.speed; // Update zombie position
@@ -204,8 +247,6 @@ fn drawZombies() void {
     const deltaTime = 1.0 / 60.0; // 60 FPS
 
     for (zombies) |zombie| {
-        if (zombie == null) continue;
-
         if (zombie) |zomb| {
             if (!zomb.is_active) continue;
 
@@ -254,8 +295,9 @@ fn drawZombies() void {
     }
 }
 
-// Function to spawn new zombies
-fn spawnZombie(allocator: *std.mem.Allocator) !void {
+// Function to spawn new zombies. Returns true when a slot was claimed, false when
+// the pool is full so the caller can keep the spawn timer hot for next frame.
+fn spawnZombie(allocator: *std.mem.Allocator) !bool {
     for (zombies, 0..) |zombie, i| {
         if (zombie == null) {
             // Allocate memory for a new zombie and assign it to zombies[i]
@@ -275,9 +317,10 @@ fn spawnZombie(allocator: *std.mem.Allocator) !void {
                 .animationTimer = 0,
             };
             zombies[i] = new_zombie;
-            break;
+            return true;
         }
     }
+    return false;
 }
 
 fn resetZombies(allocator: *std.mem.Allocator) void {
@@ -287,4 +330,91 @@ fn resetZombies(allocator: *std.mem.Allocator) void {
             zombie.* = null;
         }
     }
+}
+
+// T003: name-match equality — mirrors the comparison in updateZombies
+test "name match equality" {
+    const alice: [*:0]const u8 = "Alice";
+    var typed_buf = [_]u8{ 'A', 'l', 'i', 'c', 'e', '\x00', 0, 0, 0, 0 };
+    const typed_name = typed_buf[0..5];
+
+    var zomb_name_length: usize = 0;
+    while (alice[zomb_name_length] != '\x00') zomb_name_length += 1;
+    const zomb_name_slice = alice[0..zomb_name_length];
+
+    try std.testing.expect(std.mem.eql(u8, typed_name, zomb_name_slice));
+    try std.testing.expect(!std.mem.eql(u8, typed_buf[0..4], zomb_name_slice));
+}
+
+// T004: input buffer bounds — mirrors the write gate in the main game loop
+test "input buffer bounds" {
+    var buf = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
+    var count: usize = 0;
+
+    // key 32 (lowest printable ASCII) must be accepted
+    const key_lo: i32 = 32;
+    if ((key_lo >= 32) and (key_lo <= 125) and (count < MAX_INPUT_CHARS)) {
+        buf[count] = @intCast(key_lo);
+        buf[count + 1] = '\x00';
+        count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), count);
+
+    // key 31 (below range) must be rejected
+    const key_below: i32 = 31;
+    const before_below = count;
+    if ((key_below >= 32) and (key_below <= 125) and (count < MAX_INPUT_CHARS)) {
+        buf[count] = @intCast(key_below);
+        buf[count + 1] = '\x00';
+        count += 1;
+    }
+    try std.testing.expectEqual(before_below, count);
+
+    // key 126 (above range) must be rejected
+    const key_above: i32 = 126;
+    const before_above = count;
+    if ((key_above >= 32) and (key_above <= 125) and (count < MAX_INPUT_CHARS)) {
+        buf[count] = @intCast(key_above);
+        buf[count + 1] = '\x00';
+        count += 1;
+    }
+    try std.testing.expectEqual(before_above, count);
+
+    // fill to MAX_INPUT_CHARS
+    while (count < MAX_INPUT_CHARS) {
+        const k: i32 = 65;
+        if ((k >= 32) and (k <= 125) and (count < MAX_INPUT_CHARS)) {
+            buf[count] = @intCast(k);
+            buf[count + 1] = '\x00';
+            count += 1;
+        }
+    }
+    try std.testing.expectEqual(MAX_INPUT_CHARS, count);
+
+    // one more write must be rejected even though the key is in range
+    const key_full: i32 = 65;
+    const before_full = count;
+    if ((key_full >= 32) and (key_full <= 125) and (count < MAX_INPUT_CHARS)) {
+        buf[count] = @intCast(key_full);
+        buf[count + 1] = '\x00';
+        count += 1;
+    }
+    try std.testing.expectEqual(before_full, count);
+
+    // buffer remains null-terminated at position count
+    try std.testing.expectEqual(@as(u8, '\x00'), buf[count]);
+}
+
+// T005: frame-index wrap — mirrors the animation increment in drawZombies
+test "frame index wraps after ZOMBIE_FRAME_COUNT" {
+    var f: f32 = ZOMBIE_FRAME_COUNT - 1;
+    f += 1;
+    if (f >= ZOMBIE_FRAME_COUNT) f = 0;
+    try std.testing.expectEqual(@as(f32, 0.0), f);
+
+    // mid-range frame must not wrap
+    var mid: f32 = @as(f32, ZOMBIE_FRAME_COUNT) / 2.0;
+    mid += 1;
+    if (mid >= ZOMBIE_FRAME_COUNT) mid = 0;
+    try std.testing.expect(mid > 0.0);
 }

@@ -1,0 +1,84 @@
+name: Deploy Web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Minimum permissions; OIDC handles Pages auth (no stored PAT)
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one deploy at a time; cancel-in-progress: false lets the
+# current run finish so the last good version stays live if the new one fails
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Emscripten SDK 3.1.64
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+          actions-cache-folder: emsdk-cache
+
+      - name: Set up Zig ${{ env.ZIG_VERSION }}
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # Build WASM first so compile errors in the emscripten-only branches in
+      # src/main.zig and src/raylib.zig surface before the native test suite runs.
+      # `zig build test` only compiles the native target, so emscripten paths
+      # (frame_c_callback, cleanup_on_exit, emscripten_set_main_loop_arg) are
+      # otherwise covered exclusively by this step.
+      - name: Build WASM bundle (covers emscripten compile paths)
+        run: zig build web -Doptimize=ReleaseSmall
+
+      - name: Run unit tests (native target)
+        run: zig build test
+
+      - name: Verify required output files exist
+        run: |
+          for f in zig-out/web/index.html zig-out/web/index.js zig-out/web/index.wasm zig-out/web/index.data; do
+            test -f "$f" || { echo "error: missing required file $f"; exit 1; }
+          done
+
+      - name: Assert no remote URLs in index.html
+        # index.js is Emscripten-generated and may contain URL strings in error messages;
+        # only grep index.html which we fully control via src/web/shell.html
+        run: |
+          if grep -qE 'src="https?://|href="https?://' zig-out/web/index.html; then
+            echo "error: index.html contains remote URL reference"
+            exit 1
+          fi
+
+      - name: Log bundle sizes
+        run: du -h zig-out/web/*
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: zig-out/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
