@@ -63,10 +63,16 @@
 
   <script>
     (function () {
-      // Detect WebGL before starting the Emscripten runtime
       var canvas = document.getElementById('canvas');
-      var gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-      if (!gl) {
+
+      // Probe WebGL on a throwaway canvas — never on `#canvas`. Calling
+      // getContext on `#canvas` would permanently bind it to that context,
+      // preventing raylib/GLFW's emscripten path from acquiring its own
+      // WebGL1 context (-sFULL_ES2=1) and breaking rlglInit silently.
+      var probe = document.createElement('canvas');
+      var supported = false;
+      try { supported = !!(probe.getContext('webgl2') || probe.getContext('webgl')); } catch (_) {}
+      if (!supported) {
         document.getElementById('loading').style.display = 'none';
         document.getElementById('webgl-error').style.display = 'block';
         return;
