@@ -10,7 +10,7 @@ Generated retro-spec for the **death-note** typing game (Zig + raylib).
 | [Architecture](architecture.md) | Single-module game-loop monolith, component diagram, frame data flow, layer breakdown, dependency graph, observable design decisions |
 | [Data Model](data-model.md) | In-memory `Zombie` struct, `ZombieNames` pool, input buffer, module-level game state, integrity rules, lifecycle state machines |
 | [Endpoints](endpoints.md) | No network API — documents the actual surfaces: CLI args, asset reads, keyboard/mouse input, audio, window output |
-| [Workflows](workflows.md) | No CI/CD — documents the Zig build graph (install/run/test), commands, and manual distribution model |
+| [Workflows](workflows.md) | Zig build graph (install/run/test/web), GitHub Actions CI/CD pipeline, and GitHub Pages automated deployment |
 | [Features](features.md) | 11 catalogued features (spawning, falling, kill, game-over, restart, input, animation, etc.) with user journeys, state machines, business rules |
 | [Testing](testing.md) | Zig built-in test runner — scaffolded but currently zero test blocks; patterns, recommended initial tests, coverage gap |
 
