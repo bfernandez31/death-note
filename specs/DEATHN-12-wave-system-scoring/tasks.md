@@ -36,19 +36,19 @@
 
 ### Pure Logic Functions
 
-- [ ] T006 Implement `cstrLen(name: [*:0]const u8) usize` helper function in `src/main.zig` to replace the inline null-terminator scan pattern used in `updateZombies` (research.md section 3.9). Refactor existing `updateZombies` to use `cstrLen` instead of the inline loop
-- [ ] T007 [P] Implement `comboMultiplier(combo: u32) u32` pure function in `src/main.zig` per data-model.md section 2.4 combo tier table (1x at 0-4, 2x at 5-9, 3x at 10-14, 4x at 15-19, 5x at 20+)
-- [ ] T008 [P] Implement difficulty scaling pure functions in `src/main.zig`: `waveSpawnDelay(wave: u32) f32`, `waveFallSpeed(wave: u32) f32`, `waveMaxActive(wave: u32) u32`, `waveKillTarget(wave: u32) u32`, `waveDuration(wave: u32) f32` — all per data-model.md section 2.3 formulas with floors and caps
-- [ ] T009 [P] Implement `calculateWpm(kill_times: []const f64, kill_count: usize, current_time: f64) u32` pure function in `src/main.zig` per data-model.md section 2.5 (count entries within 30-second window, divide by 0.5 minutes)
-- [ ] T010 [P] Implement `isValidPrefix(typed: []const u8, zombies_arr: [MAX_ZOMBIES]?*Zombie) bool` pure function in `src/main.zig` per research.md section 1.4 — check if typed buffer is a prefix of at least one active zombie's name using `std.mem.startsWith`
+- [x] T006 Implement `cstrLen(name: [*:0]const u8) usize` helper function in `src/main.zig` to replace the inline null-terminator scan pattern used in `updateZombies` (research.md section 3.9). Refactor existing `updateZombies` to use `cstrLen` instead of the inline loop
+- [x] T007 [P] Implement `comboMultiplier(combo: u32) u32` pure function in `src/main.zig` per data-model.md section 2.4 combo tier table (1x at 0-4, 2x at 5-9, 3x at 10-14, 4x at 15-19, 5x at 20+)
+- [x] T008 [P] Implement difficulty scaling pure functions in `src/main.zig`: `waveSpawnDelay(wave: u32) f32`, `waveFallSpeed(wave: u32) f32`, `waveMaxActive(wave: u32) u32`, `waveKillTarget(wave: u32) u32`, `waveDuration(wave: u32) f32` — all per data-model.md section 2.3 formulas with floors and caps
+- [x] T009 [P] Implement `calculateWpm(kill_times: []const f64, kill_count: usize, current_time: f64) u32` pure function in `src/main.zig` per data-model.md section 2.5 (count entries within 30-second window, divide by 0.5 minutes)
+- [x] T010 [P] Implement `isValidPrefix(typed: []const u8, zombies_arr: [MAX_ZOMBIES]?*Zombie) bool` pure function in `src/main.zig` per research.md section 1.4 — check if typed buffer is a prefix of at least one active zombie's name using `std.mem.startsWith`
 
 ### Tests for Pure Logic Functions
 
-- [ ] T011 [P] Extend tests in `src/main.zig` (after existing test block at line 433): add `test "cstrLen"` verifying length of known strings, empty string, and single-character string
-- [ ] T012 [P] Extend tests in `src/main.zig`: add `test "comboMultiplier tier boundaries"` verifying multiplier at combo values 0, 4, 5, 9, 10, 14, 15, 19, 20, 100
-- [ ] T013 [P] Extend tests in `src/main.zig`: add `test "waveSpawnDelay"` at waves 1, 5, 12, 20 (verify floor at 0.5), `test "waveFallSpeed"` at waves 1, 5, 15, 20 (verify cap at 2.0), `test "waveMaxActive"` at waves 1, 5, 13, 20 (verify cap at 30), `test "waveKillTarget"` and `test "waveDuration"` boundary checks
-- [ ] T014 [P] Extend tests in `src/main.zig`: add `test "calculateWpm"` with empty buffer, partial buffer, full 30-second window, and expired entries outside window
-- [ ] T015 Run `zig build test` — all existing tests (T003–T005) and new tests (T011–T014) must pass
+- [x] T011 [P] Extend tests in `src/main.zig` (after existing test block at line 433): add `test "cstrLen"` verifying length of known strings, empty string, and single-character string
+- [x] T012 [P] Extend tests in `src/main.zig`: add `test "comboMultiplier tier boundaries"` verifying multiplier at combo values 0, 4, 5, 9, 10, 14, 15, 19, 20, 100
+- [x] T013 [P] Extend tests in `src/main.zig`: add `test "waveSpawnDelay"` at waves 1, 5, 12, 20 (verify floor at 0.5), `test "waveFallSpeed"` at waves 1, 5, 15, 20 (verify cap at 2.0), `test "waveMaxActive"` at waves 1, 5, 13, 20 (verify cap at 30), `test "waveKillTarget"` and `test "waveDuration"` boundary checks
+- [x] T014 [P] Extend tests in `src/main.zig`: add `test "calculateWpm"` with empty buffer, partial buffer, full 30-second window, and expired entries outside window
+- [x] T015 Run `zig build test` — all existing tests (T003–T005) and new tests (T011–T014) must pass
 
 **Checkpoint**: Foundation ready — all pure logic tested. User story implementation can now begin.
 

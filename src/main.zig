@@ -288,16 +288,8 @@ fn updateZombies() void {
                 return; // Exit function to stop updating further
             }
 
-            // Create a slice from the input text
             const typed_name = name[0..letter_count];
-
-            // Calculate the length of the zombie's name
-            var zomb_name_length: usize = 0;
-            while (zomb.name[zomb_name_length] != '\x00') {
-                zomb_name_length += 1;
-            }
-
-            // Create a slice from the zombie's name
+            const zomb_name_length = cstrLen(zomb.name);
             const zomb_name_slice = zomb.name[0..zomb_name_length];
 
             // Check for equality
@@ -390,6 +382,69 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
             };
             zombies[i] = new_zombie;
             return true;
+        }
+    }
+    return false;
+}
+
+fn cstrLen(s: [*:0]const u8) usize {
+    var len: usize = 0;
+    while (s[len] != '\x00') len += 1;
+    return len;
+}
+
+fn comboMultiplier(c: u32) u32 {
+    if (c >= 20) return 5;
+    if (c >= 15) return 4;
+    if (c >= 10) return 3;
+    if (c >= 5) return 2;
+    return 1;
+}
+
+fn waveSpawnDelay(wave: u32) f32 {
+    const result = BASE_SPAWN_DELAY * std.math.pow(f32, SPAWN_DELAY_DECAY, @as(f32, @floatFromInt(wave - 1)));
+    return @max(result, MIN_SPAWN_DELAY);
+}
+
+fn waveFallSpeed(wave: u32) f32 {
+    const result = BASE_FALL_SPEED * std.math.pow(f32, FALL_SPEED_GROWTH, @as(f32, @floatFromInt(wave - 1)));
+    return @min(result, MAX_FALL_SPEED);
+}
+
+fn waveMaxActive(wave: u32) u32 {
+    const result = BASE_MAX_ACTIVE + MAX_ACTIVE_INCREMENT * (wave - 1);
+    return @min(result, CAP_MAX_ACTIVE);
+}
+
+fn waveKillTarget(wave: u32) u32 {
+    const result = BASE_KILL_TARGET + KILL_TARGET_INCREMENT * (wave - 1);
+    return @min(result, CAP_KILL_TARGET);
+}
+
+fn waveDuration(wave: u32) f32 {
+    const result = BASE_WAVE_DURATION + WAVE_DURATION_INCREMENT * @as(f32, @floatFromInt(wave - 1));
+    return @min(result, CAP_WAVE_DURATION);
+}
+
+fn calculateWpm(kill_times: []const f64, kill_count: usize, current_time: f64) u32 {
+    var count: u32 = 0;
+    const entries = @min(kill_count, kill_times.len);
+    for (kill_times[0..entries]) |t| {
+        if (t > 0.0 and (current_time - t) < WPM_WINDOW_SECONDS) {
+            count += 1;
+        }
+    }
+    return count * 2;
+}
+
+fn isValidPrefix(typed: []const u8, zombies_arr: *const [MAX_ZOMBIES]?*Zombie) bool {
+    if (typed.len == 0) return true;
+    for (zombies_arr) |zombie| {
+        if (zombie) |zomb| {
+            if (!zomb.is_active) continue;
+            const zomb_name_len = cstrLen(zomb.name);
+            const zomb_name_slice = zomb.name[0..zomb_name_len];
+            if (std.mem.startsWith(u8, zomb_name_slice, typed)) return true;
         }
     }
     return false;
@@ -489,4 +544,82 @@ test "frame index wraps after ZOMBIE_FRAME_COUNT" {
     mid += 1;
     if (mid >= ZOMBIE_FRAME_COUNT) mid = 0;
     try std.testing.expect(mid > 0.0);
+}
+
+test "cstrLen" {
+    try std.testing.expectEqual(@as(usize, 5), cstrLen("Alice"));
+    try std.testing.expectEqual(@as(usize, 0), cstrLen(""));
+    try std.testing.expectEqual(@as(usize, 1), cstrLen("A"));
+    try std.testing.expectEqual(@as(usize, 17), cstrLen("undead apocalypse"));
+}
+
+test "comboMultiplier tier boundaries" {
+    try std.testing.expectEqual(@as(u32, 1), comboMultiplier(0));
+    try std.testing.expectEqual(@as(u32, 1), comboMultiplier(4));
+    try std.testing.expectEqual(@as(u32, 2), comboMultiplier(5));
+    try std.testing.expectEqual(@as(u32, 2), comboMultiplier(9));
+    try std.testing.expectEqual(@as(u32, 3), comboMultiplier(10));
+    try std.testing.expectEqual(@as(u32, 3), comboMultiplier(14));
+    try std.testing.expectEqual(@as(u32, 4), comboMultiplier(15));
+    try std.testing.expectEqual(@as(u32, 4), comboMultiplier(19));
+    try std.testing.expectEqual(@as(u32, 5), comboMultiplier(20));
+    try std.testing.expectEqual(@as(u32, 5), comboMultiplier(100));
+}
+
+test "waveSpawnDelay" {
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), waveSpawnDelay(1), 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0 * 0.85 * 0.85 * 0.85 * 0.85), waveSpawnDelay(5), 0.01);
+    try std.testing.expect(waveSpawnDelay(12) >= MIN_SPAWN_DELAY);
+    try std.testing.expect(waveSpawnDelay(20) >= MIN_SPAWN_DELAY);
+}
+
+test "waveFallSpeed" {
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), waveFallSpeed(1), 0.01);
+    try std.testing.expect(waveFallSpeed(5) > BASE_FALL_SPEED);
+    try std.testing.expect(waveFallSpeed(15) <= MAX_FALL_SPEED);
+    try std.testing.expectApproxEqAbs(MAX_FALL_SPEED, @min(waveFallSpeed(20), MAX_FALL_SPEED), 0.01);
+}
+
+test "waveMaxActive" {
+    try std.testing.expectEqual(@as(u32, 5), waveMaxActive(1));
+    try std.testing.expectEqual(@as(u32, 13), waveMaxActive(5));
+    try std.testing.expectEqual(@as(u32, 29), waveMaxActive(13));
+    try std.testing.expectEqual(@as(u32, 30), waveMaxActive(20));
+}
+
+test "waveKillTarget" {
+    try std.testing.expectEqual(@as(u32, 5), waveKillTarget(1));
+    try std.testing.expectEqual(@as(u32, 13), waveKillTarget(5));
+    try std.testing.expectEqual(@as(u32, 40), waveKillTarget(20));
+}
+
+test "waveDuration" {
+    try std.testing.expectApproxEqAbs(@as(f32, 30.0), waveDuration(1), 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 50.0), waveDuration(5), 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 120.0), waveDuration(20), 0.01);
+}
+
+test "calculateWpm" {
+    // empty buffer
+    var empty_times = [_]f64{0.0} ** 10;
+    try std.testing.expectEqual(@as(u32, 0), calculateWpm(&empty_times, 0, 100.0));
+
+    // partial buffer: 3 kills within window
+    var times = [_]f64{0.0} ** 10;
+    times[0] = 90.0;
+    times[1] = 92.0;
+    times[2] = 95.0;
+    try std.testing.expectEqual(@as(u32, 6), calculateWpm(&times, 3, 100.0));
+
+    // expired entries outside window
+    times[0] = 10.0;
+    times[1] = 15.0;
+    times[2] = 95.0;
+    try std.testing.expectEqual(@as(u32, 2), calculateWpm(&times, 3, 100.0));
+
+    // all expired
+    times[0] = 10.0;
+    times[1] = 15.0;
+    times[2] = 20.0;
+    try std.testing.expectEqual(@as(u32, 0), calculateWpm(&times, 3, 100.0));
 }
