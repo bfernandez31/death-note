@@ -5,6 +5,13 @@ project:
   framework: none
 runtime:
   manager: zig
+  system_packages:
+    - libgl1-mesa-dev
+    - libx11-dev
+    - libxrandr-dev
+    - libxinerama-dev
+    - libxi-dev
+    - libxcursor-dev
 commands:
   install: "zig build"
   test: "zig build test"
