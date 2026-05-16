@@ -18,12 +18,17 @@
   - [F-12 Wave HUD](#f-12-wave-hud)
   - [F-13 Wave Transition](#f-13-wave-transition)
   - [F-14 Endless Wave Scaling](#f-14-endless-wave-scaling)
+  - [F-15 Boss Zombie Spawn](#f-15-boss-zombie-spawn)
+  - [F-16 Boss Typing Mechanic](#f-16-boss-typing-mechanic)
+  - [F-17 Boss Priority Over Regular Zombies](#f-17-boss-priority-over-regular-zombies)
+  - [F-18 Boss Wave Completion Gate](#f-18-boss-wave-completion-gate)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
   - [Journey 3: Input Ignored Outside Text Box](#journey-3-input-ignored-outside-text-box)
   - [Journey 4: Buffer Full and Backspace](#journey-4-buffer-full-and-backspace)
   - [Journey 5: Wave Completion and Transition](#journey-5-wave-completion-and-transition)
+  - [Journey 6: Boss Wave Encounter and Defeat](#journey-6-boss-wave-encounter-and-defeat)
 - [State Machines](#state-machines)
   - [Game State](#game-state)
   - [Zombie Lifecycle State](#zombie-lifecycle-state)
@@ -44,6 +49,10 @@ graph TB
         Restart["F-06 Restart"]
         WaveSystem["F-14 Wave Progression"]
         WaveTransition["F-13 Wave Transition"]
+        BossSpawn["F-15 Boss Zombie Spawn"]
+        BossTyping["F-16 Boss Typing Mechanic"]
+        BossPriority["F-17 Boss Priority"]
+        BossGate["F-18 Boss Wave Completion Gate"]
     end
 
     subgraph Presentation
@@ -74,6 +83,13 @@ graph TB
     Killing --> WaveTransition
     WaveTransition --> WaveSystem
     WaveTransition --> Keyboard
+    WaveSystem --> BossSpawn
+    BossSpawn --> BossTyping
+    BossTyping --> Keyboard
+    BossTyping --> BossPriority
+    BossTyping --> BossGate
+    BossGate --> WaveTransition
+    BossTyping --> GameOver
 ```
 
 ---
@@ -177,15 +193,16 @@ graph TB
 
 ### F-05 Game Over Detection
 
-**Description.** During each frame's update pass, if any active zombie's `y` position meets or exceeds `screen_height` (450), `is_game_over` is set to `true` and `updateZombies` returns immediately. This halts the entire update phase for the remainder of that frame and all subsequent frames until the player restarts.
+**Description.** During each frame's update pass, if any active zombie's `y` position meets or exceeds `screen_height` (450), `is_game_over` is set to `true` and `updateZombies` returns immediately. The same check runs for the boss zombie in `updateBoss`. This halts the entire update phase for the remainder of that frame and all subsequent frames until the player restarts.
 
-**User-facing behavior.** When a zombie reaches the bottom of the screen the game freezes all zombie movement and displays the game-over screen.
+**User-facing behavior.** When any zombie — including the boss — reaches the bottom of the screen the game freezes all zombie movement and displays the game-over screen.
 
 **System behavior.**
 - Inside `updateZombies`, after `zomb.y += zomb.speed`: `if (zomb.y >= screen_height)` → `is_game_over = true; return;` (`src/main.zig:175–177`).
+- Inside `updateBoss`, after `b.y += b.speed`: `if (b.y >= screen_height)` → `is_game_over = true; return;`.
 - The `return` means zombies later in the pool array are not updated this frame.
-- The main loop's `if (!is_game_over)` guard (`src/main.zig:73`) prevents any further update logic.
-- Draw phase still runs; `drawZombies` is skipped in favour of the overlay (`src/main.zig:150–153`).
+- The main loop's `if (!is_game_over)` guard prevents any further update logic.
+- Draw phase still runs; `drawZombies` is skipped in favour of the overlay.
 
 **Key source references.**
 - `src/main.zig:24` — `is_game_over` declaration
@@ -198,17 +215,18 @@ graph TB
 
 ### F-06 Restart
 
-**Description.** While the game-over screen is displayed, pressing `KEY_ENTER` resets all mutable game state: the input buffer is cleared, `spawn_timer` is zeroed, wave state is returned to wave 1, `is_game_over` is set to `false`, and `resetZombies` frees and nulls every heap-allocated zombie in the pool.
+**Description.** While the game-over screen is displayed, pressing `KEY_ENTER` resets all mutable game state: the input buffer is cleared, `spawn_timer` is zeroed, wave state is returned to wave 1, `is_game_over` is set to `false`, `resetZombies` frees and nulls every heap-allocated zombie in the pool, and `resetBoss` frees any live boss allocation and resets boss state.
 
-**User-facing behavior.** The player presses Enter on the game-over screen and the game immediately restarts from wave 1 with a clean state and no zombies on screen.
+**User-facing behavior.** The player presses Enter on the game-over screen and the game immediately restarts from wave 1 with a clean state, no zombies on screen, and no active boss.
 
 **System behavior.**
-- `raylib.IsKeyPressed(raylib.KEY_ENTER)` checked only when `is_game_over` is `true` (`src/main.zig:200`).
-- `is_game_over = false` re-enables the update phase (`src/main.zig:201`).
-- `letter_count = 0; name[letter_count] = '\x00'` clears the input buffer (`src/main.zig:202–203`).
-- `spawn_timer = 0.0` resets the spawn countdown (`src/main.zig:204`).
-- Wave state reset: `current_wave = 1`, `wave_kills = 0`, `wave_spawned = 0`, `is_transitioning = false`, `transition_timer = 0.0` (`src/main.zig:205–209`).
-- `resetZombies(ctx.allocator)` iterates all slots: `allocator.destroy(z); zombie.* = null` for every non-null entry (`src/main.zig:210`).
+- `raylib.IsKeyPressed(raylib.KEY_ENTER)` checked only when `is_game_over` is `true`.
+- `is_game_over = false` re-enables the update phase.
+- `letter_count = 0; name[letter_count] = '\x00'` clears the input buffer.
+- `spawn_timer = 0.0` resets the spawn countdown.
+- Wave state reset: `current_wave = 1`, `wave_kills = 0`, `wave_spawned = 0`, `is_transitioning = false`, `transition_timer = 0.0`.
+- `resetZombies(ctx.allocator)` iterates all slots: `allocator.destroy(z); zombie.* = null` for every non-null entry.
+- `resetBoss(ctx.allocator)` frees the boss allocation if non-null, sets `boss = null`, `boss_spawned_this_wave = false`, `boss_phrase_len = 0`.
 
 **Key source references.**
 - `src/main.zig:200–210` — restart branch inside game-over block
@@ -220,18 +238,19 @@ graph TB
 
 ### F-07 Text Input
 
-**Description.** Each frame the game reads characters from raylib's key-press queue and appends printable ASCII characters (codepoints 32–125) to the `name` buffer, up to a maximum of 9 characters. Backspace removes the last character. Input is accepted regardless of mouse position; the mouse-over state only controls the cursor icon and the blinking-underscore overlay (F-09). Input is entirely disabled during wave transitions.
+**Description.** Each frame the game reads characters from raylib's key-press queue and appends printable ASCII characters (codepoints 32–125) to the `name` buffer. The maximum buffer length is dynamic: 9 characters during normal play and 35 characters while a boss is active (F-16). Backspace removes the last character. Input is accepted regardless of mouse position; the mouse-over state only controls the cursor icon and the blinking-underscore overlay (F-09). Input is entirely disabled during wave transitions.
 
-**User-facing behavior.** The player types and characters appear in the text box. Backspace deletes the last character. During the 3-second wave-transition countdown, typing is ignored. Moving the mouse over the text box switches the cursor to an I-beam and shows the blinking underscore, but is not required to type.
+**User-facing behavior.** The player types and characters appear in the text box. Backspace deletes the last character. During the 3-second wave-transition countdown, typing is ignored. While a boss is active the buffer accepts up to 35 characters to accommodate boss phrases.
 
 **System behavior.**
-- Mouse position checked each frame with `raylib.CheckCollisionPointRec` (`src/main.zig:89`).
-- `mouse_on_text = true` and `MOUSE_CURSOR_IBEAM` set on hover (`src/main.zig:90–91`); otherwise `false` and `MOUSE_CURSOR_DEFAULT` (`src/main.zig:93–94`).
-- Input processing gated by `if (!is_game_over and !is_transitioning)` (`src/main.zig:103`).
-- `raylib.GetCharPressed()` polled in a `while (key > 0)` loop to drain the frame's key queue (`src/main.zig:107–115`).
-- Guard: `(key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)` (`src/main.zig:109`).
-- `name[letter_count] = @intCast(key)` appends the byte; `name[letter_count + 1] = '\x00'` maintains null termination (`src/main.zig:110–111`).
-- Backspace: `IsKeyPressed(KEY_BACKSPACE) and letter_count > 0` → decrement and re-null-terminate (`src/main.zig:118–120`).
+- Mouse position checked each frame with `raylib.CheckCollisionPointRec`.
+- `mouse_on_text = true` and `MOUSE_CURSOR_IBEAM` set on hover; otherwise `false` and `MOUSE_CURSOR_DEFAULT`.
+- Input processing gated by `if (!is_game_over and !is_transitioning)`.
+- `raylib.GetCharPressed()` polled in a `while (key > 0)` loop to drain the frame's key queue.
+- Guard: `(key >= 32) and (key <= 125) and (letter_count < getCurrentMaxInput())`.
+- `getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (9).
+- `name[letter_count] = @intCast(key)` appends the byte; `name[letter_count + 1] = '\x00'` maintains null termination.
+- Backspace: `IsKeyPressed(KEY_BACKSPACE) and letter_count > 0` → decrement and re-null-terminate.
 
 **Key source references.**
 - `src/main.zig:8` — `MAX_INPUT_CHARS = 9`
@@ -264,15 +283,15 @@ graph TB
 
 ### F-09 Blinking Cursor
 
-**Description.** When the mouse is over the text box and the buffer has not yet reached its 9-character limit, a `"_"` character is drawn immediately after the typed text. Its visibility toggles on and off every 20 frames by evaluating `(frames_counter / 20) % 2 == 0`. When the buffer is full, the blinking cursor is suppressed and a `"Press BACKSPACE to delete chars..."` hint is shown instead.
+**Description.** When the mouse is over the text box and the buffer has not yet reached its current character limit, a `"_"` character is drawn immediately after the typed text. Its visibility toggles on and off every 20 frames by evaluating `(frames_counter / 20) % 2 == 0`. When the buffer is full (at 9 normally or 35 during a boss encounter), the blinking cursor is suppressed and a `"Press BACKSPACE to delete chars..."` hint is shown instead.
 
-**User-facing behavior.** An underscore blinks at the insertion point while the player is focused on the text box. At maximum capacity the blink stops and a backspace reminder appears.
+**User-facing behavior.** An underscore blinks at the insertion point while the player is focused on the text box. At the current maximum capacity the blink stops and a backspace reminder appears.
 
 **System behavior.**
-- `frames_counter` incremented by 1 each frame while `mouse_on_text` is true; reset to 0 when focus is lost (`src/main.zig:102–106`).
-- Cursor drawn when `mouse_on_text and letter_count < MAX_INPUT_CHARS and ((frames_counter / 20) % 2) == 0` (`src/main.zig:155`).
-- X position: `text_box.x + 8 + raylib.MeasureText(&name, 40)` — appended after the last typed character (`src/main.zig:156`).
-- Full-buffer hint drawn when `mouse_on_text and letter_count >= MAX_INPUT_CHARS` at fixed position (230, 300) (`src/main.zig:159–161`).
+- `frames_counter` incremented by 1 each frame while `mouse_on_text` is true; reset to 0 when focus is lost.
+- Cursor drawn when `mouse_on_text and letter_count < getCurrentMaxInput() and ((frames_counter / 20) % 2) == 0`.
+- X position: `text_box.x + 8 + raylib.MeasureText(&name, 40)` — appended after the last typed character.
+- Full-buffer hint drawn when `mouse_on_text and letter_count >= getCurrentMaxInput()` at fixed position (230, 300).
 
 **Key source references.**
 - `src/main.zig:65` — `frames_counter` declaration
@@ -349,17 +368,21 @@ graph TB
 
 ### F-13 Wave Transition
 
-**Description.** When a wave is complete (all zombies spawned and killed), the game enters a 3-second transition state. During this state no zombies spawn, existing zombies do not move, input is ignored, and a centered countdown message is displayed. When the timer expires the next wave begins automatically.
+**Description.** When a wave is complete, the game enters a 3-second transition state. Completion requires all zombies spawned and killed; on boss waves (multiples of 5) it additionally requires the boss to be defeated. During this state no zombies spawn, existing zombies do not move, input is ignored, and a centered countdown message is displayed. When the timer expires the next wave begins automatically.
 
-**User-facing behavior.** After clearing all zombies in a wave, the player sees a message like `"WAVE 2 — 18 WPM challenge — 3..."` that counts down from 3 to 1, then wave 2 begins.
+**User-facing behavior.** After clearing all zombies — and the boss on boss waves — the player sees a message like `"WAVE 2 — 18 WPM challenge — 3..."` that counts down from 3 to 1, then the next wave begins.
 
 **System behavior.**
-- Wave completion detected when `wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size` (`src/main.zig:141`).
-- On completion: `is_transitioning = true`, `transition_timer = WAVE_TRANSITION_DURATION` (3.0 s) (`src/main.zig:143–144`).
-- Each frame while `is_transitioning`: `transition_timer -= raylib.GetFrameTime()` (`src/main.zig:149`).
-- When `transition_timer <= 0`: `current_wave += 1`, `wave_kills = 0`, `wave_spawned = 0`, `spawn_timer = 0.0`, `is_transitioning = false`, `resetZombies` called (`src/main.zig:151–156`).
-- Transition screen text: `"WAVE {next} — {wpm} WPM challenge — {ceil(timer)}..."` drawn centered at `y = screen_height / 2 - 15`, font size 30, `DARKGRAY` (`src/main.zig:218–219`).
-- Input guard `!is_transitioning` at `src/main.zig:103` prevents keystroke processing during the countdown.
+- Wave completion detected when:
+  ```
+  const boss_done = if (current_wave % 5 == 0) boss == null and boss_spawned_this_wave else true;
+  wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done
+  ```
+- On completion: `is_transitioning = true`, `transition_timer = WAVE_TRANSITION_DURATION` (3.0 s).
+- Each frame while `is_transitioning`: `transition_timer -= raylib.GetFrameTime()`.
+- When `transition_timer <= 0`: `current_wave += 1`, `wave_kills = 0`, `wave_spawned = 0`, `spawn_timer = 0.0`, `is_transitioning = false`, `resetZombies` called, `resetBoss` called.
+- Transition screen text: `"WAVE {next} — {wpm} WPM challenge — {ceil(timer)}..."` drawn centered at `y = screen_height / 2 - 15`, font size 30, `DARKGRAY`.
+- Input guard `!is_transitioning` prevents keystroke processing during the countdown.
 
 **Key source references.**
 - `src/main.zig:141–144` — wave completion detection and transition start
@@ -386,6 +409,87 @@ graph TB
 - `src/main.zig:419–429` — `getWaveConfig` function with scaling formula
 
 **Dependencies.** F-01 (spawn uses `wave_cfg.spawn_delay` and `pool_size`), F-04 (fall speed from `wave_cfg.fall_speed`), F-12 (HUD reads `target_wpm`), F-13 (transition shows next wave WPM).
+
+---
+
+### F-15 Boss Zombie Spawn
+
+**Description.** On every wave that is a multiple of 5 (waves 5, 10, 15, 20, …), a single boss zombie is spawned when the number of pool kills reaches `ceil(pool_size / 2)` — implemented as `(pool_size + 1) / 2`. The boss occupies a dedicated `?*Zombie` pointer (`boss`) outside the regular zombie pool. Only one boss can be active at a time per wave.
+
+**User-facing behavior.** After killing roughly half the zombies on a 5th-multiple wave, a visually distinct boss appears at the top-center of the screen and begins falling. It displays a multi-word phrase the player must type.
+
+**System behavior.**
+- Each frame, after `updateZombies` and before the wave-completion check, if `current_wave % 5 == 0 and !boss_spawned_this_wave and boss == null`:
+  - Compute `threshold = (wave_cfg.pool_size + 1) / 2`.
+  - If `wave_kills >= threshold`, call `spawnBoss(ctx.allocator) catch {}`.
+- `spawnBoss` allocates a `Zombie` via `allocator.create(Zombie)` with `errdefer allocator.destroy`, sets `x = screen_width / 2.0 - 30.0`, `y = 0.0`, `speed = getWaveConfig(current_wave).fall_speed * BOSS_SPEED_MULTIPLIER` (0.5×), and selects a random phrase from `BossPhrases`.
+- `boss_spawned_this_wave = true`; `boss_phrase_len` is precomputed by scanning to null terminator.
+- `resetBoss(allocator)` frees the boss pointer if non-null and resets `boss_spawned_this_wave` and `boss_phrase_len` — called on wave transition and game restart.
+
+**Key source references.**
+- `src/main.zig` — `BOSS_SPEED_MULTIPLIER = 0.5`, `boss`, `boss_spawned_this_wave`, `boss_phrase_len` globals
+- `src/main.zig` — `spawnBoss`, `resetBoss` functions
+- `src/boss_phrases.zig:1` — `BossPhrases` array (10 entries)
+
+**Dependencies.** F-14 (wave number and pool_size from `getWaveConfig`), F-16 (boss must exist to be killed), F-18 (wave gate depends on boss state).
+
+---
+
+### F-16 Boss Typing Mechanic
+
+**Description.** While a boss is active, the input buffer's effective character limit extends from 9 to 35 to accommodate multi-word boss phrases. The player types the boss phrase character by character; a health bar above the boss reflects typing progress. Typing the complete phrase destroys the boss, clears the input, and reverts the limit to 9.
+
+**User-facing behavior.** The boss displays a multi-word phrase in dark red above its sprite. A health bar below the phrase shrinks as the player types correctly. Completing the phrase destroys the boss with the kill sound. Backspace undoes the last character and expands the health bar.
+
+**System behavior.**
+- `getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (9). The character-append guard and cursor/hint thresholds use this helper.
+- `updateBoss` (called each frame when `!is_game_over and !is_transitioning`): advances `b.y += b.speed`; if `b.y >= screen_height` sets `is_game_over = true` (F-05). Checks if `name[0..letter_count]` is a valid prefix of the boss phrase; if `letter_count == boss_phrase_len` and the phrase matches: calls `allocator.destroy(b)`, sets `boss = null`, clears input, plays `zombie_kill_sound`. Does not increment `wave_kills`.
+- `drawBoss`: renders the boss sprite at `BOSS_SCALE` (0.4) with `RED` tint; draws phrase text at font size 20 in dark red (`r=139, g=0, b=0`); draws a 200 × 8 px health bar (light-gray background, red fill proportional to remaining untyped characters, dark-gray border).
+
+**Key source references.**
+- `src/main.zig` — `MAX_BOSS_INPUT_CHARS = 35`, `BOSS_SCALE = 0.4`, `BOSS_HEALTH_BAR_WIDTH = 200`, `BOSS_HEALTH_BAR_HEIGHT = 8`
+- `src/main.zig` — `getCurrentMaxInput()`, `updateBoss`, `drawBoss`
+- `src/boss_phrases.zig:1` — 10 boss phrases (all lowercase with spaces, ≤ 35 characters)
+
+**Dependencies.** F-15 (boss must be spawned), F-07 (input guard uses `getCurrentMaxInput`), F-09 (cursor/hint guard uses `getCurrentMaxInput`), F-18 (boss kill enables wave completion).
+
+---
+
+### F-17 Boss Priority Over Regular Zombies
+
+**Description.** While a boss is active and the player's typed input is a valid prefix of the boss phrase, the regular zombie kill check is skipped for all regular zombies that frame. This prevents accidentally killing a regular zombie whose name matches the start of the boss phrase.
+
+**User-facing behavior.** While typing a boss phrase, regular zombies with names matching the typed text are not destroyed. The player must complete or backspace past the boss phrase prefix before killing those zombies.
+
+**System behavior.**
+- In `updateZombies`, before the `std.mem.eql` kill check for each regular zombie, if `boss != null`: compute `boss_slice = b.name[0..boss_phrase_len]`; if `letter_count <= boss_phrase_len and std.mem.eql(u8, typed_name, boss_slice[0..letter_count])`, skip (`continue`) this zombie.
+- When no boss is active the guard is skipped and regular matching proceeds normally.
+
+**Key source references.**
+- `src/main.zig` — boss priority guard in `updateZombies`
+
+**Dependencies.** F-10 (regular zombie kill mechanic), F-15 (boss must exist), F-16 (boss phrase reference needed for prefix check).
+
+---
+
+### F-18 Boss Wave Completion Gate
+
+**Description.** On boss waves (multiples of 5), the wave transition does not start until both the full zombie pool is cleared and the boss is defeated. On non-boss waves the completion condition is unchanged.
+
+**User-facing behavior.** After killing all pool zombies on wave 5, 10, 15, etc., the wave does not end until the player also defeats the boss. The wave countdown only begins once both conditions are met.
+
+**System behavior.**
+- The wave completion check adds: `const boss_done = if (current_wave % 5 == 0) boss == null and boss_spawned_this_wave else true;` The existing `wave_kills >= pool_size and wave_spawned >= pool_size` condition is ANDed with `boss_done`.
+- Before the boss spawns (`!boss_spawned_this_wave`): `boss_done = false`, so premature completion is blocked.
+- After boss spawn but before boss kill: `boss != null`, so `boss_done = false`.
+- After boss kill: `boss == null and boss_spawned_this_wave = true`, so `boss_done = true`.
+- `resetBoss` resets `boss_spawned_this_wave = false` on each wave transition and restart.
+
+**Key source references.**
+- `src/main.zig` — `boss_done` computation and wave completion check in `frame()`
+- `src/main.zig` — `resetBoss` called in wave transition and restart blocks
+
+**Dependencies.** F-13 (wave transition triggered by this check), F-15 (boss spawn), F-16 (boss kill clears `boss`).
 
 ---
 
@@ -475,6 +579,30 @@ sequenceDiagram
     Game->>Player: New wave begins, HUD shows "WAVE N+1 — WPM — 0 / pool"
 ```
 
+### Journey 6: Boss Wave Encounter and Defeat
+
+```mermaid
+sequenceDiagram
+    participant Player
+    participant Game
+    participant Boss
+
+    Player->>Game: Kills 7th zombie (threshold = ceil(13/2)) on wave 5
+    Game->>Game: wave_kills >= threshold AND current_wave % 5 == 0
+    Game->>Boss: spawnBoss() — allocate Zombie, phrase selected, y=0
+    Boss->>Player: drawBoss() renders red 0.4-scale sprite with phrase and full health bar
+    Game->>Game: getCurrentMaxInput() now returns 35
+    Player->>Game: Types boss phrase character by character
+    Game->>Boss: updateBoss: check prefix match, health bar fill decreases
+    Player->>Game: Types final character completing full phrase
+    Game->>Boss: allocator.destroy(boss), boss = null, input cleared
+    Game->>Player: Kill sound plays, health bar disappears
+    Player->>Game: Kills remaining pool zombies
+    Game->>Game: boss_done = true (boss == null AND boss_spawned_this_wave)
+    Game->>Game: wave_kills >= pool_size AND wave_spawned >= pool_size AND boss_done
+    Game->>Player: Wave transition countdown begins
+```
+
 ### Journey 4: Buffer Full and Backspace
 
 ```mermaid
@@ -502,10 +630,10 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Playing : main() initialises (wave 1)
-    Playing --> GameOver : zomb.y >= screen_height\n(src/main.zig:305–307)
-    Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\n(src/main.zig:141–144)
-    Transitioning --> Playing : transition_timer <= 0\ncurrent_wave += 1\n(src/main.zig:151–156)
-    GameOver --> Playing : KEY_ENTER pressed\ncurrent_wave reset to 1\n(src/main.zig:200–210)
+    Playing --> GameOver : zomb.y >= screen_height\nOR boss.y >= screen_height
+    Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\nAND boss_done\n(boss_done = true on non-boss waves\nor after boss killed on boss waves)
+    Transitioning --> Playing : transition_timer <= 0\ncurrent_wave += 1\nresetZombies + resetBoss called
+    GameOver --> Playing : KEY_ENTER pressed\ncurrent_wave reset to 1\nresetZombies + resetBoss called
 ```
 
 ### Zombie Lifecycle State
@@ -544,8 +672,8 @@ The following rules reflect non-obvious constraints directly evidenced in `src/m
 **BR-02 — Only printable ASCII accepted.**
 The guard `(key >= 32) and (key <= 125)` filters out control characters, extended Unicode codepoints, and all non-printable values (`src/main.zig:84`).
 
-**BR-03 — Hard cap of 9 characters.**
-`MAX_INPUT_CHARS = 9` (`src/main.zig:8`). The same guard on line 84 enforces the cap: once `letter_count == 9` no further characters are appended.
+**BR-03 — Dynamic character cap: 9 normally, 35 while boss is active.**
+`getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (9). The same guard enforces the cap at the character-append site. When the boss is killed, the limit immediately reverts to 9 and any characters in the buffer beyond index 9 remain but cannot be extended further.
 
 **BR-04 — Match is byte-exact.**
 `std.mem.eql(u8, typed_name, zomb_name_slice)` performs a case-sensitive, length-sensitive comparison with no normalisation (`src/main.zig:193`). One wrong character or extra space prevents a kill.
@@ -574,5 +702,14 @@ There is no pre-computed length field; `updateZombies` scans for `'\x00'` on eve
 **BR-12 — Input is fully disabled during wave transitions.**
 The `!is_transitioning` guard at `src/main.zig:103` prevents `GetCharPressed` and `IsKeyPressed(KEY_BACKSPACE)` from being called during the 3-second countdown. Characters typed during a transition are silently discarded.
 
-**BR-13 — Wave transition clears all live zombies.**
-`resetZombies` is called at the end of each transition countdown (`src/main.zig:156`), freeing and nulling all heap-allocated zombies. This means any zombies remaining on screen when the transition begins are cleaned up before the next wave starts.
+**BR-13 — Wave transition clears all live zombies and boss.**
+`resetZombies` and `resetBoss` are both called at the end of each transition countdown, freeing and nulling all heap-allocated zombies and the boss if present. Any entities remaining on screen when the transition begins are cleaned up before the next wave starts.
+
+**BR-14 — Boss kill does not count toward wave_kills.**
+When the boss is killed via `updateBoss`, `wave_kills` is not incremented. The boss is tracked separately via `boss == null and boss_spawned_this_wave` in the `boss_done` gate. This keeps the wave HUD kill counter aligned with pool zombies only.
+
+**BR-15 — Boss phrase prefix suppresses regular zombie kills.**
+While `boss != null` and the typed input is a non-empty valid prefix of the boss phrase, `updateZombies` skips the kill check for all regular zombies. This is a per-frame check; if the player backspaces to a string that is no longer a valid prefix, regular zombie matching resumes immediately on the next frame.
+
+**BR-16 — Boss input buffer reverts to 9 on boss kill.**
+When `updateBoss` destroys the boss and sets `boss = null`, `getCurrentMaxInput()` returns 9 on the very next frame. The input buffer content is simultaneously cleared (`letter_count = 0`), so there is no state where the buffer holds more than 9 characters after boss death.

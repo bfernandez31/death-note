@@ -10,6 +10,7 @@
   - [3.3 InputBuffer](#33-inputbuffer)
   - [3.4 GameState](#34-gamestate)
   - [3.5 WaveConfig](#35-waveconfig)
+  - [3.6 BossPhrases](#36-bossphrases)
 - [4. Enums and Constants](#4-enums-and-constants)
 - [5. State Machines](#5-state-machines)
   - [5.1 Game State Machine](#51-game-state-machine)
@@ -25,12 +26,14 @@
 
 All game state lives in module-level global variables declared at the top of `src/main.zig`. None of this state survives process exit; every session starts fresh.
 
-The two "data containers" in the project are:
+The three "data containers" in the project are:
 
 | Container | Location | Nature |
 |---|---|---|
 | `zombies[MAX_ZOMBIES]` pool | `src/main.zig` (runtime) | Fixed array of heap-allocated `?*Zombie` pointers; mutable at runtime |
+| `boss` pointer | `src/main.zig` (runtime) | Single `?*Zombie` pointer for the active boss zombie; null when no boss is present |
 | `ZombieNames` | `src/zombie_names.zig` (compile-time) | Read-only, compile-time array of 49 null-terminated C string pointers |
+| `BossPhrases` | `src/boss_phrases.zig` (compile-time) | Read-only, compile-time array of 10 null-terminated multi-word phrase pointers |
 
 There are no files read or written during gameplay. Asset files (`assets/zombie-hit.wav`, `assets/z_spritesheet.png`) are loaded at startup by raylib and held in GPU/audio memory as opaque handles — they are not parsed into application data structures.
 
@@ -50,11 +53,15 @@ erDiagram
         f32 transition_timer
         usize frames_counter
         bool mouse_on_text
+        ptr boss
+        bool boss_spawned_this_wave
+        usize boss_phrase_len
     }
 
     INPUT_BUFFER {
         u8_array name
         usize letter_count
+        usize effective_max
     }
 
     ZOMBIE_POOL {
@@ -76,6 +83,11 @@ erDiagram
         int count
     }
 
+    BOSS_PHRASES {
+        cstr entries
+        int count
+    }
+
     WAVE_CONFIG {
         u32 target_wpm
         f32 spawn_delay
@@ -86,8 +98,10 @@ erDiagram
     GAME_STATE ||--|| INPUT_BUFFER : "controls input into"
     GAME_STATE ||--|| ZOMBIE_POOL : "governs lifecycle of"
     GAME_STATE ||--|| WAVE_CONFIG : "resolves per wave"
+    GAME_STATE ||--o| ZOMBIE : "boss pointer (0 or 1)"
     ZOMBIE_POOL ||--o{ ZOMBIE : "holds up to 100"
-    ZOMBIE }o--|| ZOMBIE_NAMES : "name points into"
+    ZOMBIE }o--|| ZOMBIE_NAMES : "name points into (regular)"
+    ZOMBIE }o--o| BOSS_PHRASES : "name points into (boss)"
     WAVE_CONFIG ||--o{ ZOMBIE : "fall_speed set at spawn"
 ```
 
@@ -168,22 +182,23 @@ This is a compile-time constant array of 49 null-terminated C string pointers. I
 **Definition:**
 
 ```zig
-var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);  // 10 bytes, zero-initialised
+var name = [_]u8{0} ** (MAX_BOSS_INPUT_CHARS + 1);  // 36 bytes, zero-initialised
 var letter_count: usize = 0;
 ```
 
-The active input buffer is exclusively `name` + `letter_count`.
+The active input buffer is exclusively `name` + `letter_count`. The buffer is sized to the maximum boss-phrase length to support both modes without reallocation.
 
 | Component | Type | Size | Meaning |
 |---|---|---|---|
-| `name` | `[10]u8` | 10 bytes | Null-terminated character buffer; bytes `0..letter_count-1` hold the typed characters; `name[letter_count]` is always `'\x00'` |
+| `name` | `[36]u8` | 36 bytes | Null-terminated character buffer; bytes `0..letter_count-1` hold the typed characters; `name[letter_count]` is always `'\x00'` |
 | `letter_count` | `usize` | — | Count of valid characters currently in `name`; doubles as the null-terminator index |
 
 **Invariants:**
 - `name[letter_count]` is always `'\x00'` — enforced after every write and after backspace.
-- `letter_count` never exceeds `MAX_INPUT_CHARS` (9); the character-append branch checks `letter_count < MAX_INPUT_CHARS` before writing.
+- `letter_count` never exceeds `getCurrentMaxInput()`: 9 normally, 35 while `boss != null`. The character-append branch checks `letter_count < getCurrentMaxInput()` before writing.
 - Only characters in the range `[32, 125]` (printable ASCII) are accepted.
-- On zombie kill: `letter_count = 0`, `name[0] = '\x00'`.
+- On regular zombie kill: `letter_count = 0`, `name[0] = '\x00'`.
+- On boss kill: `letter_count = 0`, `name[0] = '\x00'` (cleared by `updateBoss`).
 - On game restart: `letter_count = 0`, `name[0] = '\x00'`.
 
 ---
@@ -203,6 +218,9 @@ These variables collectively represent the running state of the game session.
 | `wave_spawned` | `u32` | `0` | `0` | Count of zombies spawned in the current wave. Incremented in `frame()` on each successful spawn. Reset to `0` at wave advance and restart. |
 | `is_transitioning` | `bool` | `false` | `false` | `true` during the 3-second inter-wave countdown. Blocks spawning, zombie movement, and input. |
 | `transition_timer` | `f32` | `0.0` | `0.0` | Seconds remaining in the current wave transition. Decremented each frame while `is_transitioning`. |
+| `boss` | `?*Zombie` | `null` | `null` | Pointer to the active boss `Zombie` struct, or `null` when no boss is alive. Freed by `resetBoss`. |
+| `boss_spawned_this_wave` | `bool` | `false` | `false` | `true` once `spawnBoss` has been called for the current wave. Used in the wave-completion gate to distinguish "boss not yet spawned" from "boss already killed". |
+| `boss_phrase_len` | `usize` | `0` | `0` | Length of the active boss phrase (number of characters before the null terminator), precomputed at spawn. Used by `updateBoss` and `drawBoss` to compute health bar fill and detect full-phrase match. |
 | `frames_counter` | `usize` | `0` (in `FrameContext`) | — | Counts frames while the mouse is over the text input box. Drives the blink via `(frames_counter / 20) % 2 == 0`; reset to `0` when the mouse leaves. |
 | `mouse_on_text` | `bool` | `false` (in `FrameContext`) | — | `true` when the mouse cursor is over `text_box`. Controls cursor icon and the blinking-underscore overlay. |
 
@@ -243,7 +261,35 @@ const WaveConfig = struct {
 
 **Lookup:** `fn getWaveConfig(wave: u32) WaveConfig` returns `WAVE_TABLE[wave - 1]` for waves 1–15 and computes the scaling formula for waves 16+.
 
-**Storage:** `WAVE_TABLE` is a `[15]WaveConfig` compile-time constant array (`src/main.zig:14–30`). No runtime allocation occurs.
+**Storage:** `WAVE_TABLE` is a `[15]WaveConfig` compile-time constant array. No runtime allocation occurs.
+
+---
+
+### 3.6 BossPhrases
+
+**Source:** `src/boss_phrases.zig`, line 1
+
+**Definition:**
+
+```zig
+pub const BossPhrases = [_][*:0]const u8{ ... };
+```
+
+This is a compile-time constant array of 10 null-terminated C string pointers. It is the sole source of boss phrase strings. The strings live in the binary's read-only data segment; no allocation occurs at runtime.
+
+| Attribute | Value |
+|---|---|
+| Element type | `[*:0]const u8` — null-terminated, read-only C string pointer |
+| Element count | 10 |
+| Mutability | Immutable (compile-time constant) |
+| Character set | Lowercase ASCII letters (97–122) and spaces (32) only |
+| Maximum length | 35 characters (fits within `MAX_BOSS_INPUT_CHARS`) |
+| Access pattern | Random index via `raylib.GetRandomValue(0, BossPhrases.len - 1)` at boss spawn time |
+
+**Phrases:** "the dead walk again", "bones remember every step", "silence feeds the horde", "no grave holds them long", "they rise when sun falls", "cold hands reach for you", "the earth spits them out", "shadows crawl at midnight", "a whisper wakes the dead", "run before they find you"
+
+**Relationships:**
+- `boss.name` (when a boss is alive) holds a pointer into this array. The pointer is assigned at `spawnBoss` time and is never copied.
 
 ---
 
@@ -256,7 +302,12 @@ There are no enums in this project. All constants are compile-time `const` value
 | Constant | Value | Type | Purpose |
 |---|---|---|---|
 | `MAX_ZOMBIES` | `100` | `comptime_int` | Size of the `zombies` fixed pool array; also the maximum number of simultaneously live zombies |
-| `MAX_INPUT_CHARS` | `9` | `comptime_int` | Maximum number of characters the player can type; the `name` buffer is `MAX_INPUT_CHARS + 1` bytes to accommodate the null terminator |
+| `MAX_INPUT_CHARS` | `9` | `comptime_int` | Default maximum characters the player can type during normal play |
+| `MAX_BOSS_INPUT_CHARS` | `35` | `comptime_int` | Maximum characters accepted while a boss is active; accommodates the longest boss phrase; the `name` buffer is `MAX_BOSS_INPUT_CHARS + 1` bytes |
+| `BOSS_SCALE` | `0.4` | `f32` | Render scale for the boss sprite (double the normal zombie scale of 0.2) |
+| `BOSS_SPEED_MULTIPLIER` | `0.5` | `f32` | Boss fall speed as a fraction of the wave's normal `fall_speed` |
+| `BOSS_HEALTH_BAR_WIDTH` | `200` | `c_int` | Pixel width of the boss health bar drawn below the boss phrase |
+| `BOSS_HEALTH_BAR_HEIGHT` | `8` | `c_int` | Pixel height of the boss health bar |
 | `ZOMBIE_FRAME_COUNT` | `17` | `comptime_int` | Number of horizontal animation frames in `z_spritesheet.png`; used to compute `frame_width` and to wrap the animation counter |
 | `ZOMBIE_ANIMATION_FRAME_DURATION` | `0.1` | `f32` | Seconds between animation frame advances in `drawZombies` |
 | `WAVE_TRANSITION_DURATION` | `3.0` | `f32` | Seconds the inter-wave countdown lasts before the next wave begins |
@@ -264,7 +315,7 @@ There are no enums in this project. All constants are compile-time `const` value
 | `ZOMBIE_SPAWN_X_MIN` | `10` | `c_int` | Left boundary for random zombie spawn x position (pixels from left edge) |
 | `ZOMBIE_SPAWN_X_MAX` | `749` | `c_int` | Right boundary for random zombie spawn x position (screen_width - 51) |
 | `screen_width` | `800` | `comptime_int` | Window width in pixels; passed to `raylib.InitWindow` and used for centering UI |
-| `screen_height` | `450` | `comptime_int` | Window height in pixels; a zombie reaching `y >= screen_height` triggers game over |
+| `screen_height` | `450` | `comptime_int` | Window height in pixels; a zombie or boss reaching `y >= screen_height` triggers game over |
 
 ### Raylib Constants in Use
 
@@ -350,8 +401,8 @@ The following invariants are enforced in code. They are not checked by a schema 
 
 ### Input Buffer
 
-- **Null-termination always maintained.** Every character append sets `name[letter_count + 1] = '\x00'` immediately after writing `name[letter_count]`. Every backspace sets `name[letter_count] = '\x00'` after decrementing `letter_count`. Game restart sets `name[0] = '\x00'`.
-- **Maximum length enforced at the append site.** Characters are only written when `letter_count < MAX_INPUT_CHARS` (9). Once full, `DrawText("Press BACKSPACE to delete chars...", ...)` is shown.
+- **Null-termination always maintained.** Every character append sets `name[letter_count + 1] = '\x00'` immediately after writing `name[letter_count]`. Every backspace sets `name[letter_count] = '\x00'` after decrementing `letter_count`. Both zombie kill and boss kill set `name[0] = '\x00'` and `letter_count = 0`. Game restart also clears the buffer.
+- **Dynamic maximum length enforced at the append site.** Characters are only written when `letter_count < getCurrentMaxInput()`, which returns 35 while a boss is active and 9 otherwise. Once full, `DrawText("Press BACKSPACE to delete chars...", ...)` is shown.
 - **Accepted character range `[32, 125]`** (printable ASCII, inclusive). Characters outside this range returned by `GetCharPressed` are silently discarded.
 - **`letter_count` never goes below zero.** The backspace branch checks `letter_count > 0` before decrementing.
 
@@ -372,6 +423,12 @@ The following invariants are enforced in code. They are not checked by a schema 
 
 - **Leak on kill (known behavior).** When a zombie is killed (`is_active = false`), its `*Zombie` heap allocation is intentionally left live until game-over restart. The slot in `zombies[]` remains non-null, preventing that slot from being reused for a new spawn.
 - **Full reclaim on restart.** `resetZombies` iterates every slot, calls `allocator.destroy(z)` for every non-null pointer, and sets the slot to `null`. After `resetZombies` returns, all 100 slots are `null` and no `Zombie` heap memory is outstanding.
+
+### Boss Memory Lifecycle
+
+- **Single allocation per boss encounter.** `spawnBoss` allocates exactly one `Zombie` struct via `allocator.create(Zombie)`. `errdefer allocator.destroy(new_boss)` prevents a leak if initialization fails after allocation.
+- **Freed on boss kill.** `updateBoss` calls `allocator.destroy(b)` and sets `boss = null` when the full phrase is typed.
+- **Freed on wave transition and restart.** `resetBoss` is called alongside `resetZombies` in both the wave-transition block and the game-restart block. It calls `allocator.destroy(b)` if `boss` is non-null, then resets `boss`, `boss_spawned_this_wave`, and `boss_phrase_len` to defaults. After `resetBoss` returns, no boss heap memory is outstanding.
 
 ### Asset Paths
 
