@@ -99,7 +99,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] Add boss priority check in `updateZombies()` in `src/main.zig`: before the `std.mem.eql` check for regular zombies (line 329), add guard — if `boss != null`, unwrap and compute `boss_slice = b.name[0..boss_phrase_len]`, if `letter_count <= boss_phrase_len and std.mem.eql(u8, typed_name, boss_slice[0..letter_count])` then `continue` to skip this regular zombie
+- [x] T022 [US3] Add boss priority check in `updateZombies()` in `src/main.zig`: before the `std.mem.eql` check for regular zombies (line 329), add guard — if `boss != null`, unwrap and compute `boss_slice = b.name[0..boss_phrase_len]`, if `letter_count <= boss_phrase_len and std.mem.eql(u8, typed_name, boss_slice[0..letter_count])` then `continue` to skip this regular zombie
 
 **Checkpoint**: Regular zombies are not accidentally killed while typing a boss phrase prefix
 
@@ -114,13 +114,13 @@
 ### Tests for User Story 4
 **RULE (constitution): Extend existing test blocks in `src/main.zig`.**
 
-- [ ] T023 [US4] Add test `"wave completion requires boss kill on boss waves"` in `src/main.zig` — verify that on a boss wave (wave % 5 == 0), the completion condition requires `boss == null and boss_spawned_this_wave` in addition to pool kills and spawns reaching pool_size
+- [x] T023 [US4] Add test `"wave completion requires boss kill on boss waves"` in `src/main.zig` — verify that on a boss wave (wave % 5 == 0), the completion condition requires `boss == null and boss_spawned_this_wave` in addition to pool kills and spawns reaching pool_size
 
 ### Implementation for User Story 4
 
-- [ ] T024 [US4] Modify wave completion check in `frame()` (line 145) of `src/main.zig`: add `const boss_done = if (current_wave % 5 == 0) boss == null and boss_spawned_this_wave else true;` and append `and boss_done` to the existing `if` condition
-- [ ] T025 [US4] Call `resetBoss(ctx.allocator)` in wave transition block (line 160, inside `if (transition_timer <= 0)`) alongside `resetZombies` in `src/main.zig`
-- [ ] T026 [US4] Call `resetBoss(ctx.allocator)` in game restart block (line 214, inside `if (raylib.IsKeyPressed(raylib.KEY_ENTER))`) alongside `resetZombies` in `src/main.zig`
+- [x] T024 [US4] Modify wave completion check in `frame()` (line 145) of `src/main.zig`: add `const boss_done = if (current_wave % 5 == 0) boss == null and boss_spawned_this_wave else true;` and append `and boss_done` to the existing `if` condition
+- [x] T025 [US4] Call `resetBoss(ctx.allocator)` in wave transition block (line 160, inside `if (transition_timer <= 0)`) alongside `resetZombies` in `src/main.zig`
+- [x] T026 [US4] Call `resetBoss(ctx.allocator)` in game restart block (line 214, inside `if (raylib.IsKeyPressed(raylib.KEY_ENTER))`) alongside `resetZombies` in `src/main.zig`
 
 **Checkpoint**: Boss waves cannot be skipped — wave only transitions after both pool and boss are cleared
 

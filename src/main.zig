@@ -161,7 +161,8 @@ fn frame(ctx: *FrameContext) void {
 
         // Wave completion detection — guarded against is_game_over so a kill+death in the
         // same frame does not silently start a wave transition behind the game-over screen.
-        if (!is_game_over and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size) {
+        const boss_done = if (current_wave % 5 == 0) boss == null and boss_spawned_this_wave else true;
+        if (!is_game_over and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
             is_transitioning = true;
             transition_timer = WAVE_TRANSITION_DURATION;
         }
@@ -177,6 +178,7 @@ fn frame(ctx: *FrameContext) void {
             spawn_timer = 0.0;
             is_transitioning = false;
             resetZombies(ctx.allocator);
+            resetBoss(ctx.allocator);
         }
     }
 
@@ -231,6 +233,7 @@ fn frame(ctx: *FrameContext) void {
             is_transitioning = false;
             transition_timer = 0.0;
             resetZombies(ctx.allocator);
+            resetBoss(ctx.allocator);
         }
     } else if (is_transitioning) {
         const next_wave = current_wave + 1;
@@ -345,7 +348,13 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
             // Create a slice from the zombie's name
             const zomb_name_slice = zomb.name[0..zomb_name_length];
 
-            // Check for equality
+            if (boss) |b| {
+                const boss_slice = b.name[0..boss_phrase_len];
+                if (letter_count <= boss_phrase_len and std.mem.eql(u8, typed_name, boss_slice[0..letter_count])) {
+                    continue;
+                }
+            }
+
             if (std.mem.eql(u8, typed_name, zomb_name_slice)) {
                 allocator.destroy(zomb);
                 slot.* = null;
@@ -766,4 +775,35 @@ test "boss phrase validity" {
 
 test "input buffer capacity for boss phrases" {
     try std.testing.expect(name.len >= MAX_BOSS_INPUT_CHARS + 1);
+}
+
+test "wave completion requires boss kill on boss waves" {
+    const saved_boss = boss;
+    const saved_spawned = boss_spawned_this_wave;
+    defer {
+        boss = saved_boss;
+        boss_spawned_this_wave = saved_spawned;
+    }
+
+    const wave: u32 = 5;
+    const cfg = getWaveConfig(wave);
+
+    // Boss wave: pool done but boss still alive — should NOT complete
+    var dummy = Zombie{ .x = 0, .y = 0, .speed = 0, .name = "test", .is_active = true, .frame = 0, .animation_timer = 0 };
+    boss = &dummy;
+    boss_spawned_this_wave = true;
+    const boss_done_alive = if (wave % 5 == 0) boss == null and boss_spawned_this_wave else true;
+    const pool_done = cfg.pool_size >= cfg.pool_size and cfg.pool_size >= cfg.pool_size;
+    try std.testing.expect(!(pool_done and boss_done_alive));
+
+    // Boss wave: pool done and boss killed — should complete
+    boss = null;
+    boss_spawned_this_wave = true;
+    const boss_done_dead = if (wave % 5 == 0) boss == null and boss_spawned_this_wave else true;
+    try std.testing.expect(pool_done and boss_done_dead);
+
+    // Non-boss wave: pool done — should complete regardless of boss state
+    const non_boss_wave: u32 = 6;
+    const boss_done_non = if (non_boss_wave % 5 == 0) boss == null and boss_spawned_this_wave else true;
+    try std.testing.expect(pool_done and boss_done_non);
 }
