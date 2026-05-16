@@ -183,7 +183,13 @@ pub fn main() !void {
 
     raylib.SetTargetFPS(60); // Set target frames per second
 
-    var allocator = std.heap.page_allocator;
+    // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
+    // every allocator.create(...) silently fails and zombies never spawn.
+    // c_allocator forwards to libc malloc/free, which emcc provides.
+    var allocator: std.mem.Allocator = if (@import("builtin").target.os.tag == .emscripten)
+        std.heap.c_allocator
+    else
+        std.heap.page_allocator;
 
     var ctx = FrameContext{
         .allocator = &allocator,

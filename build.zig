@@ -77,6 +77,11 @@ pub fn build(b: *std.Build) void {
             // exist in Zig 0.16's emscripten posix bindings. The game is single-
             // threaded anyway — emscripten_set_main_loop drives one frame at a time.
             .single_threaded = true,
+            // link_libc lets the game use std.heap.c_allocator (malloc/free); on
+            // wasm32-emscripten std.heap.page_allocator's mmap path is a no-op
+            // and silently fails every Zombie allocation. emcc provides libc at
+            // link time, but Zig needs the dependency declared at compile time.
+            .link_libc = true,
         });
         // Raylib headers are needed for @cImport in src/raylib.zig
         web_mod.addIncludePath(raylib_dep.path("src"));
@@ -126,9 +131,8 @@ pub fn build(b: *std.Build) void {
         emcc_link.addArgs(&.{ "--preload-file", "assets/" });
         emcc_link.addArgs(&.{ "-sUSE_GLFW=3", "-sFULL_ES2=1", "-sASYNCIFY=0" });
         // Default emscripten stack is 64 KB. Raylib's DrawTexturePro / DrawText
-        // path consumes deep stack frames in the per-frame callback and trips
-        // the "Stack cookie overwritten" guard. 1 MB matches the value used by
-        // raylib's official PLATFORM_WEB samples.
+        // path consumes deep stack frames in the per-frame callback. 1 MB
+        // matches the value used by raylib's official PLATFORM_WEB samples.
         emcc_link.addArgs(&.{"-sSTACK_SIZE=1048576"});
         emcc_link.addArgs(&.{ "-o", "zig-out/web/index.html" });
         emcc_link.step.dependOn(&emcc_check.step);
