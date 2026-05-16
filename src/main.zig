@@ -9,15 +9,9 @@ const MAX_INPUT_CHARS = 9;
 
 const ZOMBIE_FRAME_COUNT = 17;
 
-const BUFFER_SIZE = 16;
-const WEB_CANVAS_ID = "canvas";
-const WEB_PRELOAD_ROOT = "assets/";
 // Input buffer for characters
 var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
 var letter_count: usize = 0;
-
-var input_text: [MAX_INPUT_CHARS]u8 = undefined;
-var input_length: usize = 0;
 
 // Delay settings
 const spawn_delay: f32 = 3.0; // Delay in seconds between spawns
@@ -107,11 +101,14 @@ fn frame(ctx: *FrameContext) void {
     raylib.ClearBackground(raylib.RAYWHITE);
 
     raylib.DrawRectangleRec(ctx.text_box, raylib.LIGHTGRAY);
-    if (ctx.mouse_on_text) {
-        raylib.DrawRectangleLines(@intFromFloat(ctx.text_box.x), @intFromFloat(ctx.text_box.y), @intFromFloat(ctx.text_box.width), @intFromFloat(ctx.text_box.height), raylib.RED);
-    } else {
-        raylib.DrawRectangleLines(@intFromFloat(ctx.text_box.x), @intFromFloat(ctx.text_box.y), @intFromFloat(ctx.text_box.width), @intFromFloat(ctx.text_box.height), raylib.DARKGRAY);
-    }
+    const border_color = if (ctx.mouse_on_text) raylib.RED else raylib.DARKGRAY;
+    raylib.DrawRectangleLines(
+        @intFromFloat(ctx.text_box.x),
+        @intFromFloat(ctx.text_box.y),
+        @intFromFloat(ctx.text_box.width),
+        @intFromFloat(ctx.text_box.height),
+        border_color,
+    );
 
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
 
@@ -191,8 +188,6 @@ pub fn main() !void {
 // Function to update zombies
 fn updateZombies() void {
     for (zombies) |zombie| {
-        if (zombie == null) continue;
-
         if (zombie) |zomb| {
             if (!zomb.is_active) continue; // Skip if zombie is not on screen
             zomb.y += zomb.speed; // Update zombie position
@@ -232,8 +227,6 @@ fn drawZombies() void {
     const deltaTime = 1.0 / 60.0; // 60 FPS
 
     for (zombies) |zombie| {
-        if (zombie == null) continue;
-
         if (zombie) |zomb| {
             if (!zomb.is_active) continue;
 
