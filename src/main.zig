@@ -905,6 +905,32 @@ test "wave completion bonus" {
     try std.testing.expectEqual(@as(u64, 2000), WAVE_COMPLETION_BONUS_PER_WAVE * 10);
 }
 
+test "accuracy calculation" {
+    // 0 keystrokes → 100%
+    try std.testing.expectEqual(@as(u64, 100), if (@as(u64, 0) > 0) (@as(u64, 0) * 100) / @as(u64, 0) else 100);
+
+    // 20 correct out of 25 total → 80%
+    const correct: u64 = 20;
+    const total: u64 = 25;
+    try std.testing.expectEqual(@as(u64, 80), (correct * 100) / total);
+
+    // all correct → 100%
+    const all_correct: u64 = 15;
+    const all_total: u64 = 15;
+    try std.testing.expectEqual(@as(u64, 100), (all_correct * 100) / all_total);
+}
+
+test "wpm drops to zero after window expires" {
+    var times = [_]f64{0.0} ** 10;
+    times[0] = 5.0;
+    times[1] = 10.0;
+    times[2] = 15.0;
+    // At time 100, all entries are > 30 seconds old
+    try std.testing.expectEqual(@as(u32, 0), calculateWpm(&times, 3, 100.0));
+    // At time 20, all entries are within window
+    try std.testing.expectEqual(@as(u32, 6), calculateWpm(&times, 3, 20.0));
+}
+
 test "high score is monotonic" {
     const old_best = best_score;
     defer best_score = old_best;

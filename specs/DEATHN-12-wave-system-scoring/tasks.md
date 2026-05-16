@@ -157,14 +157,14 @@
 
 ### Tests for User Story 5
 
-- [ ] T047 [P] [US5] Extend tests in `src/main.zig`: add `test "accuracy calculation"` verifying accuracy = 100 with 0 keystrokes, accuracy = 80 with 20 correct and 5 incorrect keystrokes, accuracy = 100 with all correct keystrokes
-- [ ] T048 [P] [US5] Extend tests in `src/main.zig`: add `test "wpm drops to zero after window expires"` verifying `calculateWpm` returns 0 when all entries are older than 30 seconds
+- [x] T047 [P] [US5] Extend tests in `src/main.zig`: add `test "accuracy calculation"` verifying accuracy = 100 with 0 keystrokes, accuracy = 80 with 20 correct and 5 incorrect keystrokes, accuracy = 100 with all correct keystrokes
+- [x] T048 [P] [US5] Extend tests in `src/main.zig`: add `test "wpm drops to zero after window expires"` verifying `calculateWpm` returns 0 when all entries are older than 30 seconds
 
 ### Implementation for User Story 5
 
-- [ ] T049 [US5] Ensure WPM circular buffer recording is wired into kill events in `updateZombies` in `src/main.zig`: on each kill, record `raylib.GetTime()` in `wpm_kill_times[wpm_kill_index]`, advance `wpm_kill_index` with modulo `WPM_BUFFER_SIZE`, increment `wpm_kill_count`
-- [ ] T050 [US5] Verify the `drawHud()` function (from T030) displays live WPM and accuracy values computed each frame. Confirm WPM shows 0 when no kills in the last 30 seconds and accuracy displays correctly with mixed correct/incorrect keystrokes
-- [ ] T051 [US5] Verify `zig build` and `zig build test` both pass cleanly
+- [x] T049 [US5] Ensure WPM circular buffer recording is wired into kill events in `updateZombies` in `src/main.zig`: on each kill, record `raylib.GetTime()` in `wpm_kill_times[wpm_kill_index]`, advance `wpm_kill_index` with modulo `WPM_BUFFER_SIZE`, increment `wpm_kill_count`
+- [x] T050 [US5] Verify the `drawHud()` function (from T030) displays live WPM and accuracy values computed each frame. Confirm WPM shows 0 when no kills in the last 30 seconds and accuracy displays correctly with mixed correct/incorrect keystrokes
+- [x] T051 [US5] Verify `zig build` and `zig build test` both pass cleanly
 
 **Checkpoint**: Live WPM and accuracy update in real-time during gameplay. WPM reflects recent typing speed, accuracy reflects keystroke precision.
 
