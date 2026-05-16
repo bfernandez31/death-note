@@ -62,18 +62,18 @@
 
 ### Tests for User Story 1
 
-- [ ] T016 [P] [US1] Extend tests in `src/main.zig`: add `test "wave state resets on new wave"` verifying `wave_kill_count` resets to 0 and `wave_timer` resets to 0 when a new wave starts
-- [ ] T017 [P] [US1] Extend tests in `src/main.zig`: add `test "wave transition timer progression"` verifying the 5-second recap + 3-second countdown total equals `WAVE_TRANSITION_TOTAL_DURATION` (8.0)
+- [x] T016 [P] [US1] Extend tests in `src/main.zig`: add `test "wave state resets on new wave"` verifying `wave_kill_count` resets to 0 and `wave_timer` resets to 0 when a new wave starts
+- [x] T017 [P] [US1] Extend tests in `src/main.zig`: add `test "wave transition timer progression"` verifying the 5-second recap + 3-second countdown total equals `WAVE_TRANSITION_TOTAL_DURATION` (8.0)
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] Modify `spawnZombie` in `src/main.zig` to accept wave-derived parameters: use `waveFallSpeed(current_wave)` for zombie speed instead of `ZOMBIE_FALL_SPEED`, check `waveMaxActive(current_wave)` active zombie count before spawning, use `waveSpawnDelay(current_wave)` to replace the hardcoded `spawn_delay` constant in the spawn timer check
-- [ ] T019 [US1] Add wave completion detection in the update phase of `frame()` in `src/main.zig`: kill target met → enter transition state; timer expired (no boss alive) → clear remaining non-boss zombies via `resetZombies`, enter transition with no bonus; timer expired but boss alive → pause timer
-- [ ] T020 [US1] Implement wave transition logic in `frame()` in `src/main.zig`: set `is_wave_transitioning = true` and `wave_transition_timer = 0` on wave end; advance timer by `GetFrameTime()` during transition; at `WAVE_TRANSITION_TOTAL_DURATION` → increment `current_wave`, reset `wave_kill_count` and `wave_timer`, set `is_wave_transitioning = false`, clear remaining zombies
-- [ ] T021 [US1] Add wave transition drawing in the draw phase of `frame()` in `src/main.zig`: during first 5 seconds show recap screen (wave number, kills, accuracy, WPM) using `raylib.DrawText`; during last 3 seconds show countdown ("3", "2", "1"). Gate normal zombie drawing and input handling behind `!is_wave_transitioning`
-- [ ] T022 [US1] Add wave timer advancement in the update phase of `frame()` in `src/main.zig`: increment `wave_timer` by `raylib.GetFrameTime()` each frame during `WAVE_ACTIVE` state, gated by `!boss_alive` for timer pause
-- [ ] T023 [US1] Implement `resetGameState(allocator: *std.mem.Allocator) void` in `src/main.zig` to reset all wave, score, combo, stats, and timer state to initial values, call existing `resetZombies(allocator)`, but preserve `best_score` and `best_score_loaded`. Wire into the game-over restart handler replacing the inline reset code
-- [ ] T024 [US1] Verify `zig build` and `zig build test` both pass cleanly
+- [x] T018 [US1] Modify `spawnZombie` in `src/main.zig` to accept wave-derived parameters: use `waveFallSpeed(current_wave)` for zombie speed instead of `ZOMBIE_FALL_SPEED`, check `waveMaxActive(current_wave)` active zombie count before spawning, use `waveSpawnDelay(current_wave)` to replace the hardcoded `spawn_delay` constant in the spawn timer check
+- [x] T019 [US1] Add wave completion detection in the update phase of `frame()` in `src/main.zig`: kill target met → enter transition state; timer expired (no boss alive) → clear remaining non-boss zombies via `resetZombies`, enter transition with no bonus; timer expired but boss alive → pause timer
+- [x] T020 [US1] Implement wave transition logic in `frame()` in `src/main.zig`: set `is_wave_transitioning = true` and `wave_transition_timer = 0` on wave end; advance timer by `GetFrameTime()` during transition; at `WAVE_TRANSITION_TOTAL_DURATION` → increment `current_wave`, reset `wave_kill_count` and `wave_timer`, set `is_wave_transitioning = false`, clear remaining zombies
+- [x] T021 [US1] Add wave transition drawing in the draw phase of `frame()` in `src/main.zig`: during first 5 seconds show recap screen (wave number, kills, accuracy, WPM) using `raylib.DrawText`; during last 3 seconds show countdown ("3", "2", "1"). Gate normal zombie drawing and input handling behind `!is_wave_transitioning`
+- [x] T022 [US1] Add wave timer advancement in the update phase of `frame()` in `src/main.zig`: increment `wave_timer` by `raylib.GetFrameTime()` each frame during `WAVE_ACTIVE` state, gated by `!boss_alive` for timer pause
+- [x] T023 [US1] Implement `resetGameState(allocator: *std.mem.Allocator) void` in `src/main.zig` to reset all wave, score, combo, stats, and timer state to initial values, call existing `resetZombies(allocator)`, but preserve `best_score` and `best_score_loaded`. Wire into the game-over restart handler replacing the inline reset code
+- [x] T024 [US1] Verify `zig build` and `zig build test` both pass cleanly
 
 **Checkpoint**: Wave-based gameplay loop is fully functional. Waves progress, transitions show stats, difficulty increases per wave. Can be manually tested by playing waves 1-3.
 

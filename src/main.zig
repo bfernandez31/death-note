@@ -112,9 +112,6 @@ const FrameContext = struct {
 };
 
 fn frame(ctx: *FrameContext) void {
-    // Mouse-over and cursor state are updated every frame (not gated by is_game_over),
-    // so the blinking cursor on the game-over screen stays animated and matches the
-    // current mouse position instead of freezing at its last in-game value.
     if (raylib.CheckCollisionPointRec(raylib.GetMousePosition(), ctx.text_box)) {
         ctx.mouse_on_text = true;
         raylib.SetMouseCursor(raylib.MOUSE_CURSOR_IBEAM);
@@ -129,41 +126,62 @@ fn frame(ctx: *FrameContext) void {
         ctx.frames_counter = 0;
     }
 
+    const dt = raylib.GetFrameTime();
+
     if (!is_game_over) {
-        // Accept keystrokes regardless of mouse position so players can start typing
-        // immediately on load (especially on web, where focus is on the canvas, not the
-        // text box hit-test rectangle).
-        var key = raylib.GetCharPressed();
-        while (key > 0) {
-            if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
-                name[letter_count] = @intCast(key); // Add character to input buffer
-                name[letter_count + 1] = '\x00'; // Null-terminate the string
-                letter_count += 1;
+        if (is_wave_transitioning) {
+            wave_transition_timer += dt;
+            if (wave_transition_timer >= WAVE_TRANSITION_TOTAL_DURATION) {
+                current_wave += 1;
+                wave_kill_count = 0;
+                wave_timer = 0.0;
+                is_wave_transitioning = false;
+                wave_transition_timer = 0.0;
+                resetZombies(ctx.allocator);
             }
-            key = raylib.GetCharPressed(); // Check next character in the queue
+        } else {
+            // Input handling
+            var key = raylib.GetCharPressed();
+            while (key > 0) {
+                if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
+                    name[letter_count] = @intCast(key);
+                    name[letter_count + 1] = '\x00';
+                    letter_count += 1;
+                }
+                key = raylib.GetCharPressed();
+            }
+
+            if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
+                letter_count -= 1;
+                name[letter_count] = '\x00';
+            }
+
+            // Wave timer (paused while boss alive)
+            if (!boss_alive) {
+                wave_timer += dt;
+            }
+
+            // Spawn timer with wave-scaled delay
+            spawn_timer += dt;
+            if (spawn_timer >= waveSpawnDelay(current_wave)) {
+                const spawned = spawnZombie(ctx.allocator) catch false;
+                if (spawned) spawn_timer = 0.0;
+            }
+
+            updateZombies();
+
+            // Wave completion detection
+            if (wave_kill_count >= waveKillTarget(current_wave) and !boss_alive) {
+                is_wave_transitioning = true;
+                wave_transition_timer = 0.0;
+            } else if (wave_timer >= waveDuration(current_wave) and !boss_alive) {
+                resetZombies(ctx.allocator);
+                is_wave_transitioning = true;
+                wave_transition_timer = 0.0;
+            }
         }
-
-        // Handle backspace
-        if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
-            letter_count -= 1;
-            name[letter_count] = '\x00'; // Null-terminate after backspace
-        }
-
-        // Update spawn timer
-        spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
-
-        // Check if enough time has passed to spawn a new zombie
-        if (spawn_timer >= BASE_SPAWN_DELAY) {
-            // Only reset the timer when a slot was actually claimed; if the pool is full,
-            // keep trying every frame so a freed slot is reused immediately instead of
-            // stalling spawns indefinitely.
-            const spawned = spawnZombie(ctx.allocator) catch false;
-            if (spawned) spawn_timer = 0.0;
-        }
-
-        // Update zombies
-        updateZombies();
     }
+
     // Draw
     raylib.BeginDrawing();
     defer raylib.EndDrawing();
@@ -183,25 +201,18 @@ fn frame(ctx: *FrameContext) void {
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
 
     if (is_game_over) {
-        // Display "Game Over" message
         raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 20, 40, raylib.RED);
         raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 20, 20, raylib.GRAY);
 
-        // Restart game if Enter is pressed
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
-            is_game_over = false;
-            letter_count = 0;
-            name[letter_count] = '\x00';
-            spawn_timer = 0.0;
-
-            // Reset all zombies
-            resetZombies(ctx.allocator);
+            resetGameState(ctx.allocator);
         }
+    } else if (is_wave_transitioning) {
+        drawWaveTransition();
     } else {
-        // Draw zombies if the game is not over
         drawZombies();
     }
-    // Draw blinking underscore char
+
     if (ctx.mouse_on_text and letter_count < MAX_INPUT_CHARS and ((ctx.frames_counter / 20) % 2) == 0) {
         raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, raylib.MAROON);
     }
@@ -305,6 +316,36 @@ fn updateZombies() void {
     }
 }
 
+fn drawWaveTransition() void {
+    if (wave_transition_timer < WAVE_TRANSITION_RECAP_DURATION) {
+        // Recap screen (first 5 seconds)
+        var wave_buf: [32]u8 = undefined;
+        const wave_text = std.fmt.bufPrint(&wave_buf, "Wave {} Complete!", .{current_wave}) catch "Wave Complete!";
+        raylib.DrawText(@ptrCast(wave_text.ptr), screen_width / 2 - 120, screen_height / 2 - 80, 30, raylib.DARKGREEN);
+
+        var kills_buf: [32]u8 = undefined;
+        const kills_text = std.fmt.bufPrint(&kills_buf, "Kills: {}", .{wave_kill_count}) catch "Kills: --";
+        raylib.DrawText(@ptrCast(kills_text.ptr), screen_width / 2 - 60, screen_height / 2 - 30, 20, raylib.DARKGRAY);
+
+        const accuracy = if (total_keystrokes > 0) (correct_keystrokes * 100) / total_keystrokes else 100;
+        var acc_buf: [32]u8 = undefined;
+        const acc_text = std.fmt.bufPrint(&acc_buf, "Accuracy: {}%", .{accuracy}) catch "Accuracy: --%";
+        raylib.DrawText(@ptrCast(acc_text.ptr), screen_width / 2 - 60, screen_height / 2, 20, raylib.DARKGRAY);
+
+        const wpm = calculateWpm(&wpm_kill_times, wpm_kill_count, raylib.GetTime());
+        var wpm_buf: [32]u8 = undefined;
+        const wpm_text = std.fmt.bufPrint(&wpm_buf, "WPM: {}", .{wpm}) catch "WPM: --";
+        raylib.DrawText(@ptrCast(wpm_text.ptr), screen_width / 2 - 60, screen_height / 2 + 30, 20, raylib.DARKGRAY);
+    } else {
+        // Countdown (last 3 seconds)
+        const remaining = WAVE_TRANSITION_TOTAL_DURATION - wave_transition_timer;
+        const countdown: u32 = @intFromFloat(@ceil(remaining));
+        var cd_buf: [8]u8 = undefined;
+        const cd_text = std.fmt.bufPrint(&cd_buf, "{}", .{countdown}) catch "?";
+        raylib.DrawText(@ptrCast(cd_text.ptr), screen_width / 2 - 15, screen_height / 2 - 30, 60, raylib.RED);
+    }
+}
+
 fn drawZombies() void {
     const delta_time = 1.0 / 60.0; // 60 FPS
 
@@ -357,12 +398,21 @@ fn drawZombies() void {
     }
 }
 
-// Function to spawn new zombies. Returns true when a slot was claimed, false when
-// the pool is full so the caller can keep the spawn timer hot for next frame.
+fn countActiveZombies() u32 {
+    var count: u32 = 0;
+    for (zombies) |zombie| {
+        if (zombie) |zomb| {
+            if (zomb.is_active) count += 1;
+        }
+    }
+    return count;
+}
+
 fn spawnZombie(allocator: *std.mem.Allocator) !bool {
+    if (countActiveZombies() >= waveMaxActive(current_wave)) return false;
+
     for (zombies, 0..) |zombie, i| {
         if (zombie == null) {
-            // Allocate memory for a new zombie and assign it to zombies[i]
             const new_zombie = try allocator.create(Zombie);
             errdefer allocator.destroy(new_zombie);
 
@@ -372,7 +422,7 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
             new_zombie.* = Zombie{
                 .x = x,
                 .y = 0.0,
-                .speed = BASE_FALL_SPEED,
+                .speed = waveFallSpeed(current_wave),
                 .name = ZombieNames[name_index],
                 .is_active = true,
                 .frame = 0,
@@ -457,6 +507,28 @@ fn resetZombies(allocator: *std.mem.Allocator) void {
             zombie.* = null;
         }
     }
+}
+
+fn resetGameState(allocator: *std.mem.Allocator) void {
+    resetZombies(allocator);
+    is_game_over = false;
+    letter_count = 0;
+    name[0] = '\x00';
+    spawn_timer = 0.0;
+    current_wave = 1;
+    wave_timer = 0.0;
+    wave_kill_count = 0;
+    is_wave_transitioning = false;
+    wave_transition_timer = 0.0;
+    boss_alive = false;
+    score = 0;
+    combo = 0;
+    total_keystrokes = 0;
+    correct_keystrokes = 0;
+    total_kills = 0;
+    wpm_kill_times = [_]f64{0.0} ** WPM_BUFFER_SIZE;
+    wpm_kill_index = 0;
+    wpm_kill_count = 0;
 }
 
 // T003: name-match equality — mirrors the comparison in updateZombies
@@ -622,4 +694,35 @@ test "calculateWpm" {
     times[1] = 15.0;
     times[2] = 20.0;
     try std.testing.expectEqual(@as(u32, 0), calculateWpm(&times, 3, 100.0));
+}
+
+test "wave state resets on new wave" {
+    wave_kill_count = 10;
+    wave_timer = 25.0;
+    current_wave = 3;
+
+    // Simulate what happens at wave transition end
+    current_wave += 1;
+    wave_kill_count = 0;
+    wave_timer = 0.0;
+
+    try std.testing.expectEqual(@as(u32, 0), wave_kill_count);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), wave_timer, 0.01);
+    try std.testing.expectEqual(@as(u32, 4), current_wave);
+
+    // Reset for other tests
+    current_wave = 1;
+}
+
+test "wave transition timer progression" {
+    try std.testing.expectApproxEqAbs(
+        @as(f32, 8.0),
+        WAVE_TRANSITION_RECAP_DURATION + WAVE_TRANSITION_COUNTDOWN_DURATION,
+        0.01,
+    );
+    try std.testing.expectApproxEqAbs(
+        WAVE_TRANSITION_TOTAL_DURATION,
+        WAVE_TRANSITION_RECAP_DURATION + WAVE_TRANSITION_COUNTDOWN_DURATION,
+        0.01,
+    );
 }
