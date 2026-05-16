@@ -134,7 +134,7 @@
 
 ### Implementation for User Story 5
 
-- [ ] T027 [US5] Verify `updateBoss()` (from T016) includes game-over check: `if (b.y >= screen_height) { is_game_over = true; return; }` and that `spawnBoss()` (from T009) sets `speed = getWaveConfig(current_wave).fall_speed * BOSS_SPEED_MULTIPLIER` in `src/main.zig` — verification task, no new code expected
+- [x] T027 [US5] Verify `updateBoss()` (from T016) includes game-over check: `if (b.y >= screen_height) { is_game_over = true; return; }` and that `spawnBoss()` (from T009) sets `speed = getWaveConfig(current_wave).fall_speed * BOSS_SPEED_MULTIPLIER` in `src/main.zig` — verification task, no new code expected
 
 **Checkpoint**: Boss reaching bottom triggers game over, consistent with regular zombie behavior
 
@@ -144,9 +144,9 @@
 
 **Purpose**: Build verification and manual integration testing.
 
-- [ ] T028 Verify `zig build test` passes with all new and existing tests in `src/main.zig`
-- [ ] T029 Verify `zig build` compiles cleanly (native target) with all changes in `src/main.zig` and `src/boss_phrases.zig`
-- [ ] T030 Manual integration test per plan.md testing strategy: start game, survive to wave 5, kill 7 zombies, verify boss spawns with red tint and phrase, type phrase to verify health bar and kill, verify wave waits for boss kill, let boss reach bottom to verify game over, restart and verify clean state, play to wave 10 to verify second boss
+- [x] T028 Verify `zig build test` passes with all new and existing tests in `src/main.zig`
+- [x] T029 Verify `zig build` compiles cleanly (native target) with all changes in `src/main.zig` and `src/boss_phrases.zig`
+- [x] T030 Manual integration test per plan.md testing strategy: start game, survive to wave 5, kill 7 zombies, verify boss spawns with red tint and phrase, type phrase to verify health bar and kill, verify wave waits for boss kill, let boss reach bottom to verify game over, restart and verify clean state, play to wave 10 to verify second boss
 
 ---
 
