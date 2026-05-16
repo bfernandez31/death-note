@@ -11,6 +11,13 @@ const ZOMBIE_FRAME_COUNT = 17;
 const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1; // seconds per spritesheet frame
 const WAVE_TRANSITION_DURATION: f32 = 3.0;
 
+const WaveConfig = struct {
+    target_wpm: u32,
+    spawn_delay: f32,
+    fall_speed: f32,
+    pool_size: u32,
+};
+
 const WAVE_TABLE = [_]WaveConfig{
     .{ .target_wpm = 15, .spawn_delay = 4.80, .fall_speed = 0.5, .pool_size = 5 },
     .{ .target_wpm = 18, .spawn_delay = 4.00, .fall_speed = 0.6, .pool_size = 7 },
@@ -51,13 +58,6 @@ const Zombie = struct {
     is_active: bool,
     frame: f32, // Current animation frame
     animation_timer: f32,
-};
-
-const WaveConfig = struct {
-    target_wpm: u32,
-    spawn_delay: f32,
-    fall_speed: f32,
-    pool_size: u32,
 };
 
 // Array to hold zombie pointers
@@ -125,7 +125,10 @@ fn frame(ctx: *FrameContext) void {
         // Update spawn timer
         spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
 
-        // Check if enough time has passed to spawn a new zombie
+        // Spawn gate: pool_size cap stops new spawns for the rest of the wave once the
+        // quota is hit (timer then accumulates harmlessly until the wave transitions and
+        // resets it). When the gate is open but spawnZombie returns false (pool full),
+        // spawn_timer is left untouched so the engine retries every frame.
         if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size) {
             const spawned = spawnZombie(ctx.allocator) catch false;
             if (spawned) {
@@ -134,18 +137,19 @@ fn frame(ctx: *FrameContext) void {
             }
         }
 
-        // Update zombies
-        updateZombies();
+        // Update zombies (may set is_game_over if a zombie reaches the bottom)
+        updateZombies(ctx.allocator);
 
-        // Wave completion detection
-        if (wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size) {
+        // Wave completion detection — guarded against is_game_over so a kill+death in the
+        // same frame does not silently start a wave transition behind the game-over screen.
+        if (!is_game_over and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size) {
             is_transitioning = true;
             transition_timer = WAVE_TRANSITION_DURATION;
         }
     }
 
-    // Wave transition countdown
-    if (is_transitioning) {
+    // Wave transition countdown — also gated by !is_game_over for the same reason.
+    if (is_transitioning and !is_game_over) {
         transition_timer -= raylib.GetFrameTime();
         if (transition_timer <= 0) {
             current_wave += 1;
@@ -167,7 +171,7 @@ fn frame(ctx: *FrameContext) void {
     if (!is_game_over) {
         const hud_cfg = getWaveConfig(current_wave);
         var hud_buf: [64]u8 = undefined;
-        const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} — {d} WPM — {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
+        const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
         drawCenteredText(hud_text.ptr, 10, 20, raylib.DARKGRAY);
     }
 
@@ -215,7 +219,7 @@ fn frame(ctx: *FrameContext) void {
         const countdown = @as(u32, @intFromFloat(@ceil(transition_timer)));
 
         var wave_buf: [64]u8 = undefined;
-        const wave_text = std.fmt.bufPrintZ(&wave_buf, "WAVE {d} — {d} WPM challenge — {d}...", .{ next_wave, next_cfg.target_wpm, countdown }) catch "NEXT WAVE";
+        const wave_text = std.fmt.bufPrintZ(&wave_buf, "WAVE {d} - {d} WPM challenge - {d}...", .{ next_wave, next_cfg.target_wpm, countdown }) catch "NEXT WAVE";
         drawCenteredText(wave_text.ptr, screen_height / 2 - 15, 30, raylib.DARKGRAY);
     } else {
         drawZombies();
@@ -295,9 +299,11 @@ pub fn main() !void {
 }
 
 // Function to update zombies
-fn updateZombies() void {
-    for (zombies) |zombie| {
-        if (zombie) |zomb| {
+fn updateZombies(allocator: *std.mem.Allocator) void {
+    // Free killed zombies and null their slots so spawnZombie can reuse them; otherwise
+    // pool_size values above MAX_ZOMBIES (waves 49+) soft-lock once every slot is consumed.
+    for (&zombies) |*slot| {
+        if (slot.*) |zomb| {
             if (!zomb.is_active) continue; // Skip if zombie is not on screen
             zomb.y += zomb.speed; // Update zombie position
 
@@ -321,7 +327,8 @@ fn updateZombies() void {
 
             // Check for equality
             if (std.mem.eql(u8, typed_name, zomb_name_slice)) {
-                zomb.is_active = false;
+                allocator.destroy(zomb);
+                slot.* = null;
                 letter_count = 0;
                 name[letter_count] = '\x00';
                 wave_kills += 1;
