@@ -38,11 +38,16 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - name: Run unit tests
-        run: zig build test
-
-      - name: Build WASM bundle
+      # Build WASM first so compile errors in the emscripten-only branches in
+      # src/main.zig and src/raylib.zig surface before the native test suite runs.
+      # `zig build test` only compiles the native target, so emscripten paths
+      # (frame_c_callback, cleanup_on_exit, emscripten_set_main_loop_arg) are
+      # otherwise covered exclusively by this step.
+      - name: Build WASM bundle (covers emscripten compile paths)
         run: zig build web -Doptimize=ReleaseSmall
+
+      - name: Run unit tests (native target)
+        run: zig build test
 
       - name: Verify required output files exist
         run: |

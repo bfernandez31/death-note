@@ -91,7 +91,7 @@ Names come from `ZombieNames` in `src/zombie_names.zig` — a compile-time `[_][
 Observed across `src/main.zig`, `src/zombie_names.zig`, and `build.zig`:
 
 - **Identifier casing**: `snake_case` for variables and constants (`spawn_timer`, `is_game_over`, `MAX_ZOMBIES` in SCREAMING_SNAKE_CASE for compile-time constants). Functions use `camelCase` (`spawnZombie`, `updateZombies`, `drawZombies`, `resetZombies`). Types use `PascalCase` (`Zombie`, `ZombieNames`). Raylib identifiers keep the upstream C style (`InitWindow`, `LoadTexture`, `DrawTexturePro`).
-- **Imports**: `const std = @import("std");` first, then local modules (`const raylib = @import("raylib.zig");`). C interop is consolidated in `src/raylib.zig` via `pub usingnamespace @cImport({...})`; never call `@cImport` directly from game code.
+- **Imports**: `const std = @import("std");` first, then local modules (`const raylib = @import("raylib.zig").c;`). C interop is consolidated in `src/raylib.zig` via `pub const c = @cImport({...})` (Zig 0.15+ removed `pub usingnamespace`); never call `@cImport` directly from game code.
 - **Resource lifetime**: every raylib `Init…` / `Load…` call is immediately followed by a matching `defer` for `Close…` / `Unload…` — keep this pattern for new resources.
 - **Error handling**: functions that allocate return `!T` and are called with `try`. Allocation sites use `errdefer allocator.destroy(new_zombie)` to avoid leaks on partial failure. Prefer `errdefer` over manual cleanup branches.
 - **Allocator**: `std.heap.page_allocator` is the sole allocator today. Pass it through as `*std.mem.Allocator` parameters rather than re-fetching it inside helpers.

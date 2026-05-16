@@ -48,38 +48,41 @@ const FrameContext = struct {
 };
 
 fn frame(ctx: *FrameContext) void {
+    // Mouse-over and cursor state are updated every frame (not gated by is_game_over),
+    // so the blinking cursor on the game-over screen stays animated and matches the
+    // current mouse position instead of freezing at its last in-game value.
+    if (raylib.CheckCollisionPointRec(raylib.GetMousePosition(), ctx.text_box)) {
+        ctx.mouse_on_text = true;
+        raylib.SetMouseCursor(raylib.MOUSE_CURSOR_IBEAM);
+    } else {
+        ctx.mouse_on_text = false;
+        raylib.SetMouseCursor(raylib.MOUSE_CURSOR_DEFAULT);
+    }
+
+    if (ctx.mouse_on_text) {
+        ctx.frames_counter += 1;
+    } else {
+        ctx.frames_counter = 0;
+    }
+
     if (!is_game_over) {
-        // Update
-        if (raylib.CheckCollisionPointRec(raylib.GetMousePosition(), ctx.text_box)) {
-            ctx.mouse_on_text = true;
-            raylib.SetMouseCursor(raylib.MOUSE_CURSOR_IBEAM);
-
-            var key = raylib.GetCharPressed();
-
-            // Check if more characters have been pressed on the same frame
-            while (key > 0) {
-                if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
-                    name[letter_count] = @intCast(key); // Add character to input buffer
-                    name[letter_count + 1] = '\x00'; // Null-terminate the string
-                    letter_count += 1;
-                }
-                key = raylib.GetCharPressed(); // Check next character in the queue
+        // Accept keystrokes regardless of mouse position so players can start typing
+        // immediately on load (especially on web, where focus is on the canvas, not the
+        // text box hit-test rectangle).
+        var key = raylib.GetCharPressed();
+        while (key > 0) {
+            if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
+                name[letter_count] = @intCast(key); // Add character to input buffer
+                name[letter_count + 1] = '\x00'; // Null-terminate the string
+                letter_count += 1;
             }
-
-            // Handle backspace
-            if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
-                letter_count -= 1;
-                name[letter_count] = '\x00'; // Null-terminate after backspace
-            }
-        } else {
-            ctx.mouse_on_text = false;
-            raylib.SetMouseCursor(raylib.MOUSE_CURSOR_DEFAULT);
+            key = raylib.GetCharPressed(); // Check next character in the queue
         }
 
-        if (ctx.mouse_on_text) {
-            ctx.frames_counter += 1;
-        } else {
-            ctx.frames_counter = 0;
+        // Handle backspace
+        if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
+            letter_count -= 1;
+            name[letter_count] = '\x00'; // Null-terminate after backspace
         }
 
         // Update spawn timer
@@ -87,8 +90,11 @@ fn frame(ctx: *FrameContext) void {
 
         // Check if enough time has passed to spawn a new zombie
         if (spawn_timer >= spawn_delay) {
-            spawnZombie(ctx.allocator) catch {}; // Ignore allocation failure — page_allocator is nearly infallible
-            spawn_timer = 0.0; // Reset the spawn timer
+            // Only reset the timer when a slot was actually claimed; if the pool is full,
+            // keep trying every frame so a freed slot is reused immediately instead of
+            // stalling spawns indefinitely.
+            const spawned = spawnZombie(ctx.allocator) catch false;
+            if (spawned) spawn_timer = 0.0;
         }
 
         // Update zombies
@@ -149,6 +155,17 @@ fn frame_c_callback(arg: ?*anyopaque) callconv(.C) void {
     }
 }
 
+// Registered via atexit() on the emscripten path because the `defer` blocks in main()
+// never run there — emscripten_set_main_loop_arg does not return. atexit only fires on
+// explicit emscripten_force_exit / module shutdown (browser tab close bypasses it), but
+// it is the cleanest available hook for any controlled teardown the runtime offers.
+fn cleanup_on_exit() callconv(.C) void {
+    raylib.UnloadTexture(zombie_texture);
+    raylib.UnloadSound(zombie_kill_sound);
+    raylib.CloseAudioDevice();
+    raylib.CloseWindow();
+}
+
 pub fn main() !void {
     raylib.InitWindow(screen_width, screen_height, "Zombie Game");
     defer raylib.CloseWindow();
@@ -176,7 +193,10 @@ pub fn main() !void {
     };
 
     if (comptime @import("builtin").target.os.tag == .emscripten) {
-        // The emscripten loop never returns, so the defers above do not fire in the web build
+        // The emscripten loop never returns, so the defers above do not fire in the web
+        // build. Register cleanup_on_exit() as a best-effort mitigation; see its doc
+        // comment for the limitations on browser tab close.
+        _ = raylib.atexit(&cleanup_on_exit);
         raylib.emscripten_set_main_loop_arg(frame_c_callback, &ctx, 0, 1);
     } else {
         while (!raylib.WindowShouldClose()) { // Main game loop
@@ -275,8 +295,9 @@ fn drawZombies() void {
     }
 }
 
-// Function to spawn new zombies
-fn spawnZombie(allocator: *std.mem.Allocator) !void {
+// Function to spawn new zombies. Returns true when a slot was claimed, false when
+// the pool is full so the caller can keep the spawn timer hot for next frame.
+fn spawnZombie(allocator: *std.mem.Allocator) !bool {
     for (zombies, 0..) |zombie, i| {
         if (zombie == null) {
             // Allocate memory for a new zombie and assign it to zombies[i]
@@ -296,9 +317,10 @@ fn spawnZombie(allocator: *std.mem.Allocator) !void {
                 .animationTimer = 0,
             };
             zombies[i] = new_zombie;
-            break;
+            return true;
         }
     }
+    return false;
 }
 
 fn resetZombies(allocator: *std.mem.Allocator) void {

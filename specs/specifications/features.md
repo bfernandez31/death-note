@@ -80,7 +80,7 @@ graph TB
 - `allocator.create(Zombie)` allocates heap memory; `errdefer allocator.destroy` prevents leaks on failure (`src/main.zig:264–265`).
 - Horizontal position is `intRangeLessThan(u32, 10, 750)` cast to `f32` (`src/main.zig:267`).
 - Name index is `intRangeLessThan(usize, 0, ZombieNames.len)` (`src/main.zig:268`).
-- `spawn_timer` is reset to `0.0` after each spawn (`src/main.zig:114`).
+- `spawn_timer` is reset to `0.0` only when a slot was actually claimed; when the pool is full, the timer stays hot so spawns retry next frame as soon as a slot frees.
 
 **Key source references.**
 - `src/main.zig:7` — `MAX_ZOMBIES = 100`
@@ -203,9 +203,9 @@ graph TB
 
 ### F-07 Text Input
 
-**Description.** While the mouse cursor is positioned over the text box rectangle, the game reads characters from raylib's key-press queue each frame and appends printable ASCII characters (codepoints 32–125) to the `name` buffer, up to a maximum of 9 characters. Backspace removes the last character. All input processing is unconditionally skipped when the mouse is outside the text box.
+**Description.** Each frame the game reads characters from raylib's key-press queue and appends printable ASCII characters (codepoints 32–125) to the `name` buffer, up to a maximum of 9 characters. Backspace removes the last character. Input is accepted regardless of mouse position; the mouse-over state only controls the cursor icon and the blinking-underscore overlay (F-09).
 
-**User-facing behavior.** The player moves their mouse over the text box, then types; characters appear in the box. Backspace deletes the last character. Typing elsewhere on screen has no effect.
+**User-facing behavior.** The player types and characters appear in the text box. Backspace deletes the last character. Moving the mouse over the text box switches the cursor to an I-beam and shows the blinking underscore, but is not required to type.
 
 **System behavior.**
 - Mouse position checked each frame with `raylib.CheckCollisionPointRec` (`src/main.zig:76`).
@@ -432,8 +432,8 @@ stateDiagram-v2
 
 The following rules reflect non-obvious constraints directly evidenced in `src/main.zig`.
 
-**BR-01 — Input only accepted inside text box.**
-`GetCharPressed` and `IsKeyPressed(KEY_BACKSPACE)` are called only inside the `if (CheckCollisionPointRec(...))` branch. Keystrokes outside that branch are silently consumed by raylib and never reach the buffer (`src/main.zig:76`).
+**BR-01 — Input accepted regardless of mouse position.**
+`GetCharPressed` and `IsKeyPressed(KEY_BACKSPACE)` are called every frame while `!is_game_over`, independent of the mouse-over hit test. The mouse-over state only controls the cursor icon (F-07) and the blinking-underscore overlay (F-09).
 
 **BR-02 — Only printable ASCII accepted.**
 The guard `(key >= 32) and (key <= 125)` filters out control characters, extended Unicode codepoints, and all non-printable values (`src/main.zig:84`).
@@ -450,8 +450,8 @@ There is no pre-computed length field; `updateZombies` scans for `'\x00'` on eve
 **BR-06 — Killed zombies are not freed until restart (intentional memory hold).**
 `zomb.is_active = false` is the only mutation on kill (`src/main.zig:194`). `allocator.destroy` is never called for a killed zombie during normal play. Memory is only reclaimed by `resetZombies` on restart (`src/main.zig:285–292`). All 100 pool slots can therefore be occupied by killed-but-not-freed zombies over a long session.
 
-**BR-07 — Pool full results in silent skip.**
-`spawnZombie` iterates the pool looking for a `null` slot. If none is found the function returns without error and without allocating (`src/main.zig:261–282`). The caller uses `try` but the function only fails if `allocator.create` fails, not on a full pool.
+**BR-07 — Pool full keeps spawn timer hot.**
+`spawnZombie` iterates the pool looking for a `null` slot and returns `true` on claim, `false` when the pool is full. The caller only resets `spawn_timer` on a successful spawn, so a full pool retries every frame until a slot frees instead of silently stalling spawns.
 
 **BR-08 — Spawn x is bounded to [10, 750), not [0, 800).**
 `rng.random().intRangeLessThan(u32, 10, 750)` is used rather than the full screen width, leaving a 10-pixel margin at the left edge and a 50-pixel margin at the right (`src/main.zig:267`).

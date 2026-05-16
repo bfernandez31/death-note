@@ -92,6 +92,16 @@ pub fn build(b: *std.Build) void {
         // Ensure the output directory exists before emcc runs
         const mkdir_out = b.addSystemCommand(&.{ "mkdir", "-p", "zig-out/web" });
 
+        // Pre-flight: surface the contracted error message before invoking emcc so a
+        // missing Emscripten SDK fails with actionable wording instead of a raw OS-level
+        // "command not found" (specs/DEATHN-1-build-and-deploy/contracts/build-commands.md).
+        // Runs at step-execution time (not graph-construction) so native builds aren't gated on emsdk.
+        const emcc_check = b.addSystemCommand(&.{
+            "sh",
+            "-c",
+            "command -v emcc >/dev/null 2>&1 || { echo 'Emscripten SDK not found — install and activate `emsdk` ≥ 3.1.64' >&2; exit 1; }",
+        });
+
         // Link game + libraylib.a with emcc to produce the browser bundle
         const emcc_link = b.addSystemCommand(&.{"emcc"});
         emcc_link.addArtifactArg(web_lib);
@@ -100,6 +110,7 @@ pub fn build(b: *std.Build) void {
         emcc_link.addArgs(&.{ "--preload-file", "assets/" });
         emcc_link.addArgs(&.{ "-sUSE_GLFW=3", "-sFULL_ES2=1", "-sASYNCIFY=0" });
         emcc_link.addArgs(&.{ "-o", "zig-out/web/index.html" });
+        emcc_link.step.dependOn(&emcc_check.step);
         emcc_link.step.dependOn(&raylib_make.step);
         emcc_link.step.dependOn(&mkdir_out.step);
 

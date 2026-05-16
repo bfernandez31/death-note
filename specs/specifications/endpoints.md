@@ -112,7 +112,7 @@ Input is polled every frame inside the main game loop (`src/main.zig:71`). Input
 | `raylib.SetMouseCursor(MOUSE_CURSOR_IBEAM)` | `src/main.zig:78` | Change cursor appearance when over box |
 | `raylib.SetMouseCursor(MOUSE_CURSOR_DEFAULT)` | `src/main.zig:99` | Restore cursor when outside box |
 
-**Keyboard input (active when mouse is on text box):**
+**Keyboard input (active every frame while `!is_game_over`, independent of mouse position):**
 
 | Key / range | raylib call | Location | Effect |
 |---|---|---|---|
@@ -167,7 +167,7 @@ The game uses Zig's native error-union mechanism exclusively. There is no loggin
 | Scenario | Mechanism | Location |
 |---|---|---|
 | Top-level failure propagation | `pub fn main() !void` — unhandled errors bubble to the Zig runtime, which prints the error name to stderr and exits with a non-zero code | `src/main.zig:46` |
-| Zombie allocation failure | `spawnZombie` returns `!void`; called with `try spawnZombie(...)` — allocation errors propagate to `main` and terminate the process | `src/main.zig:113`, `src/main.zig:260` |
+| Zombie allocation failure | `spawnZombie` returns `!bool` (true on slot claim, false when pool full); the caller uses `catch false` so an OOM is swallowed rather than terminating, and the spawn timer is only reset on a successful claim | `src/main.zig` (spawn trigger in `frame()`), `src/main.zig` (`spawnZombie`) |
 | Partial-allocation leak prevention | `errdefer allocator.destroy(new_zombie)` inside `spawnZombie` ensures the allocation is freed if subsequent initialisation fails | `src/main.zig:265` |
 | Zombie reaches bottom of screen | `is_game_over = true` is set; the update phase is skipped on subsequent frames; the GAME OVER screen is rendered | `src/main.zig:176`, `src/main.zig:73` |
 | Restart | `KEY_ENTER` on the GAME OVER screen resets all mutable state and calls `resetZombies` to free all heap-allocated `Zombie` structs | `src/main.zig:141–149` |
