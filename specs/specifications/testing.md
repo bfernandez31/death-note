@@ -35,7 +35,7 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Thirteen `test "..." {}` blocks exist in `src/main.zig`:
+**Current state**: Eighteen `test "..." {}` blocks exist in `src/main.zig`:
 - `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
 - `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
 - `test "getWaveConfig returns correct values for wave 1"` — verifies wave 1 difficulty parameters
@@ -49,8 +49,13 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 - `test "boss phrase validity"` — verifies all 10 phrases in `BossPhrases` are non-empty, ≤ 35 characters, and contain only lowercase letters and spaces
 - `test "input buffer capacity for boss phrases"` — verifies `name.len >= MAX_BOSS_INPUT_CHARS + 1`
 - `test "wave completion requires boss kill on boss waves"` — verifies the `boss_done` gate logic for boss waves vs. non-boss waves
+- `test "calculateScore reference cases"` — verifies all four FR-013 reference values: `calculateScore(4, 0, false, 0)` → 40, `calculateScore(4, 0, false, 20)` → 200, `calculateScore(4, 440, false, 0)` → 138, `calculateScore(19, 300, true, 10)` → 2313
+- `test "getComboMultiplier tier boundaries"` — verifies all five tier thresholds: 0→x1, 4→x1, 5→x2, 9→x2, 10→x3, 14→x3, 15→x4, 19→x4, 20→x5, 100→x5
+- `test "typedMatchesAnyEnemy mismatch detection"` — verifies the function returns `true` when `letter_count == 0` and `false` when the typed text does not prefix-match any active zombie name
+- `test "popup pool circular recycling"` — calls `spawnPopup` 33 times and verifies slot 0 is overwritten and `popup_next` wraps to 1
+- `test "resetScoreState clears score, combo, and popups"` — sets `score`, `combo_count`, and `popup_next` to non-zero values, activates a popup, runs `resetScoreState`, and verifies all values return to zero with all popups deactivated
 
-All thirteen are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
+All eighteen are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
 
 ---
 
@@ -61,7 +66,7 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(13 blocks — name match, input bounds, wave config×4, frame wrap,\nboss wave detection, boss threshold, boss input limit,\nboss phrase validity, buffer capacity, wave completion gate)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(18 blocks — name match, input bounds, wave config×4, frame wrap,\nboss wave detection, boss threshold, boss input limit,\nboss phrase validity, buffer capacity, wave completion gate,\ncalculateScore cases, combo multiplier tiers, mismatch detection,\npopup pool recycling, score/combo reset)"]
     UNIT_NAMES["Unit tests\nsrc/zombie_names.zig\n(0 blocks — reachable via @import)"]
     UNIT_PHRASES["Unit tests\nsrc/boss_phrases.zig\n(0 blocks — reachable via @import)"]
     RAYLIB_ZIG["src/raylib.zig\n(C interop wall — not unit-testable)"]
@@ -86,7 +91,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 13 | Pure-logic tests: name-match equality, input-buffer bounds, wave config (waves 1, 15, 16+), wave completion, frame wrap-around, boss wave detection, boss spawn threshold, boss input limit, boss phrase validity, buffer capacity, boss wave completion gate |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 18 | Pure-logic tests: name-match equality, input-buffer bounds, wave config (waves 1, 15, 16+), wave completion, frame wrap-around, boss wave detection, boss spawn threshold, boss input limit, boss phrase validity, buffer capacity, boss wave completion gate, score formula reference cases, combo multiplier tier boundaries, mismatch detection, popup pool circular recycling, score/combo state reset |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 
@@ -165,7 +170,7 @@ This is not currently set up and is not required by the project constitution. Un
 
 | Command | Purpose |
 |---|---|
-| `zig build test` | Compile and run all 13 unit tests (uses `src/main.zig` as the root source file for test discovery) |
+| `zig build test` | Compile and run all 18 unit tests (uses `src/main.zig` as the root source file for test discovery) |
 | `zig build --summary all` | Type-check the entire codebase without running it; surfaces type errors and unreachable code |
 | `zig fmt --check .` | Formatting check across all `.zig` files; serves as a lint surrogate (no separate linter is configured) |
 | `zig build` | Full build; also type-checks as a side effect; the primary gate before merging |

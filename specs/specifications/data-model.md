@@ -11,6 +11,7 @@
   - [3.4 GameState](#34-gamestate)
   - [3.5 WaveConfig](#35-waveconfig)
   - [3.6 BossPhrases](#36-bossphrases)
+  - [3.7 ScorePopup](#37-scorepopup)
 - [4. Enums and Constants](#4-enums-and-constants)
 - [5. State Machines](#5-state-machines)
   - [5.1 Game State Machine](#51-game-state-machine)
@@ -32,6 +33,7 @@ The three "data containers" in the project are:
 |---|---|---|
 | `zombies[MAX_ZOMBIES]` pool | `src/main.zig` (runtime) | Fixed array of heap-allocated `?*Zombie` pointers; mutable at runtime |
 | `boss` pointer | `src/main.zig` (runtime) | Single `?*Zombie` pointer for the active boss zombie; null when no boss is present |
+| `popups[MAX_POPUPS]` pool | `src/main.zig` (runtime) | Fixed stack-allocated array of 32 `ScorePopup` value-type entries; mutable at runtime |
 | `ZombieNames` | `src/zombie_names.zig` (compile-time) | Read-only, compile-time array of 49 null-terminated C string pointers |
 | `BossPhrases` | `src/boss_phrases.zig` (compile-time) | Read-only, compile-time array of 10 null-terminated multi-word phrase pointers |
 
@@ -56,6 +58,21 @@ erDiagram
         ptr boss
         bool boss_spawned_this_wave
         usize boss_phrase_len
+        u64 score
+        u32 combo_count
+        usize popup_next
+    }
+
+    SCORE_POPUP {
+        f32 x
+        f32 y
+        u64 points
+        f32 timer
+        bool active
+    }
+
+    POPUP_POOL {
+        int capacity
     }
 
     INPUT_BUFFER {
@@ -99,10 +116,12 @@ erDiagram
     GAME_STATE ||--|| ZOMBIE_POOL : "governs lifecycle of"
     GAME_STATE ||--|| WAVE_CONFIG : "resolves per wave"
     GAME_STATE ||--o| ZOMBIE : "boss pointer (0 or 1)"
+    GAME_STATE ||--|| POPUP_POOL : "governs lifecycle of"
     ZOMBIE_POOL ||--o{ ZOMBIE : "holds up to 100"
     ZOMBIE }o--|| ZOMBIE_NAMES : "name points into (regular)"
     ZOMBIE }o--o| BOSS_PHRASES : "name points into (boss)"
     WAVE_CONFIG ||--o{ ZOMBIE : "fall_speed set at spawn"
+    POPUP_POOL ||--o{ SCORE_POPUP : "holds up to 32"
 ```
 
 ---
@@ -221,6 +240,9 @@ These variables collectively represent the running state of the game session.
 | `boss` | `?*Zombie` | `null` | `null` | Pointer to the active boss `Zombie` struct, or `null` when no boss is alive. Freed by `resetBoss`. |
 | `boss_spawned_this_wave` | `bool` | `false` | `false` | `true` once `spawnBoss` has been called for the current wave. Used in the wave-completion gate to distinguish "boss not yet spawned" from "boss already killed". |
 | `boss_phrase_len` | `usize` | `0` | `0` | Length of the active boss phrase (number of characters before the null terminator), precomputed at spawn. Used by `updateBoss` and `drawBoss` to compute health bar fill and detect full-phrase match. |
+| `score` | `u64` | `0` | `0` | Accumulated points earned across all kills in the current game session. Incremented by `calculateScore` result on each kill. Reset to 0 by `resetScoreState` on game restart. |
+| `combo_count` | `u32` | `0` | `0` | Consecutive kill count without a mismatch. Determines the active combo multiplier tier (x1–x5 via `getComboMultiplier`). Reset to 0 on mismatch or wave transition; also reset by `resetScoreState` on restart. |
+| `popup_next` | `usize` | `0` | `0` | Circular write index for the `popups` pool. Advances by 1 modulo `MAX_POPUPS` on each `spawnPopup` call. Reset to 0 by `resetScoreState` on restart. |
 | `frames_counter` | `usize` | `0` (in `FrameContext`) | — | Counts frames while the mouse is over the text input box. Drives the blink via `(frames_counter / 20) % 2 == 0`; reset to `0` when the mouse leaves. |
 | `mouse_on_text` | `bool` | `false` (in `FrameContext`) | — | `true` when the mouse cursor is over `text_box`. Controls cursor icon and the blinking-underscore overlay. |
 
@@ -293,6 +315,40 @@ This is a compile-time constant array of 10 null-terminated C string pointers. I
 
 ---
 
+### 3.7 ScorePopup
+
+**Source:** `src/main.zig`, lines 93–98
+
+**Definition:**
+
+```zig
+const ScorePopup = struct {
+    x: f32,
+    y: f32,
+    points: u64,
+    timer: f32,
+    active: bool,
+};
+```
+
+**Pool location:** `var popups: [MAX_POPUPS]ScorePopup` — a fixed 32-slot stack-allocated value array at module scope. No heap allocation is used; the pool is initialised at compile time to all-inactive entries. The write head `var popup_next: usize = 0` advances circularly on each `spawnPopup` call.
+
+| Field | Type | Meaning | Constraints |
+|---|---|---|---|
+| `x` | `f32` | Horizontal screen position inherited from the killed enemy at the moment of death | Set by `spawnPopup`; never mutated after spawn |
+| `y` | `f32` | Vertical starting position inherited from the killed enemy | Set by `spawnPopup`; the draw position shifts upward each frame: `draw_y = y - POPUP_RISE_PX × (1 - timer / POPUP_DURATION)` |
+| `points` | `u64` | Score value shown in the popup text (formatted as `"+{d}"`) | Result of `calculateScore` at the kill moment |
+| `timer` | `f32` | Remaining lifetime in seconds; initialised to `POPUP_DURATION` (0.5 s) and decremented each frame by `GetFrameTime()` | When `timer <= 0`, `active` is set to `false` |
+| `active` | `bool` | Whether this slot is currently animating | `true` at spawn; `false` when the timer expires or the slot is overwritten by a new kill |
+
+**Circular recycling:** `popup_next = (popup_next + 1) % MAX_POPUPS` after each write. When all 32 slots are active and a new kill occurs, the oldest slot is silently overwritten. `popup_next` and all `active` flags are reset in `resetScoreState` on game restart.
+
+**Relationships:**
+- `spawnPopup` is called from the kill sites in `updateZombies` and `updateBoss` immediately after the score is computed.
+- `drawPopups` reads the pool each frame and renders every active entry with fading gold color.
+
+---
+
 ## 4. Enums and Constants
 
 There are no enums in this project. All constants are compile-time `const` values declared at module scope in `src/main.zig`.
@@ -316,6 +372,18 @@ There are no enums in this project. All constants are compile-time `const` value
 | `ZOMBIE_SPAWN_X_MAX` | `749` | `c_int` | Right boundary for random zombie spawn x position (screen_width - 51) |
 | `screen_width` | `800` | `comptime_int` | Window width in pixels; passed to `raylib.InitWindow` and used for centering UI |
 | `screen_height` | `450` | `comptime_int` | Window height in pixels; a zombie or boss reaching `y >= screen_height` triggers game over |
+| `MAX_POPUPS` | `32` | `comptime_int` | Size of the `popups` fixed stack-allocated pool; also the maximum number of simultaneously animated score popups |
+| `POPUP_DURATION` | `0.5` | `f32` | Lifetime in seconds of each score popup; popup fades from full to zero opacity over this interval |
+| `POPUP_RISE_PX` | `30.0` | `f32` | Total upward travel in pixels a popup makes from spawn position to end of animation |
+| `POPUP_FONT_SIZE` | `20` | `c_int` | Font size for the floating `"+{score}"` popup text |
+| `BOSS_TYPE_MULTIPLIER` | `3.0` | `f32` | Score formula type multiplier applied to boss kills |
+| `STANDARD_TYPE_MULTIPLIER` | `1.0` | `f32` | Score formula type multiplier applied to standard zombie kills |
+| `SCORE_HUD_X` | `10` | `c_int` | X pixel position of the score HUD line |
+| `SCORE_HUD_Y` | `5` | `c_int` | Y pixel position of the score HUD line |
+| `SCORE_HUD_SIZE` | `24` | `c_int` | Font size for the score HUD line |
+| `COMBO_HUD_X` | `10` | `c_int` | X pixel position of the combo HUD line |
+| `COMBO_HUD_Y` | `35` | `c_int` | Y pixel position of the combo HUD line |
+| `COMBO_HUD_SIZE` | `18` | `c_int` | Font size for the combo HUD line |
 
 ### Raylib Constants in Use
 
@@ -333,8 +401,9 @@ These are C constants imported from `raylib.h` via `src/raylib.zig` and referenc
 | `DARKGRAY` | Color | Outline of the text box when inactive |
 | `MAROON` | Color | Typed text drawn inside the input box and the blinking cursor |
 | `GRAY` | Color | "Press ENTER to Restart" and overflow hint text |
-| `DARKGREEN` | Color | Zombie name labels drawn above each zombie sprite |
+| `DARKGREEN` | Color | Zombie name labels above each zombie sprite; also used for the score HUD line |
 | `WHITE` | Color | Tint passed to `DrawTexturePro` when rendering zombie sprites |
+| `ORANGE` | Color | Combo HUD line color when combo count is 5–14 |
 
 ---
 
