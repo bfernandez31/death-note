@@ -174,11 +174,11 @@
 
 **Purpose**: Integration testing, edge-case handling, and final verification across all user stories.
 
-- [ ] T052 Wire the wave timer display into the HUD in `src/main.zig` — show remaining time as a countdown or progress bar alongside existing HUD elements
-- [ ] T053 Ensure zombie clearing on wave timer expiry in `src/main.zig` properly frees memory via the allocator (call `resetZombies` or equivalent cleanup, not just setting `is_active = false`)
-- [ ] T054 Update existing test T004 (input buffer bounds) in `src/main.zig` to use `MAX_INPUT_CHARS = 40` instead of `9` — verify the bounds check still works at the new limit
-- [ ] T055 Run `zig build` and `zig build test` as a final gate — all tests must pass, no compiler warnings
-- [ ] T056 Manual playtest: verify full flow (wave 1 → transition → wave 2 → ... → wave 5 boss → transition → wave 6), HUD readability at 800x450, difficulty progression feel, boss encounter timing, high score persistence across restarts (native), high score persistence in browser (web build via `zig build web`)
+- [x] T052 Wire the wave timer display into the HUD in `src/main.zig` — show remaining time as a countdown or progress bar alongside existing HUD elements
+- [x] T053 Ensure zombie clearing on wave timer expiry in `src/main.zig` properly frees memory via the allocator (call `resetZombies` or equivalent cleanup, not just setting `is_active = false`)
+- [x] T054 Update existing test T004 (input buffer bounds) in `src/main.zig` to use `MAX_INPUT_CHARS = 40` instead of `9` — verify the bounds check still works at the new limit
+- [x] T055 Run `zig build` and `zig build test` as a final gate — all tests must pass, no compiler warnings
+- [x] T056 Manual playtest: verify full flow (wave 1 → transition → wave 2 → ... → wave 5 boss → transition → wave 6), HUD readability at 800x450, difficulty progression feel, boss encounter timing, high score persistence across restarts (native), high score persistence in browser (web build via `zig build web`)
 
 ---
 
