@@ -52,4 +52,61 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    // Web step: build for wasm32-emscripten and emit zig-out/web/
+    // Requires Emscripten SDK 3.1.64 on PATH (emsdk install + activate).
+    // -sASYNCIFY=1 is a viable fallback if needed (inflates .wasm ~30-50%).
+    {
+        const web_step = b.step("web", "Build WebAssembly bundle for browser deployment");
+
+        const web_target = b.resolveTargetQuery(.{
+            .cpu_arch = .wasm32,
+            .os_tag = .emscripten,
+        });
+
+        // Compile the game module as a static library for wasm32-emscripten.
+        // We link raylib separately (via its own Makefile) so we don't pull in
+        // native raylib artifacts; the build.zig.zon pin stays untouched (FR-014).
+        const web_mod = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = web_target,
+            .optimize = optimize,
+            .strip = strip,
+        });
+        // Raylib headers are needed for @cImport in src/raylib.zig
+        web_mod.addIncludePath(raylib_dep.path("src"));
+
+        const web_lib = b.addLibrary(.{
+            .name = "game",
+            .linkage = .static,
+            .root_module = web_mod,
+        });
+
+        // Build raylib for PLATFORM_WEB via its own Makefile.
+        // Produces libraylib.a in the raylib dependency's src/ directory.
+        const raylib_make = b.addSystemCommand(&.{"make"});
+        raylib_make.addArg("-C");
+        raylib_make.addDirectoryArg(raylib_dep.path("src"));
+        raylib_make.addArgs(&.{ "PLATFORM=PLATFORM_WEB", "GRAPHICS=GRAPHICS_API_OPENGL_ES2", "-j4" });
+
+        // Ensure the output directory exists before emcc runs
+        const mkdir_out = b.addSystemCommand(&.{ "mkdir", "-p", "zig-out/web" });
+
+        // Link game + libraylib.a with emcc to produce the browser bundle
+        const emcc_link = b.addSystemCommand(&.{"emcc"});
+        emcc_link.addArtifactArg(web_lib);
+        emcc_link.addFileArg(raylib_dep.path("src/libraylib.a"));
+        emcc_link.addArgs(&.{ "--shell-file", "src/web/shell.html" });
+        emcc_link.addArgs(&.{ "--preload-file", "assets/" });
+        emcc_link.addArgs(&.{ "-sUSE_GLFW=3", "-sFULL_ES2=1", "-sASYNCIFY=0" });
+        emcc_link.addArgs(&.{ "-o", "zig-out/web/index.html" });
+        emcc_link.step.dependOn(&raylib_make.step);
+        emcc_link.step.dependOn(&mkdir_out.step);
+
+        // Copy assets alongside the bundle (belt-and-suspenders, contracts/web-output-layout.md §L4)
+        const cp_assets = b.addSystemCommand(&.{ "cp", "-r", "assets/", "zig-out/web/assets" });
+        cp_assets.step.dependOn(&emcc_link.step);
+
+        web_step.dependOn(&cp_assets.step);
+    }
 }
