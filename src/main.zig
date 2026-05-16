@@ -40,6 +40,9 @@ const ACC_HUD_X: c_int = screen_width - 100;
 const ACC_HUD_Y: c_int = 30;
 const METRICS_HUD_SIZE: c_int = 18;
 const SMOOTHING_FACTOR: f32 = 0.2;
+// WPM convention: 1 word = 5 chars, so wpm = (chars / time_seconds) * 60 / 5.
+const CHARS_PER_WORD: f32 = 5.0;
+const SECONDS_PER_MINUTE: f32 = 60.0;
 
 const WaveConfig = struct {
     target_wpm: u32,
@@ -278,12 +281,14 @@ fn frame(ctx: *FrameContext) void {
         const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
         raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
 
+        const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
         var wpm_buf: [32]u8 = undefined;
-        const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{@as(u32, @intFromFloat(@round(displayed_wpm)))}) catch "WPM ?";
+        const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
         raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, raylib.DARKGRAY);
 
+        const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
         var acc_buf: [32]u8 = undefined;
-        const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{@as(u32, @intFromFloat(@round(displayed_accuracy)))}) catch "Acc ?";
+        const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
         raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, raylib.DARKGRAY);
     }
 
@@ -761,15 +766,14 @@ fn typedMatchesAnyEnemy() bool {
 fn recordCorrectTimestamp(time: f32) void {
     wpm_buffer[wpm_buffer_head] = time;
     wpm_buffer_head = (wpm_buffer_head + 1) % WPM_BUFFER_SIZE;
-    if (wpm_buffer_count < WPM_BUFFER_SIZE) wpm_buffer_count += 1;
+    wpm_buffer_count = @min(wpm_buffer_count + 1, WPM_BUFFER_SIZE);
 }
 
 fn countCharsInWindow(current_time: f32) u32 {
     var count: u32 = 0;
     const window_start = current_time - WPM_WINDOW_SECONDS;
-    var i: usize = 0;
-    while (i < wpm_buffer_count) : (i += 1) {
-        if (wpm_buffer[i] >= window_start) count += 1;
+    for (wpm_buffer[0..wpm_buffer_count]) |timestamp| {
+        if (timestamp >= window_start) count += 1;
     }
     return count;
 }
@@ -785,12 +789,15 @@ fn resetMetricsState() void {
     displayed_accuracy = 100.0;
 }
 
+fn charsToWpm(chars: u32, time_seconds: f32) f32 {
+    return @as(f32, @floatFromInt(chars)) * SECONDS_PER_MINUTE / CHARS_PER_WORD / time_seconds;
+}
+
 fn calculateTargetWpm() f32 {
     if (elapsed_time == 0) return 0.0;
-    if (elapsed_time < WPM_WINDOW_SECONDS) {
-        return @as(f32, @floatFromInt(correct_chars)) * 12.0 / elapsed_time;
-    }
-    return @as(f32, @floatFromInt(countCharsInWindow(elapsed_time))) * 1.2;
+    // Before the window fills, scale by elapsed time so early bursts aren't under-reported.
+    if (elapsed_time < WPM_WINDOW_SECONDS) return charsToWpm(correct_chars, elapsed_time);
+    return charsToWpm(countCharsInWindow(elapsed_time), WPM_WINDOW_SECONDS);
 }
 
 fn calculateTargetAccuracy() f32 {
