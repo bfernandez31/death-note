@@ -148,7 +148,7 @@ fn frame(ctx: *FrameContext) void {
 }
 
 // Emscripten C-callback trampoline; arg carries the FrameContext pointer
-fn frame_c_callback(arg: ?*anyopaque) callconv(.C) void {
+fn frame_c_callback(arg: ?*anyopaque) callconv(.c) void {
     if (arg) |raw| {
         const ctx: *FrameContext = @ptrCast(@alignCast(raw));
         frame(ctx);
@@ -159,7 +159,7 @@ fn frame_c_callback(arg: ?*anyopaque) callconv(.C) void {
 // never run there — emscripten_set_main_loop_arg does not return. atexit only fires on
 // explicit emscripten_force_exit / module shutdown (browser tab close bypasses it), but
 // it is the cleanest available hook for any controlled teardown the runtime offers.
-fn cleanup_on_exit() callconv(.C) void {
+fn cleanup_on_exit() callconv(.c) void {
     raylib.UnloadTexture(zombie_texture);
     raylib.UnloadSound(zombie_kill_sound);
     raylib.CloseAudioDevice();

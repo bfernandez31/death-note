@@ -68,13 +68,29 @@ pub fn build(b: *std.Build) void {
         // We link raylib separately (via its own Makefile) so we don't pull in
         // native raylib artifacts; the build.zig.zon pin stays untouched (FR-014).
         const web_mod = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
+            .root_source_file = b.path("src/web_root.zig"),
             .target = web_target,
             .optimize = optimize,
             .strip = strip,
+            // single_threaded avoids pulling in std.Io.Threaded, which evaluates
+            // posix.system.getrandom / IOV_MAX at comptime and those decls don't
+            // exist in Zig 0.16's emscripten posix bindings. The game is single-
+            // threaded anyway — emscripten_set_main_loop drives one frame at a time.
+            .single_threaded = true,
         });
         // Raylib headers are needed for @cImport in src/raylib.zig
         web_mod.addIncludePath(raylib_dep.path("src"));
+
+        // Emscripten libc headers (math.h, stdint.h, …) for the @cImport chain.
+        // EMSDK is exported by `source $EMSDK/emsdk_env.sh`; CI sets it via
+        // mymindstorm/setup-emsdk. If missing here, skip the include and let the
+        // emcc_check step below surface the actionable error at run time —
+        // panicking now would also break native `zig build` / `zig build test`,
+        // which traverse this build graph even though they don't compile the lib.
+        if (b.graph.environ_map.get("EMSDK")) |emsdk_path| {
+            const emsdk_sysroot_include = b.pathJoin(&.{ emsdk_path, "upstream", "emscripten", "cache", "sysroot", "include" });
+            web_mod.addSystemIncludePath(.{ .cwd_relative = emsdk_sysroot_include });
+        }
 
         const web_lib = b.addLibrary(.{
             .name = "game",
@@ -105,7 +121,7 @@ pub fn build(b: *std.Build) void {
         // Link game + libraylib.a with emcc to produce the browser bundle
         const emcc_link = b.addSystemCommand(&.{"emcc"});
         emcc_link.addArtifactArg(web_lib);
-        emcc_link.addFileArg(raylib_dep.path("src/libraylib.a"));
+        emcc_link.addFileArg(raylib_dep.path("src/libraylib.web.a"));
         emcc_link.addArgs(&.{ "--shell-file", "src/web/shell.html" });
         emcc_link.addArgs(&.{ "--preload-file", "assets/" });
         emcc_link.addArgs(&.{ "-sUSE_GLFW=3", "-sFULL_ES2=1", "-sASYNCIFY=0" });
