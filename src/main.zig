@@ -120,11 +120,13 @@ fn frame(ctx: *FrameContext) void {
             name[letter_count] = '\x00'; // Null-terminate after backspace
         }
 
+        const wave_cfg = getWaveConfig(current_wave);
+
         // Update spawn timer
         spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
 
         // Check if enough time has passed to spawn a new zombie
-        if (spawn_timer >= getWaveConfig(current_wave).spawn_delay and wave_spawned < getWaveConfig(current_wave).pool_size) {
+        if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size) {
             const spawned = spawnZombie(ctx.allocator) catch false;
             if (spawned) {
                 spawn_timer = 0.0;
@@ -136,8 +138,7 @@ fn frame(ctx: *FrameContext) void {
         updateZombies();
 
         // Wave completion detection
-        const cfg = getWaveConfig(current_wave);
-        if (wave_kills >= cfg.pool_size and wave_spawned >= cfg.pool_size) {
+        if (wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size) {
             is_transitioning = true;
             transition_timer = WAVE_TRANSITION_DURATION;
         }
@@ -166,9 +167,8 @@ fn frame(ctx: *FrameContext) void {
     if (!is_game_over) {
         const hud_cfg = getWaveConfig(current_wave);
         var hud_buf: [64]u8 = undefined;
-        const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} \xe2\x80\x94 {d} WPM \xe2\x80\x94 {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
-        const hud_width = raylib.MeasureText(hud_text.ptr, 20);
-        raylib.DrawText(hud_text.ptr, @divTrunc(screen_width - hud_width, 2), 10, 20, raylib.DARKGRAY);
+        const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} — {d} WPM — {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
+        drawCenteredText(hud_text.ptr, 10, 20, raylib.DARKGRAY);
     }
 
     raylib.DrawRectangleRec(ctx.text_box, raylib.LIGHTGRAY);
@@ -188,13 +188,11 @@ fn frame(ctx: *FrameContext) void {
 
         var go_wave_buf: [32]u8 = undefined;
         const go_wave_text = std.fmt.bufPrintZ(&go_wave_buf, "Wave reached: {d}", .{current_wave}) catch "Wave reached: ?";
-        const go_wave_w = raylib.MeasureText(go_wave_text.ptr, 20);
-        raylib.DrawText(go_wave_text.ptr, @divTrunc(screen_width - go_wave_w, 2), screen_height / 2 + 5, 20, raylib.GRAY);
+        drawCenteredText(go_wave_text.ptr, screen_height / 2 + 5, 20, raylib.GRAY);
 
         var go_wpm_buf: [32]u8 = undefined;
         const go_wpm_text = std.fmt.bufPrintZ(&go_wpm_buf, "Required WPM: {d}", .{getWaveConfig(current_wave).target_wpm}) catch "Required WPM: ?";
-        const go_wpm_w = raylib.MeasureText(go_wpm_text.ptr, 20);
-        raylib.DrawText(go_wpm_text.ptr, @divTrunc(screen_width - go_wpm_w, 2), screen_height / 2 + 30, 20, raylib.GRAY);
+        drawCenteredText(go_wpm_text.ptr, screen_height / 2 + 30, 20, raylib.GRAY);
 
         raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 60, 20, raylib.GRAY);
 
@@ -218,8 +216,7 @@ fn frame(ctx: *FrameContext) void {
 
         var wave_buf: [64]u8 = undefined;
         const wave_text = std.fmt.bufPrintZ(&wave_buf, "WAVE {d} — {d} WPM challenge — {d}...", .{ next_wave, next_cfg.target_wpm, countdown }) catch "NEXT WAVE";
-        const wave_text_width = raylib.MeasureText(wave_text.ptr, 30);
-        raylib.DrawText(wave_text.ptr, @divTrunc(screen_width - wave_text_width, 2), screen_height / 2 - 15, 30, raylib.DARKGRAY);
+        drawCenteredText(wave_text.ptr, screen_height / 2 - 15, 30, raylib.DARKGRAY);
     } else {
         drawZombies();
     }
@@ -412,6 +409,11 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
         }
     }
     return false;
+}
+
+fn drawCenteredText(text: [*:0]const u8, y: c_int, size: c_int, color: raylib.Color) void {
+    const width = raylib.MeasureText(text, size);
+    raylib.DrawText(text, @divTrunc(screen_width - width, 2), y, size, color);
 }
 
 fn getWaveConfig(wave: u32) WaveConfig {
