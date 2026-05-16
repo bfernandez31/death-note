@@ -74,18 +74,18 @@
 **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 **RULE (constitution): Extend existing test blocks in `src/main.zig` — do not create new test files.**
 
-- [ ] T013 [US2] Add test `"getCurrentMaxInput returns correct limits"` in `src/main.zig` — verify returns `MAX_INPUT_CHARS` when `boss == null` and `MAX_BOSS_INPUT_CHARS` when `boss` is set (temporarily set the global for the test)
-- [ ] T014 [US2] Add test `"boss phrase validity"` in `src/main.zig` — verify all 10 phrases in `BossPhrases` are: non-empty, within 35 characters, contain only lowercase letters (97-122) and spaces (32)
-- [ ] T015 [US2] Add test `"input buffer capacity for boss phrases"` in `src/main.zig` — verify `name.len >= MAX_BOSS_INPUT_CHARS + 1` (buffer can hold longest boss phrase plus null terminator)
+- [x] T013 [US2] Add test `"getCurrentMaxInput returns correct limits"` in `src/main.zig` — verify returns `MAX_INPUT_CHARS` when `boss == null` and `MAX_BOSS_INPUT_CHARS` when `boss` is set (temporarily set the global for the test)
+- [x] T014 [US2] Add test `"boss phrase validity"` in `src/main.zig` — verify all 10 phrases in `BossPhrases` are: non-empty, within 35 characters, contain only lowercase letters (97-122) and spaces (32)
+- [x] T015 [US2] Add test `"input buffer capacity for boss phrases"` in `src/main.zig` — verify `name.len >= MAX_BOSS_INPUT_CHARS + 1` (buffer can hold longest boss phrase plus null terminator)
 
 ### Implementation for User Story 2
 
-- [ ] T016 [US2] Add `updateBoss(allocator: *std.mem.Allocator) void` function in `src/main.zig`: if `boss` is null return; unwrap with `if (boss) |b|`; advance `b.y += b.speed`; if `b.y >= screen_height` set `is_game_over = true` and return (FR-013); compute typed name `name[0..letter_count]`; compute boss phrase slice by scanning `b.name` to null; check if typed input is a valid prefix: `std.mem.eql(u8, typed_name, boss_phrase[0..letter_count])`; if prefix matches AND `letter_count == boss_phrase_len`: destroy boss, set `boss = null`, clear input (`letter_count = 0`, `name[0] = '\x00'`), play `zombie_kill_sound` (do NOT increment `wave_kills`)
-- [ ] T017 [US2] Call `updateBoss(ctx.allocator)` in `frame()` right after the boss spawn check (T010) and before the wave completion check in `src/main.zig`
-- [ ] T018 [US2] Update input acceptance guard in `frame()` (line 109) of `src/main.zig`: change `letter_count < MAX_INPUT_CHARS` to `letter_count < getCurrentMaxInput()`
-- [ ] T019 [US2] Update blinking cursor guard (line 228) in `src/main.zig`: change `letter_count < MAX_INPUT_CHARS` to `letter_count < getCurrentMaxInput()`
-- [ ] T020 [US2] Update "Press BACKSPACE" hint guard (line 232) in `src/main.zig`: change `letter_count >= MAX_INPUT_CHARS` to `letter_count >= getCurrentMaxInput()`
-- [ ] T021 [US2] Add health bar drawing to `drawBoss()` in `src/main.zig`: below phrase text, draw background `DrawRectangle(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.LIGHTGRAY)`, fill `DrawRectangle(bar_x, bar_y, fill_width, BOSS_HEALTH_BAR_HEIGHT, raylib.RED)` where `fill_width = BOSS_HEALTH_BAR_WIDTH * (boss_phrase_len - letter_count) / boss_phrase_len` (only when input is valid prefix), border `DrawRectangleLines(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.DARKGRAY)`
+- [x] T016 [US2] Add `updateBoss(allocator: *std.mem.Allocator) void` function in `src/main.zig`: if `boss` is null return; unwrap with `if (boss) |b|`; advance `b.y += b.speed`; if `b.y >= screen_height` set `is_game_over = true` and return (FR-013); compute typed name `name[0..letter_count]`; compute boss phrase slice by scanning `b.name` to null; check if typed input is a valid prefix: `std.mem.eql(u8, typed_name, boss_phrase[0..letter_count])`; if prefix matches AND `letter_count == boss_phrase_len`: destroy boss, set `boss = null`, clear input (`letter_count = 0`, `name[0] = '\x00'`), play `zombie_kill_sound` (do NOT increment `wave_kills`)
+- [x] T017 [US2] Call `updateBoss(ctx.allocator)` in `frame()` right after the boss spawn check (T010) and before the wave completion check in `src/main.zig`
+- [x] T018 [US2] Update input acceptance guard in `frame()` (line 109) of `src/main.zig`: change `letter_count < MAX_INPUT_CHARS` to `letter_count < getCurrentMaxInput()`
+- [x] T019 [US2] Update blinking cursor guard (line 228) in `src/main.zig`: change `letter_count < MAX_INPUT_CHARS` to `letter_count < getCurrentMaxInput()`
+- [x] T020 [US2] Update "Press BACKSPACE" hint guard (line 232) in `src/main.zig`: change `letter_count >= MAX_INPUT_CHARS` to `letter_count >= getCurrentMaxInput()`
+- [x] T021 [US2] Add health bar drawing to `drawBoss()` in `src/main.zig`: below phrase text, draw background `DrawRectangle(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.LIGHTGRAY)`, fill `DrawRectangle(bar_x, bar_y, fill_width, BOSS_HEALTH_BAR_HEIGHT, raylib.RED)` where `fill_width = BOSS_HEALTH_BAR_WIDTH * (boss_phrase_len - letter_count) / boss_phrase_len` (only when input is valid prefix), border `DrawRectangleLines(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.DARKGRAY)`
 
 **Checkpoint**: Boss can be killed by typing full phrase, health bar shows progress, input limit extends to 35 during boss
 

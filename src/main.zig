@@ -116,7 +116,7 @@ fn frame(ctx: *FrameContext) void {
         // text box hit-test rectangle).
         var key = raylib.GetCharPressed();
         while (key > 0) {
-            if ((key >= 32) and (key <= 125) and (letter_count < MAX_INPUT_CHARS)) {
+            if ((key >= 32) and (key <= 125) and (letter_count < getCurrentMaxInput())) {
                 name[letter_count] = @intCast(key); // Add character to input buffer
                 name[letter_count + 1] = '\x00'; // Null-terminate the string
                 letter_count += 1;
@@ -156,6 +156,8 @@ fn frame(ctx: *FrameContext) void {
                 spawnBoss(ctx.allocator) catch {};
             }
         }
+
+        updateBoss(ctx.allocator);
 
         // Wave completion detection — guarded against is_game_over so a kill+death in the
         // same frame does not silently start a wave transition behind the game-over screen.
@@ -243,11 +245,11 @@ fn frame(ctx: *FrameContext) void {
         drawBoss();
     }
     // Draw blinking underscore char
-    if (ctx.mouse_on_text and letter_count < MAX_INPUT_CHARS and ((ctx.frames_counter / 20) % 2) == 0) {
+    if (ctx.mouse_on_text and letter_count < getCurrentMaxInput() and ((ctx.frames_counter / 20) % 2) == 0) {
         raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, raylib.MAROON);
     }
 
-    if (ctx.mouse_on_text and letter_count >= MAX_INPUT_CHARS) {
+    if (ctx.mouse_on_text and letter_count >= getCurrentMaxInput()) {
         raylib.DrawText("Press BACKSPACE to delete chars...", 230, 300, 20, raylib.GRAY);
     }
 }
@@ -451,6 +453,30 @@ fn getWaveConfig(wave: u32) WaveConfig {
         .fall_speed = 2.0,
         .pool_size = 33 + 2 * (wave - 15),
     };
+}
+
+fn updateBoss(allocator: *std.mem.Allocator) void {
+    if (boss) |b| {
+        b.y += b.speed;
+
+        if (b.y >= screen_height) {
+            is_game_over = true;
+            return;
+        }
+
+        const typed_name = name[0..letter_count];
+        const boss_slice = b.name[0..boss_phrase_len];
+
+        if (letter_count <= boss_phrase_len and std.mem.eql(u8, typed_name, boss_slice[0..letter_count])) {
+            if (letter_count == boss_phrase_len) {
+                allocator.destroy(b);
+                boss = null;
+                letter_count = 0;
+                name[0] = '\x00';
+                raylib.PlaySound(zombie_kill_sound);
+            }
+        }
+    }
 }
 
 fn drawBoss() void {
@@ -711,4 +737,33 @@ test "boss spawn threshold calculation" {
     const cfg20 = getWaveConfig(20);
     try std.testing.expectEqual(@as(u32, 43), cfg20.pool_size);
     try std.testing.expectEqual(@as(u32, 22), (cfg20.pool_size + 1) / 2);
+}
+
+test "getCurrentMaxInput returns correct limits" {
+    const saved_boss = boss;
+    defer boss = saved_boss;
+
+    boss = null;
+    try std.testing.expectEqual(@as(usize, MAX_INPUT_CHARS), getCurrentMaxInput());
+
+    var dummy = Zombie{ .x = 0, .y = 0, .speed = 0, .name = "test", .is_active = true, .frame = 0, .animation_timer = 0 };
+    boss = &dummy;
+    try std.testing.expectEqual(@as(usize, MAX_BOSS_INPUT_CHARS), getCurrentMaxInput());
+}
+
+test "boss phrase validity" {
+    for (BossPhrases) |phrase| {
+        var len: usize = 0;
+        while (phrase[len] != '\x00') len += 1;
+        try std.testing.expect(len > 0);
+        try std.testing.expect(len <= 35);
+        for (0..len) |i| {
+            const c = phrase[i];
+            try std.testing.expect((c >= 97 and c <= 122) or c == 32);
+        }
+    }
+}
+
+test "input buffer capacity for boss phrases" {
+    try std.testing.expect(name.len >= MAX_BOSS_INPUT_CHARS + 1);
 }
