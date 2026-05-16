@@ -32,6 +32,15 @@ const POPUP_FONT_SIZE: c_int = 20;
 const BOSS_TYPE_MULTIPLIER: f32 = 3.0;
 const STANDARD_TYPE_MULTIPLIER: f32 = 1.0;
 
+const WPM_BUFFER_SIZE: usize = 512;
+const WPM_WINDOW_SECONDS: f32 = 10.0;
+const WPM_HUD_X: c_int = screen_width - 100;
+const WPM_HUD_Y: c_int = 5;
+const ACC_HUD_X: c_int = screen_width - 100;
+const ACC_HUD_Y: c_int = 30;
+const METRICS_HUD_SIZE: c_int = 18;
+const SMOOTHING_FACTOR: f32 = 0.2;
+
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
@@ -78,6 +87,15 @@ var score: u64 = 0;
 var combo_count: u32 = 0;
 var popups = [_]ScorePopup{.{ .x = 0, .y = 0, .points = 0, .timer = 0, .active = false }} ** MAX_POPUPS;
 var popup_next: usize = 0;
+
+var wpm_buffer = [_]f32{0} ** WPM_BUFFER_SIZE;
+var wpm_buffer_head: usize = 0;
+var wpm_buffer_count: usize = 0;
+var correct_chars: u32 = 0;
+var wrong_chars: u32 = 0;
+var elapsed_time: f32 = 0.0;
+var displayed_wpm: f32 = 0.0;
+var displayed_accuracy: f32 = 100.0;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -150,8 +168,6 @@ fn frame(ctx: *FrameContext) void {
     }
 
     if (!is_game_over and !is_transitioning) {
-        var typed_this_frame: bool = false;
-
         // Accept keystrokes regardless of mouse position so players can start typing
         // immediately on load (especially on web, where focus is on the canvas, not the
         // text box hit-test rectangle).
@@ -161,7 +177,13 @@ fn frame(ctx: *FrameContext) void {
                 name[letter_count] = @intCast(key);
                 name[letter_count + 1] = '\x00';
                 letter_count += 1;
-                typed_this_frame = true;
+                if (typedMatchesAnyEnemy()) {
+                    recordCorrectTimestamp(elapsed_time);
+                    correct_chars += 1;
+                } else {
+                    wrong_chars += 1;
+                    combo_count = 0;
+                }
             }
             key = raylib.GetCharPressed();
         }
@@ -169,10 +191,6 @@ fn frame(ctx: *FrameContext) void {
         if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
             letter_count -= 1;
             name[letter_count] = '\x00';
-        }
-
-        if (typed_this_frame and !typedMatchesAnyEnemy()) {
-            combo_count = 0;
         }
 
         const wave_cfg = getWaveConfig(current_wave);
@@ -228,6 +246,10 @@ fn frame(ctx: *FrameContext) void {
         }
     }
 
+    if (!is_game_over) {
+        updateMetrics();
+    }
+
     for (&popups) |*p| {
         if (p.active) {
             p.timer -= raylib.GetFrameTime();
@@ -255,6 +277,14 @@ fn frame(ctx: *FrameContext) void {
         var combo_buf: [32]u8 = undefined;
         const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
         raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
+
+        var wpm_buf: [32]u8 = undefined;
+        const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{@as(u32, @intFromFloat(@round(displayed_wpm)))}) catch "WPM ?";
+        raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, raylib.DARKGRAY);
+
+        var acc_buf: [32]u8 = undefined;
+        const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{@as(u32, @intFromFloat(@round(displayed_accuracy)))}) catch "Acc ?";
+        raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, raylib.DARKGRAY);
     }
 
     raylib.DrawRectangleRec(ctx.text_box, raylib.LIGHTGRAY);
@@ -298,6 +328,7 @@ fn frame(ctx: *FrameContext) void {
             is_transitioning = false;
             transition_timer = 0.0;
             resetScoreState();
+            resetMetricsState();
             resetZombies(ctx.allocator);
             resetBoss(ctx.allocator);
         }
@@ -727,6 +758,55 @@ fn typedMatchesAnyEnemy() bool {
     return false;
 }
 
+fn recordCorrectTimestamp(time: f32) void {
+    wpm_buffer[wpm_buffer_head] = time;
+    wpm_buffer_head = (wpm_buffer_head + 1) % WPM_BUFFER_SIZE;
+    if (wpm_buffer_count < WPM_BUFFER_SIZE) wpm_buffer_count += 1;
+}
+
+fn countCharsInWindow(current_time: f32) u32 {
+    var count: u32 = 0;
+    const window_start = current_time - WPM_WINDOW_SECONDS;
+    var i: usize = 0;
+    while (i < wpm_buffer_count) : (i += 1) {
+        if (wpm_buffer[i] >= window_start) count += 1;
+    }
+    return count;
+}
+
+fn resetMetricsState() void {
+    wpm_buffer = [_]f32{0} ** WPM_BUFFER_SIZE;
+    wpm_buffer_head = 0;
+    wpm_buffer_count = 0;
+    correct_chars = 0;
+    wrong_chars = 0;
+    elapsed_time = 0.0;
+    displayed_wpm = 0.0;
+    displayed_accuracy = 100.0;
+}
+
+fn calculateTargetWpm() f32 {
+    if (elapsed_time == 0) return 0.0;
+    if (elapsed_time < WPM_WINDOW_SECONDS) {
+        return @as(f32, @floatFromInt(correct_chars)) * 12.0 / elapsed_time;
+    }
+    return @as(f32, @floatFromInt(countCharsInWindow(elapsed_time))) * 1.2;
+}
+
+fn calculateTargetAccuracy() f32 {
+    const total = correct_chars + wrong_chars;
+    if (total == 0) return 100.0;
+    return (@as(f32, @floatFromInt(correct_chars)) / @as(f32, @floatFromInt(total))) * 100.0;
+}
+
+fn updateMetrics() void {
+    elapsed_time += raylib.GetFrameTime();
+    const target_wpm = calculateTargetWpm();
+    displayed_wpm += SMOOTHING_FACTOR * (target_wpm - displayed_wpm);
+    const target_accuracy = calculateTargetAccuracy();
+    displayed_accuracy += SMOOTHING_FACTOR * (target_accuracy - displayed_accuracy);
+}
+
 fn drawPopups() void {
     for (&popups) |*p| {
         if (!p.active) continue;
@@ -1050,4 +1130,178 @@ test "resetScoreState clears score, combo, and popups" {
     try std.testing.expectEqual(@as(u32, 0), combo_count);
     try std.testing.expectEqual(@as(usize, 0), popup_next);
     try std.testing.expect(!popups[0].active);
+}
+
+test "circular buffer wraps correctly" {
+    const saved_buffer = wpm_buffer;
+    const saved_head = wpm_buffer_head;
+    const saved_count = wpm_buffer_count;
+    defer {
+        wpm_buffer = saved_buffer;
+        wpm_buffer_head = saved_head;
+        wpm_buffer_count = saved_count;
+    }
+
+    wpm_buffer = [_]f32{0} ** WPM_BUFFER_SIZE;
+    wpm_buffer_head = 0;
+    wpm_buffer_count = 0;
+
+    var i: usize = 0;
+    while (i < WPM_BUFFER_SIZE + 10) : (i += 1) {
+        recordCorrectTimestamp(@floatFromInt(i));
+    }
+
+    try std.testing.expectEqual(@as(usize, 10), wpm_buffer_head);
+    try std.testing.expectEqual(WPM_BUFFER_SIZE, wpm_buffer_count);
+}
+
+test "resetMetricsState clears all metrics" {
+    const saved_buffer = wpm_buffer;
+    const saved_head = wpm_buffer_head;
+    const saved_count = wpm_buffer_count;
+    const saved_correct = correct_chars;
+    const saved_wrong = wrong_chars;
+    const saved_elapsed = elapsed_time;
+    const saved_wpm = displayed_wpm;
+    const saved_acc = displayed_accuracy;
+    defer {
+        wpm_buffer = saved_buffer;
+        wpm_buffer_head = saved_head;
+        wpm_buffer_count = saved_count;
+        correct_chars = saved_correct;
+        wrong_chars = saved_wrong;
+        elapsed_time = saved_elapsed;
+        displayed_wpm = saved_wpm;
+        displayed_accuracy = saved_acc;
+    }
+
+    wpm_buffer_head = 42;
+    wpm_buffer_count = 100;
+    correct_chars = 50;
+    wrong_chars = 10;
+    elapsed_time = 30.0;
+    displayed_wpm = 72.0;
+    displayed_accuracy = 85.0;
+
+    resetMetricsState();
+
+    try std.testing.expectEqual(@as(usize, 0), wpm_buffer_head);
+    try std.testing.expectEqual(@as(usize, 0), wpm_buffer_count);
+    try std.testing.expectEqual(@as(u32, 0), correct_chars);
+    try std.testing.expectEqual(@as(u32, 0), wrong_chars);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), elapsed_time, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), displayed_wpm, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 100.0), displayed_accuracy, 0.001);
+}
+
+test "WPM sliding window — 60 chars in 10 seconds" {
+    const saved_buffer = wpm_buffer;
+    const saved_head = wpm_buffer_head;
+    const saved_count = wpm_buffer_count;
+    const saved_correct = correct_chars;
+    const saved_elapsed = elapsed_time;
+    defer {
+        wpm_buffer = saved_buffer;
+        wpm_buffer_head = saved_head;
+        wpm_buffer_count = saved_count;
+        correct_chars = saved_correct;
+        elapsed_time = saved_elapsed;
+    }
+
+    wpm_buffer = [_]f32{0} ** WPM_BUFFER_SIZE;
+    wpm_buffer_head = 0;
+    wpm_buffer_count = 0;
+    correct_chars = 60;
+    elapsed_time = 15.0;
+
+    var i: usize = 0;
+    while (i < 60) : (i += 1) {
+        recordCorrectTimestamp(5.0 + @as(f32, @floatFromInt(i)) * (10.0 / 60.0));
+    }
+
+    const result = calculateTargetWpm();
+    try std.testing.expectApproxEqAbs(@as(f32, 72.0), result, 0.1);
+}
+
+test "WPM early game — 12 chars in 5 seconds" {
+    const saved_correct = correct_chars;
+    const saved_elapsed = elapsed_time;
+    defer {
+        correct_chars = saved_correct;
+        elapsed_time = saved_elapsed;
+    }
+
+    correct_chars = 12;
+    elapsed_time = 5.0;
+
+    const result = calculateTargetWpm();
+    try std.testing.expectApproxEqAbs(@as(f32, 28.8), result, 0.1);
+}
+
+test "WPM zero input" {
+    const saved_buffer = wpm_buffer;
+    const saved_head = wpm_buffer_head;
+    const saved_count = wpm_buffer_count;
+    const saved_correct = correct_chars;
+    const saved_elapsed = elapsed_time;
+    defer {
+        wpm_buffer = saved_buffer;
+        wpm_buffer_head = saved_head;
+        wpm_buffer_count = saved_count;
+        correct_chars = saved_correct;
+        elapsed_time = saved_elapsed;
+    }
+
+    wpm_buffer = [_]f32{0} ** WPM_BUFFER_SIZE;
+    wpm_buffer_head = 0;
+    wpm_buffer_count = 0;
+    correct_chars = 0;
+    elapsed_time = 0.0;
+
+    const result = calculateTargetWpm();
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result, 0.001);
+}
+
+test "accuracy — 100 correct 4 incorrect" {
+    const saved_correct = correct_chars;
+    const saved_wrong = wrong_chars;
+    defer {
+        correct_chars = saved_correct;
+        wrong_chars = saved_wrong;
+    }
+
+    correct_chars = 100;
+    wrong_chars = 4;
+
+    const result = calculateTargetAccuracy();
+    try std.testing.expectApproxEqAbs(@as(f32, 96.15), result, 0.1);
+}
+
+test "accuracy zero input returns 100" {
+    const saved_correct = correct_chars;
+    const saved_wrong = wrong_chars;
+    defer {
+        correct_chars = saved_correct;
+        wrong_chars = saved_wrong;
+    }
+
+    correct_chars = 0;
+    wrong_chars = 0;
+
+    const result = calculateTargetAccuracy();
+    try std.testing.expectApproxEqAbs(@as(f32, 100.0), result, 0.001);
+}
+
+test "smoothing convergence toward target WPM" {
+    const saved_wpm = displayed_wpm;
+    defer displayed_wpm = saved_wpm;
+
+    displayed_wpm = 0.0;
+    const target: f32 = 72.0;
+
+    displayed_wpm += SMOOTHING_FACTOR * (target - displayed_wpm);
+    try std.testing.expectApproxEqAbs(@as(f32, 14.4), displayed_wpm, 0.01);
+
+    displayed_wpm += SMOOTHING_FACTOR * (target - displayed_wpm);
+    try std.testing.expectApproxEqAbs(@as(f32, 25.92), displayed_wpm, 0.01);
 }
