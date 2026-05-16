@@ -8,6 +8,8 @@ const MAX_ZOMBIES = 100;
 const MAX_INPUT_CHARS = 9;
 
 const ZOMBIE_FRAME_COUNT = 17;
+const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1; // seconds per spritesheet frame
+const ZOMBIE_FALL_SPEED: f32 = 0.5;
 
 // Input buffer for characters
 var name = [_]u8{0} ** (MAX_INPUT_CHARS + 1);
@@ -27,7 +29,7 @@ const Zombie = struct {
     name: [*:0]const u8,
     is_active: bool,
     frame: f32, // Current animation frame
-    animationTimer: f32,
+    animation_timer: f32,
 };
 
 // Array to hold zombie pointers
@@ -38,6 +40,11 @@ var zombie_kill_sound: raylib.Sound = undefined;
 
 const screen_width = 800;
 const screen_height = 450;
+
+// Spawn X bounds: left margin + right margin sized for the rendered sprite
+// (≈ 313 px frame × 0.2 scale ≈ 63 px) so zombies stay fully on-screen.
+const ZOMBIE_SPAWN_X_MIN: c_int = 10;
+const ZOMBIE_SPAWN_X_MAX: c_int = screen_width - 51;
 
 // Per-frame mutable context threaded through the game loop (native and emscripten paths)
 const FrameContext = struct {
@@ -250,7 +257,7 @@ fn updateZombies() void {
 }
 
 fn drawZombies() void {
-    const deltaTime = 1.0 / 60.0; // 60 FPS
+    const delta_time = 1.0 / 60.0; // 60 FPS
 
     for (zombies) |zombie| {
         if (zombie) |zomb| {
@@ -259,14 +266,14 @@ fn drawZombies() void {
             const pos = raylib.Vector2{ .x = zomb.x, .y = zomb.y };
 
             // Update the animation frame
-            zomb.animationTimer += deltaTime;
+            zomb.animation_timer += delta_time;
 
-            if (zomb.animationTimer >= 0.1) { // Change frame every 0.1 seconds
+            if (zomb.animation_timer >= ZOMBIE_ANIMATION_FRAME_DURATION) {
                 zomb.frame += 1;
                 if (zomb.frame >= ZOMBIE_FRAME_COUNT) {
                     zomb.frame = 0; // Loop back to the first frame
                 }
-                zomb.animationTimer = 0; // Reset the timer
+                zomb.animation_timer = 0; // Reset the timer
             }
 
             // Calculate the source rectangle for the current frame
@@ -310,17 +317,17 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
             const new_zombie = try allocator.create(Zombie);
             errdefer allocator.destroy(new_zombie);
 
-            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(10, 749)));
-            const nameIndex: usize = @intCast(raylib.GetRandomValue(0, @intCast(ZombieNames.len - 1)));
+            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)));
+            const name_index: usize = @intCast(raylib.GetRandomValue(0, @intCast(ZombieNames.len - 1)));
 
             new_zombie.* = Zombie{
                 .x = x,
                 .y = 0.0,
-                .speed = 0.5,
-                .name = ZombieNames[nameIndex],
+                .speed = ZOMBIE_FALL_SPEED,
+                .name = ZombieNames[name_index],
                 .is_active = true,
                 .frame = 0,
-                .animationTimer = 0,
+                .animation_timer = 0,
             };
             zombies[i] = new_zombie;
             return true;
