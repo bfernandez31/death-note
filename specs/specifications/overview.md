@@ -14,11 +14,11 @@
 
 ## Project Summary
 
-death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×1000 portrait-arcade window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. On every fifth wave a boss zombie spawns at 50% kills: larger, red-tinted, and requiring the player to type a full multi-word phrase to defeat it. While a boss is alive, regular zombie spawns pause so the boss phrase gets the player's full attention. Each wave's spawn cadence and fall speed are **derived from the wave's `target_wpm`** so the displayed challenge matches the real one: a player typing exactly at `target_wpm` keeps up with no slack. A missed zombie or boss triggers a 1-second dying pause, then an arcade-style game-over overlay (`GAME OVER` in glow + 3×2 stats grid: `SCORE` zero-padded to 6 digits, `WAVE REACHED`, `ENEMIES SLAIN`, `MAX COMBO`, `WPM`, `ACCURACY`); pressing Enter restarts from wave 1. The best score is persisted across sessions: as a binary file (`highscore.dat`) on native builds and as a JSON entry in `localStorage` on web builds. A live HUD displays the running WPM and accuracy; the WPM timer arms on the first keystroke of each wave and resets on wave transitions, so each wave reads as its own typing-test segment.
+death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×1000 portrait-arcade window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. On every fifth wave a boss zombie spawns at 50% kills: larger, red-tinted, and requiring the player to type a full multi-word phrase to defeat it. While a boss is alive, regular zombie spawns pause so the boss phrase gets the player's full attention. Each wave's spawn cadence and fall speed are **derived from the wave's `target_wpm`** so the displayed challenge matches the real one: a player typing exactly at `target_wpm` keeps up with no slack. A missed zombie or boss triggers a 1-second dying pause, then an arcade-style game-over overlay (`GAME OVER` in glow + 3×2 stats grid: `SCORE` zero-padded to 6 digits, `WAVE REACHED`, `ENEMIES SLAIN`, `MAX COMBO`, `WPM`, `ACCURACY`); pressing Enter restarts from wave 1. The game opens to a main menu with two play modes: **Survival** (the original wave-based mode, now with power-up drops and a pause system) and **Zen** (constant-speed practice mode with WPM target selection, no game-over, no scoring). Power-ups (Freeze, Bomb, Shield) drop at 10% chance per kill in Survival mode and are activated with the Space bar from a single inventory slot. Best scores are persisted per mode — Survival in `highscore.dat` and Zen in `highscore-zen.dat` on native builds, with corresponding separate `localStorage` keys on web builds. All persistence logic lives in `src/highscore.zig`. A live HUD displays the running WPM and accuracy; the WPM timer arms on the first keystroke of each wave and resets on wave transitions, so each wave reads as its own typing-test segment.
 
 The game is a single-file-dominant desktop application aimed at anyone who wants a minimalist, fast-compilation typing challenge. There is no server and no network component: the entire experience runs locally from a single native executable (`death-note`) built with Zig's integrated build system.
 
-Core value comes from simplicity and hackability. The entire game logic lives in `src/main.zig`, with raylib handling all windowing, rendering, audio, and input. Difficulty, wave parameters, and spawn timing are tuned by editing compile-time constants at the top of that file, making the project an accessible starting point for Zig and raylib learners.
+Core value comes from simplicity and hackability. The primary game logic lives in `src/main.zig`, with shared type definitions extracted to `src/zombie_types.zig` and persistence isolated in `src/highscore.zig`; raylib handles all windowing, rendering, audio, and input. Difficulty, wave parameters, and spawn timing are tuned by editing compile-time constants at the top of `src/main.zig`, making the project an accessible starting point for Zig and raylib learners.
 
 ---
 
@@ -42,7 +42,7 @@ Core value comes from simplicity and hackability. The entire game logic lives in
 
 ## Architecture Overview
 
-death-note follows a classic game-loop architecture: initialize resources, loop over update-then-draw, teardown on exit. There are no layers of abstraction beyond a thin C-interop wall. The entire gameplay surface lives in `src/main.zig`; `src/raylib.zig` re-exports raylib symbols; `src/zombie_names.zig` supplies the zombie name pool; `src/boss_phrases.zig` supplies the boss phrase pool.
+death-note follows a classic game-loop architecture: initialize resources, loop over update-then-draw, teardown on exit. There are no layers of abstraction beyond a thin C-interop wall. The primary gameplay surface lives in `src/main.zig`; `src/raylib.zig` re-exports raylib symbols; `src/zombie_names.zig` supplies the zombie name pool; `src/boss_phrases.zig` supplies the boss phrase pool; `src/zombie_types.zig` exports shared enums and tables; `src/highscore.zig` handles per-mode score persistence.
 
 ```mermaid
 graph TB
@@ -50,18 +50,23 @@ graph TB
     RaylibWrapper["src/raylib.zig\n(C interop wall)"]
     ZombieNames["src/zombie_names.zig\n(name pool, 49 names)"]
     BossPhrases["src/boss_phrases.zig\n(phrase pool, 10 phrases)"]
+    ZombieTypes["src/zombie_types.zig\n(ZombieType, GameMode,\nPowerUpType, tables)"]
+    Highscore["src/highscore.zig\n(per-mode persistence)"]
     RaylibLib["raylib static library\n(rendering / audio / input)"]
     ZombiePool["Zombie pool\n[MAX_ZOMBIES]?*Zombie"]
     BossPtr["Boss pointer\n?*Zombie (0 or 1)"]
     WaveTable["WAVE_TABLE\n[15]WaveAuthoring compile-time\n(target_wpm + pool_size; timing derived)"]
     Assets["assets/\n(spritesheet, wav, fonts)"]
-    Window["OS window\n(800×1000 @ 60 FPS)"]
+    Window["OS window\n(800×450 @ 60 FPS)"]
     AudioDevice["OS audio device\n(WAV playback)"]
     InputBuf["Input buffer\nname[MAX_BOSS_INPUT_CHARS+1]"]
+    HighscoreDat["highscore.dat /\nhighscore-zen.dat\n(or localStorage)"]
 
     Main --> RaylibWrapper
     Main --> ZombieNames
     Main --> BossPhrases
+    Main --> ZombieTypes
+    Main --> Highscore
     Main --> ZombiePool
     Main --> BossPtr
     Main --> WaveTable
@@ -70,9 +75,10 @@ graph TB
     RaylibLib --> Window
     RaylibLib --> AudioDevice
     RaylibLib --> Assets
+    Highscore --> HighscoreDat
 ```
 
-The game has four states: **Playing**, **Transitioning**, **Dying**, and **GameOver**. During `Playing`, the update phase runs: input is captured (limit dynamically 9 or 35 characters via `getCurrentMaxInput()`), the first printable keypress of the wave arms the WPM timer (`wpm_timer_started`), each keypress is classified as correct or incorrect, `spawn_timer` accumulates, `spawnZombie` fires at the wave's derived `spawn_delay` **only while no boss is alive**, `updateBoss` advances the boss and checks for phrase completion, `updateZombies` advances regular zombies and checks for name matches, and `updateMetrics` advances `elapsed_time` (only while `wpm_timer_started`) and smooths the WPM and accuracy display values. On boss waves (multiples of 5), `spawnBoss` fires at 50% kills. When all pool zombies are spawned and killed — and the boss is defeated on boss waves — the game enters `Transitioning`: a 3-second countdown after which `current_wave` advances, metrics are reset (`resetMetricsState`) for the new wave's typing-test segment, and the next wave begins. The combo (`combo_count`) is **not** reset between waves; it survives until the player mistypes or dies. `max_combo` records the session-wide peak for the game-over screen. If any zombie or the boss crosses `screen_height`, the game enters `Dying`: all updates pause for 1 second while the responsible regular zombie (if any) is tinted red. When the timer expires the high score comparison runs, the record is persisted if beaten, and the game moves to `GameOver` showing the 3×2 arcade stats grid. Pressing Enter resets all session state (preserving the best score in memory) and restarts from wave 1.
+The game has five UI screens tracked by `current_screen: GameScreen`: **MainMenu**, **WpmSelect**, **Playing**, **Paused**, and **GameOver**. Within the **Playing** screen, two sub-states — **Dying** and **Transitioning** — gate updates via `is_dying` and `is_transitioning`. Game mode (`game_mode: GameMode`) determines whether Survival or Zen rules apply throughout the playing state. During `Playing`, the update phase runs: input is captured (limit dynamically 9 or 35 characters via `getCurrentMaxInput()`), the first printable keypress of the wave arms the WPM timer (`wpm_timer_started`), each keypress is classified as correct or incorrect, `spawn_timer` accumulates, `spawnZombie` fires at the wave's derived `spawn_delay` **only while no boss is alive**, `updateBoss` advances the boss and checks for phrase completion, `updateZombies` advances regular zombies and checks for name matches, and `updateMetrics` advances `elapsed_time` (only while `wpm_timer_started`) and smooths the WPM and accuracy display values. On boss waves (multiples of 5), `spawnBoss` fires at 50% kills. When all pool zombies are spawned and killed — and the boss is defeated on boss waves — the game enters `Transitioning`: a 3-second countdown after which `current_wave` advances, metrics are reset (`resetMetricsState`) for the new wave's typing-test segment, and the next wave begins. The combo (`combo_count`) is **not** reset between waves; it survives until the player mistypes or dies. `max_combo` records the session-wide peak for the game-over screen. If any zombie or the boss crosses `screen_height`, the game enters `Dying`: all updates pause for 1 second while the responsible regular zombie (if any) is tinted red. When the timer expires the high score comparison runs, the record is persisted if beaten, and the game moves to `GameOver` showing the 3×2 arcade stats grid. Pressing Enter resets all session state — including power-up state (`held_power_up = null`, `freeze_timer = 0`, `shield_active = false`) via `resetSessionState` — preserves the best score in memory, and restarts from wave 1.
 
 ---
 
@@ -97,6 +103,8 @@ death-note/
 │   ├── raylib.zig         # Thin @cImport wrapper; sole location for C header imports (includes emscripten.h on web target)
 │   ├── zombie_names.zig   # Compile-time array of 49 zero-terminated C-string zombie names
 │   ├── boss_phrases.zig   # Compile-time array of 10 zero-terminated C-string boss phrases (multi-word, ≤ 35 chars)
+│   ├── zombie_types.zig   # Shared enums and tables: ZombieType, GameMode, PowerUpType, SpawnWeights, NameWeights
+│   ├── highscore.zig      # Dual-backend high score persistence: native binary file (std.c) and Emscripten localStorage
 │   └── web/
 │       └── shell.html     # Emscripten HTML shell: loading spinner, WebGL guard, canvas focus
 └── assets/
@@ -204,6 +212,8 @@ C4Context
 | raylib C interop wrapper | `src/raylib.zig` | Sole location for `@cImport`; re-exports all symbols from `raylib.h`, `raymath.h`, and `rlgl.h` under the `raylib` namespace | raylib static library headers (`raylib.h`, `raymath.h`, `rlgl.h`) | `pub const c = @cImport(…)` — the entire raylib, raymath, and rlgl C API surface |
 | Zombie name pool | `src/zombie_names.zig` | Provides a compile-time array of 49 null-terminated C-string first names used as zombie display names and kill targets | None | `pub const ZombieNames: [49][*:0]const u8` |
 | Boss phrase pool | `src/boss_phrases.zig` | Provides a compile-time array of 10 null-terminated C-string multi-word phrases used as boss kill targets | None | `pub const BossPhrases: [10][*:0]const u8` |
+| Shared type definitions | `src/zombie_types.zig` | Exports `ZombieType`, `GameMode`, `PowerUpType`, `SpawnWeights`, `NameWeights`, and the compile-time `SPAWN_WEIGHT_TABLE` / `NAME_WEIGHT_TABLE`. Lives in its own module so `name_lists.zig` and `main.zig` can both import these declarations without a dependency cycle. | None | All exported `pub` declarations |
+| High score persistence | `src/highscore.zig` | Provides `load(GameMode) Record` and `save(GameMode, Record) void` with dual backends: native `std.c.fopen`/`fread`/`fwrite` for binary files, and `emscripten_run_script` / `emscripten_run_script_string` for localStorage. Mode-specific filenames/keys via `filename(mode)` and `webKey(mode)`. | `src/zombie_types.zig` (`GameMode`), `src/raylib.zig` (Emscripten symbols on web target), Zig stdlib (`std.mem`, `std.fmt`) | `pub const Record`, `pub fn load`, `pub fn save`, `pub fn filename`, `pub fn webKey`, `pub const DISK_SIZE` |
 | Build graph | `build.zig` | Declares the `death-note` executable, wires raylib as a static dependency, exposes `run`, `test`, and `web` build steps, propagates `optimize`, `raylib-optimize`, and `strip` options | Zig build system stdlib, `build.zig.zon` (raylib dependency) | `pub fn build(b: *std.Build) void` — consumed by `zig build` |
 | Web HTML shell | `src/web/shell.html` | Emscripten `--shell-file`; renders a loading spinner until `Module.onRuntimeInitialized`, performs WebGL availability detection, and ensures the canvas captures keyboard focus on click | None (static HTML/CSS/JS — no external dependencies per FR-011) | Consumed by the `web` build step via `emcc --shell-file` |
 | CI/CD workflow | `.github/workflows/deploy-web.yml` | GitHub Actions pipeline: installs pinned Zig and Emscripten toolchains, runs `zig build test` as a gate, builds the WASM bundle with `zig build web -Doptimize=ReleaseSmall`, and publishes the output to GitHub Pages | GitHub Actions, `actions/upload-pages-artifact`, `actions/deploy-pages` | Triggered by push to `main` and `workflow_dispatch` |

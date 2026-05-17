@@ -33,6 +33,15 @@
   - [F-27 High Score Persistence](#f-27-high-score-persistence)
   - [F-28 Zombie Type Differentiation](#f-28-zombie-type-differentiation)
   - [F-29 CRT Overlay](#f-29-crt-overlay)
+  - [F-30 Main Menu](#f-30-main-menu)
+  - [F-31 Pause System](#f-31-pause-system)
+  - [F-32 Zen Mode](#f-32-zen-mode)
+  - [F-33 Power-up Carrier Zombies](#f-33-power-up-carrier-zombies)
+  - [F-34 Power-up Inventory HUD](#f-34-power-up-inventory-hud)
+  - [F-35 Freeze Power-up](#f-35-freeze-power-up)
+  - [F-36 Bomb Power-up](#f-36-bomb-power-up)
+  - [F-37 Shield Power-up](#f-37-shield-power-up)
+  - [F-38 Per-Mode High Scores](#f-38-per-mode-high-scores)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -40,6 +49,8 @@
   - [Journey 4: Buffer Full and Backspace](#journey-4-buffer-full-and-backspace)
   - [Journey 5: Wave Completion and Transition](#journey-5-wave-completion-and-transition)
   - [Journey 6: Boss Wave Encounter and Defeat](#journey-6-boss-wave-encounter-and-defeat)
+  - [Journey 7: Power-up Activation](#journey-7-power-up-activation)
+  - [Journey 8: Zen Mode Session](#journey-8-zen-mode-session)
 - [State Machines](#state-machines)
   - [Game State](#game-state)
   - [Zombie Lifecycle State](#zombie-lifecycle-state)
@@ -52,6 +63,20 @@
 
 ```mermaid
 graph TB
+    subgraph GameModes
+        MainMenu["F-30 Main Menu"]
+        PauseSystem["F-31 Pause System"]
+        ZenMode["F-32 Zen Mode"]
+    end
+
+    subgraph PowerUps
+        CarrierZombie["F-33 Carrier Zombies"]
+        InventoryHUD["F-34 Inventory HUD"]
+        FreezePU["F-35 Freeze"]
+        BombPU["F-36 Bomb"]
+        ShieldPU["F-37 Shield"]
+    end
+
     subgraph Gameplay
         Spawning["F-01 Zombie Spawning"]
         Falling["F-04 Falling Motion"]
@@ -125,6 +150,19 @@ graph TB
     Restart --> Scoring
     GameOverOverlay --> GameOverScore
     GameOver --> HighScore
+    MainMenu --> Spawning
+    MainMenu --> ZenMode
+    PauseSystem --> MainMenu
+    Killing --> CarrierZombie
+    CarrierZombie --> InventoryHUD
+    InventoryHUD --> FreezePU
+    InventoryHUD --> BombPU
+    InventoryHUD --> ShieldPU
+    FreezePU --> Falling
+    BombPU --> Killing
+    ShieldPU --> GameOver
+    GameOver --> MainMenu
+    HighScore --> MainMenu
     Keyboard --> WpmHUD
     Keyboard --> AccHUD
     Combo --> AccHUD
@@ -749,26 +787,24 @@ graph TB
 
 ### F-27 High Score Persistence
 
-**Description.** The best session score is loaded once at game startup and saved conditionally when a game ends with a higher score than the previous best. On native builds the record is stored as a 17-byte binary file (`highscore.dat`) in the working directory using `std.c.fopen`/`fread`/`fwrite`. On web (Emscripten) builds the record is stored in `localStorage` under the key `death-note.highscore` as a JSON object, accessed via `emscripten_run_script_int` and `emscripten_run_script`.
+**Description.** The game maintains separate high score records for Survival and Zen modes. Each record holds `score`, `wave`, `wpm`, and `accuracy`. Persistence is handled by `src/highscore.zig`, which provides `load(mode)` and `save(mode, record)` functions with dual backends. On native builds, Survival is stored in `highscore.dat` and Zen in `highscore-zen.dat` (both 17-byte little-endian binary files). On web (Emscripten) builds, Survival is stored in `localStorage` under `death-note.highscore` and Zen under `death-note.highscore.zen` (both as JSON objects). Both records are loaded at startup via `startGame()` and saved conditionally when the session score exceeds the stored best.
 
-**User-facing behavior.** After losing, the stats screen shows "NEW HIGH SCORE!" in gold if the session score beats the previous best; otherwise it shows "Best: N". When the game is relaunched (or the web page refreshed), the best score is remembered and shown on the next stats screen.
+**User-facing behavior.** After losing in Survival mode, the stats screen shows "NEW HIGH SCORE!" if the session score beats the stored Survival best. After a Zen session, the best WPM/accuracy record for Zen mode is updated if improved. High scores for each mode are independent and persist across restarts.
 
 **System behavior.**
-- **Startup load (native):** `loadHighScore()` opens `highscore.dat` with `std.c.fopen("rb")`, reads exactly `@sizeOf(HighScoreRecord)` bytes. If the file is absent, the wrong size, or unreadable, `HighScoreRecord{}` (all-zero defaults) is returned. The result is stored in `best_score`.
-- **Startup load (web):** `loadHighScoreWeb()` calls `readHighScoreField` per field; each field executes `emscripten_run_script_int` with inline JS that parses the localStorage JSON. Missing key, parse error, or negative value → 0.
-- **Conditional save:** at the `is_dying → is_game_over` transition, if `score > best_score.score`: `is_new_high_score = true`, `best_score` is updated in memory, and either `saveHighScore` (native) or `saveHighScoreWeb` (web) is called.
-- **Native save:** `saveHighScore` opens `highscore.dat` with `std.c.fopen("wb")` and writes the raw bytes via `std.c.fwrite`. On failure the error is silently swallowed (`catch {}`).
-- **Web save:** `saveHighScoreWeb` executes `localStorage.setItem('death-note.highscore', JSON.stringify({score:…, wave:…, wpm:…, accuracy:…}))` via `emscripten_run_script`.
-- Target build selected at compile time via `comptime is_web` (`builtin.target.os.tag == .emscripten`).
+- Startup: `highscore.load(.survival)` and `highscore.load(.zen)` are called from `startGame()` to populate `best_score`.
+- Conditional save (Survival): at the `is_dying → game_over` transition, `score > best_score.score` → `highscore.save(.survival, ...)`.
+- Conditional save (Zen): on quit-to-menu, if session WPM or accuracy improved → `highscore.save(.zen, ...)`.
+- Native filename: `highscore.filename(mode)` returns `"highscore.dat"` or `"highscore-zen.dat"`.
+- Web key: `highscore.webKey(mode)` returns `"death-note.highscore"` or `"death-note.highscore.zen"`.
+- Build target selected at compile time via `comptime is_web`.
 
 **Key source references.**
-- `src/main.zig` — `HighScoreRecord` struct, `best_score`, `is_new_high_score` declarations
-- `src/main.zig` — `HIGHSCORE_FILENAME = "highscore.dat"` constant
-- `src/main.zig` — `loadHighScore`, `saveHighScore`, `loadHighScoreWeb`, `saveHighScoreWeb`, `readHighScoreField` functions
-- `src/main.zig` — startup load branch in `main()`
-- `src/main.zig` — high score comparison and save at dying→game-over transition in `frame()`
+- `src/highscore.zig` — `Record` struct, `load`, `save`, `loadNative`, `saveNative`, `loadWeb`, `saveWeb`, `filename`, `webKey`
+- `src/main.zig` — `best_score`, `is_new_high_score` declarations
+- `src/main.zig` — startup load in `startGame()`, high score comparison and save at dying→game-over transition and Zen quit-to-menu
 
-**Dependencies.** F-05 / F-26 (dying→game-over transition triggers save), F-11 (best score shown on stats screen), F-06 (best_score preserved across restarts).
+**Dependencies.** F-05 / F-26 (dying→game-over transition triggers Survival save), F-11 (best score shown on stats screen), F-06 (best_score preserved across restarts), F-38 (per-mode separation).
 
 ---
 
@@ -812,6 +848,196 @@ graph TB
 - `src/main.zig` — `drawCrtOverlay()` function
 
 **Dependencies.** No feature dependencies; runs as a pure rendering post-pass that overlays all other draw calls.
+
+---
+
+### F-30 Main Menu
+
+**Description.** The game opens to a main menu screen with three options: "Survival", "Zen", and "Quit". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
+
+**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from Quit back to Survival). Pressing Enter on "Survival" starts a new Survival session; on "Zen" advances to the WPM target selection screen; on "Quit" closes the window. The best score for the last-played mode is shown at the bottom of the menu.
+
+**System behavior.**
+- `current_screen` starts as `.main_menu`; transitions to `.playing` (Survival), `.wpm_select` (Zen), or calls `raylib.CloseWindow()` (Quit).
+- `menu_selected_item: usize` tracks the highlighted index (0=Survival, 1=Zen, 2=Quit).
+- Up/Down arrows: `menu_selected_item = (menu_selected_item + delta + MENU_ITEM_COUNT) % MENU_ITEM_COUNT`.
+- Enter: dispatches based on `menu_selected_item` value.
+- `last_played_mode` is read at draw time to select which `best_score` record to show.
+- The menu does not block keyboard input from leaking; the input buffer is cleared on game start.
+
+**Key source references.**
+- `src/main.zig` — `GameScreen` enum, `current_screen`, `menu_selected_item`, `last_played_mode`
+- `src/main.zig` — main menu update/draw branch in `frame()`
+
+**Dependencies.** F-31 (pause shows "Quit to Menu"), F-32 (Zen option leads to WPM select), F-38 (best score shown).
+
+---
+
+### F-31 Pause System
+
+**Description.** Pressing Escape during active gameplay (either mode) pauses the game and shows an overlay with "Resume" and "Quit to Menu" options. All timers, zombie movement, input processing, and spawn logic stop. Resuming restores exact game state. Quitting discards the session without saving.
+
+**User-facing behavior.** During gameplay, Escape freezes everything and shows a pause overlay. The player can resume (returning to exactly where they left off) or quit to the main menu. Pressing Escape on the game-over screen also returns to the main menu.
+
+**System behavior.**
+- `current_screen = .paused` is set when Escape is pressed during `.playing`.
+- All update guards are keyed on `current_screen == .playing`; in `.paused` state no updates run.
+- Pause overlay shows two items (Resume / Quit to Menu) with the same Up/Down + Enter navigation as the main menu.
+- Resume: sets `current_screen = .playing`.
+- Quit to Menu: resets session state (calls `resetSessionState`, `resetZombies`, `resetBoss`) and sets `current_screen = .main_menu`. The current session score is NOT saved.
+- Freeze timer and shield state are suspended alongside all other timers; they resume naturally because the update block that decrements `freeze_timer` is gated by `current_screen == .playing`.
+- Pressing Escape on `.game_over` sets `current_screen = .main_menu`.
+
+**Key source references.**
+- `src/main.zig` — `current_screen`, `.paused` handling in `frame()`
+- `src/main.zig` — pause overlay draw function
+
+**Dependencies.** F-30 (Quit to Menu returns to main menu), F-35 (freeze timer paused).
+
+---
+
+### F-32 Zen Mode
+
+**Description.** Zen mode is a no-pressure typing practice mode. The player selects a WPM target (30, 50, or 80 WPM) from a sub-menu; zombies spawn and fall at the corresponding rate. Zombies that reach the bottom disappear without triggering game-over. There are no bosses, no scoring, no combo counter, and no power-ups. Live WPM and accuracy are displayed. Zen high score tracks best session WPM and accuracy.
+
+**User-facing behavior.** After selecting Zen from the main menu, the player chooses 30, 50, or 80 WPM. Gameplay begins immediately. When a zombie crosses the bottom it vanishes — no red flash, no dying pause, no game over. The HUD shows only WPM and accuracy. The player can pause and quit to menu at any time.
+
+**System behavior.**
+- `.wpm_select` screen: three options (30/50/80 WPM), Up/Down + Enter to select; calls `startGame(.zen)` with the selected WPM baked into `zen_target_wpm`.
+- `startGame(.zen)`: sets `game_mode = .zen`, derives `WaveConfig` from `zen_target_wpm` via `deriveWaveTiming()`, sets `current_screen = .playing`.
+- In Zen mode, zombie-at-bottom detection skips the `is_dying = true` branch; the zombie is freed and the slot nulled immediately.
+- Boss spawn is skipped: `spawnBoss` is not called in Zen mode.
+- Score and combo display are hidden in the draw block when `game_mode == .zen`.
+- Power-up carrier assignment is skipped in `spawnZombie` when `game_mode == .zen`.
+- On quit-to-menu from Zen session, if session WPM exceeds `best_score.wpm` → `highscore.save(.zen, ...)`.
+
+**Key source references.**
+- `src/main.zig` — `game_mode`, `zen_target_wpm`, `GameMode.zen` handling throughout `frame()`
+- `src/zombie_types.zig` — `GameMode` enum
+- `src/highscore.zig` — `save(.zen, ...)` call
+
+**Dependencies.** F-30 (Zen accessible from main menu), F-24 / F-25 (WPM/accuracy HUD displayed), F-38 (Zen high score persisted).
+
+---
+
+### F-33 Power-up Carrier Zombies
+
+**Description.** In Survival mode, each spawned zombie has a 10% chance to carry a randomly selected power-up (Freeze, Bomb, or Shield, each equally likely). A carrier zombie displays a small colored text indicator above its name label. The carried power-up is transferred to the player's inventory slot on kill (if the slot is empty). If the player already has a power-up, the drop is lost. If a carrier reaches the bottom, the power-up is lost.
+
+**User-facing behavior.** Carrier zombies appear with a visible label above their name. When killed, the player's inventory slot fills with the corresponding power-up. No special input is needed to pick up; the transfer is automatic on kill.
+
+**System behavior.**
+- In `spawnZombie`, when `game_mode == .survival`: roll `rng.intRangeLessThan(u8, 0, 100) < POWER_UP_DROP_CHANCE (10)` → select type `rng.intRangeAtMost(u8, 0, 2)` → set `zombie.power_up`.
+- At kill site in `updateZombies`: if `zomb.power_up != null and held_power_up == null` → `held_power_up = zomb.power_up`.
+- `drawZombies` renders a small color-coded text symbol above the name if `zomb.power_up != null`.
+- Carrier indicator uses: Freeze → `CRT_FG` `"[F]"`, Bomb → `CRT_WARN` `"[B]"`, Shield → `CRT_ACCENT` `"[S]"` (text drawn above the name label).
+
+**Key source references.**
+- `src/zombie_types.zig` — `PowerUpType`, `POWER_UP_DROP_CHANCE`
+- `src/main.zig` — `Zombie.power_up` field, spawn assignment, kill pickup
+- `src/main.zig` — `drawZombies` carrier indicator rendering
+
+**Dependencies.** F-01 (carrier set at spawn), F-10 (kill triggers pickup), F-34 (inventory slot receives pickup).
+
+---
+
+### F-34 Power-up Inventory HUD
+
+**Description.** The player has a single power-up inventory slot, displayed in the HUD during Survival gameplay. The slot shows the currently held power-up type (or is blank when empty). Pressing Space activates the held power-up and clears the slot. Space with an empty slot has no effect.
+
+**User-facing behavior.** The HUD shows the held power-up label (e.g. "PU: FREEZE") in the lower portion of the screen. When no power-up is held, the slot label reads "PU: ---". Pressing Space with a power-up activates it immediately.
+
+**System behavior.**
+- `held_power_up: ?PowerUpType` (null = empty).
+- HUD rendered only when `game_mode == .survival`: formats `"PU: {s}"` using a name string per type.
+- Space bar: `IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null` → `activatePowerUp(allocator)` → `held_power_up = null` after activation.
+- On restart / quit-to-menu: `held_power_up = null`.
+
+**Key source references.**
+- `src/main.zig` — `held_power_up`, `activatePowerUp`, power-up HUD draw block
+
+**Dependencies.** F-33 (carrier kill populates slot), F-35 / F-36 / F-37 (activation behavior per type).
+
+---
+
+### F-35 Freeze Power-up
+
+**Description.** Activating the Freeze power-up stops all on-screen zombie and boss movement for `FREEZE_DURATION` (3 seconds). During the freeze, `y` positions and animation timers of all entities do not advance. A countdown timer is displayed in the HUD. The boss is affected by Freeze (unlike Bomb).
+
+**User-facing behavior.** Pressing Space with Freeze equipped causes all zombies and the boss to stop falling for 3 seconds. A "FREEZE: Ns" countdown appears in the HUD. After the timer expires, movement resumes at normal speed.
+
+**System behavior.**
+- `activatePowerUp`: sets `freeze_timer = FREEZE_DURATION (3.0)`.
+- `updateZombies` and `updateBoss` skip `y` advancement when `freeze_timer > 0`.
+- `freeze_timer` decrements each frame via `freeze_timer -= GetFrameTime()` (in the `.playing` update path; paused while `current_screen == .paused`).
+- HUD: when `freeze_timer > 0` and `game_mode == .survival`, renders `"FREEZE: {d}s"` with `CRT_FG` color.
+- On restart / quit-to-menu: `freeze_timer = 0.0`.
+
+**Key source references.**
+- `src/main.zig` — `freeze_timer`, `FREEZE_DURATION`, freeze check in `updateZombies`/`updateBoss`
+
+**Dependencies.** F-34 (activated from inventory), F-04 (y advancement skipped when frozen).
+
+---
+
+### F-36 Bomb Power-up
+
+**Description.** Activating the Bomb power-up instantly destroys all active standard zombies on screen. Score is awarded for each destroyed zombie. The boss is NOT affected by Bomb; it remains at its current position and health.
+
+**User-facing behavior.** Pressing Space with Bomb equipped causes all visible zombies to vanish simultaneously, each triggering the kill sound and a score popup. The boss (if present) is unaffected.
+
+**System behavior.**
+- `activatePowerUp`: iterates `zombies[0..MAX_ZOMBIES]`; for each non-null slot, calls the kill path: `calculateScore`, `spawnPopup`, increments `score` and `combo_count`, calls `allocator.destroy`, sets slot to `null`.
+- Boss pointer is not touched.
+- `wave_kills` is NOT incremented for bomb kills (power-up kills are not counted toward wave completion — only typed kills are).
+- Kill sound is played once per bomb activation (not once per zombie).
+
+**Key source references.**
+- `src/main.zig` — `activatePowerUp` bomb branch, kill loop
+
+**Dependencies.** F-34 (activated from inventory), F-19 (score calculated per bomb kill), F-22 (popup spawned per kill).
+
+---
+
+### F-37 Shield Power-up
+
+**Description.** Activating the Shield power-up arms a passive protective effect. When the next zombie crosses `screen_height`, the shield intercepts: the zombie is destroyed (no game-over, no dying state), the shield is consumed, and gameplay continues. The shield does not stack and does not interact with the boss.
+
+**User-facing behavior.** Pressing Space with Shield equipped shows a "SHIELD: ACTIVE" indicator in the HUD. The next zombie to reach the bottom vanishes instead of triggering game over. The HUD indicator disappears after the shield absorbs a hit.
+
+**System behavior.**
+- `activatePowerUp`: sets `shield_active = true`.
+- In `updateZombies`, zombie-at-bottom detection: if `shield_active` → `shield_active = false`; free zombie (`allocator.destroy`, slot = `null`); return (no `is_dying` set).
+- Shield does not block boss crossing the bottom (boss-crossing path is in `updateBoss`, which does not check `shield_active`).
+- HUD: when `shield_active` and `game_mode == .survival`, renders `"SHIELD: ACTIVE"` with `CRT_ACCENT` color.
+- On restart / quit-to-menu: `shield_active = false`.
+
+**Key source references.**
+- `src/main.zig` — `shield_active`, shield check in `updateZombies`, shield HUD draw
+
+**Dependencies.** F-34 (activated from inventory), F-05 (game-over prevented by shield).
+
+---
+
+### F-38 Per-Mode High Scores
+
+**Description.** Survival and Zen modes maintain independent high score records. Both records use the same `highscore.Record` struct (`score`, `wave`, `wpm`, `accuracy`). Persistence is handled by `src/highscore.zig`, which selects the correct file or localStorage key based on `GameMode`. Existing Survival high scores from previous versions are preserved in `highscore.dat`, which is the same path used by the new system.
+
+**User-facing behavior.** Each mode's best performance is remembered across sessions. The main menu shows the high score for the most recently played mode. Survival scores and Zen scores never overwrite each other.
+
+**System behavior.**
+- `highscore.load(.survival)` → reads `highscore.dat` (native) or `death-note.highscore` (web).
+- `highscore.load(.zen)` → reads `highscore-zen.dat` (native) or `death-note.highscore.zen` (web).
+- `highscore.save(mode, record)` dispatches to the correct backend and file.
+- `last_played_mode` is updated to `game_mode` at session start; read by the main menu draw to select which record to display.
+- Backward compatibility: `highscore.dat` path is unchanged, so existing Survival records are preserved.
+
+**Key source references.**
+- `src/highscore.zig` — `filename`, `webKey`, `load`, `save`, `loadNative`, `saveNative`, `loadWeb`, `saveWeb`
+- `src/zombie_types.zig` — `GameMode` enum
+- `src/main.zig` — `last_played_mode`, calls to `highscore.load`/`save`
+
+**Dependencies.** F-27 (per-mode replaces single-record persistence), F-30 (main menu shows mode-specific best), F-32 (Zen best saved on session end).
 
 ---
 
@@ -933,6 +1159,47 @@ sequenceDiagram
     Game->>Player: Wave transition countdown begins
 ```
 
+### Journey 7: Power-up Activation
+
+```mermaid
+sequenceDiagram
+    participant Player
+    participant Game
+    participant Zombie
+
+    Player->>Game: Types name of carrier zombie (drops Freeze)
+    Game->>Game: Kill path: held_power_up = .freeze (slot was empty)
+    Game->>Player: HUD shows "PU: FREEZE"
+    Player->>Game: Presses Space bar
+    Game->>Game: activatePowerUp: freeze_timer = 3.0
+    Game->>Player: HUD shows "FREEZE: 3s", all zombie movement stops
+    Note over Game: Each frame: freeze_timer -= GetFrameTime()
+    Game->>Game: freeze_timer reaches 0.0
+    Game->>Player: Zombies resume normal movement, freeze HUD hidden
+```
+
+### Journey 8: Zen Mode Session
+
+```mermaid
+sequenceDiagram
+    participant Player
+    participant Game
+
+    Player->>Game: Selects "Zen" from main menu
+    Game->>Player: wpm_select screen shown (30 / 50 / 80 WPM)
+    Player->>Game: Selects 50 WPM, presses Enter
+    Game->>Game: startGame(.zen): derive WaveConfig from 50 WPM
+    Game->>Player: Gameplay starts, no score/combo HUD
+    Note over Game: Zombie reaches bottom
+    Game->>Game: shield_active=false, game_mode=.zen → free zombie, no is_dying
+    Game->>Player: Zombie disappears silently, game continues
+    Player->>Game: Presses Escape
+    Game->>Game: current_screen = .paused
+    Player->>Game: Selects "Quit to Menu"
+    Game->>Game: Session WPM > best_score.wpm? → highscore.save(.zen, ...)
+    Game->>Player: Main menu shown
+```
+
 ### Journey 4: Buffer Full and Backspace
 
 ```mermaid
@@ -959,12 +1226,18 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Playing : main() initialises (wave 1)
-    Playing --> Dying : zomb.y >= screen_height\nOR boss.y >= screen_height\n(is_dying=true, dying_timer=1.0)
+    [*] --> MainMenu : main() initialises
+    MainMenu --> WpmSelect : player selects Zen
+    MainMenu --> Playing : player selects Survival
+    WpmSelect --> Playing : WPM target chosen (game_mode=.zen)
+    Playing --> Paused : Escape pressed
+    Paused --> Playing : Resume selected
+    Paused --> MainMenu : Quit to Menu (session discarded)
+    Playing --> Dying : zombie.y >= screen_height\nAND game_mode==.survival\nAND !shield_active
     Dying --> GameOver : dying_timer <= 0\n(is_game_over=true, high score\ncompared and saved if beaten)
-    Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\nAND boss_done\n(boss_done = true on non-boss waves\nor after boss killed on boss waves)
-    Transitioning --> Playing : transition_timer <= 0\ncurrent_wave += 1\nresetZombies + resetBoss called
-    GameOver --> Playing : KEY_ENTER pressed\ncurrent_wave reset to 1\nresetSessionState + resetZombies\n+ resetBoss called;\nbest_score preserved
+    Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\nAND boss_done
+    Transitioning --> Playing : transition_timer <= 0\ncurrent_wave += 1
+    GameOver --> MainMenu : KEY_ENTER pressed\nor Escape pressed
 ```
 
 ### Zombie Lifecycle State
