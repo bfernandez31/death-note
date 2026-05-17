@@ -7,10 +7,24 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const raylib = @import("raylib.zig").c;
+const zt = @import("zombie_types.zig");
+const GameMode = zt.GameMode;
 
 const is_web = builtin.target.os.tag == .emscripten;
 
-pub const FILENAME = "highscore.dat";
+pub fn filename(mode: GameMode) [*:0]const u8 {
+    return switch (mode) {
+        .survival => "highscore.dat",
+        .zen => "highscore-zen.dat",
+    };
+}
+
+pub fn webKey(mode: GameMode) []const u8 {
+    return switch (mode) {
+        .survival => "death-note.highscore",
+        .zen => "death-note.highscore.zen",
+    };
+}
 
 // Native on-disk format: field-by-field little-endian serialization. Stable 17 bytes
 // regardless of in-memory padding. (See data-model.md §3.8 / FR-011 / ARD-2.)
@@ -23,25 +37,23 @@ pub const Record = struct {
     accuracy: u8 = 0,
 };
 
-// Cross-platform dispatcher. Returns a zero Record on missing/invalid storage rather than
-// propagating errors — call sites treat "no prior score" and "corrupt file" identically.
-pub fn load() Record {
+pub fn load(mode: GameMode) Record {
     if (comptime is_web) {
-        return loadWeb();
+        return loadWeb(mode);
     }
-    return loadNative() catch Record{};
+    return loadNative(mode) catch Record{};
 }
 
-pub fn save(record: Record) void {
+pub fn save(mode: GameMode, record: Record) void {
     if (comptime is_web) {
-        saveWeb(record);
+        saveWeb(mode, record);
         return;
     }
-    saveNative(record) catch {};
+    saveNative(mode, record) catch {};
 }
 
-fn loadNative() !Record {
-    const fp = std.c.fopen(FILENAME, "rb") orelse return error.FileNotFound;
+fn loadNative(mode: GameMode) !Record {
+    const fp = std.c.fopen(filename(mode), "rb") orelse return error.FileNotFound;
     defer _ = std.c.fclose(fp);
     var buf: [DISK_SIZE]u8 = undefined;
     const n = std.c.fread(&buf, 1, DISK_SIZE, fp);
@@ -54,8 +66,8 @@ fn loadNative() !Record {
     };
 }
 
-fn saveNative(record: Record) !void {
-    const fp = std.c.fopen(FILENAME, "wb") orelse return error.AccessDenied;
+fn saveNative(mode: GameMode, record: Record) !void {
+    const fp = std.c.fopen(filename(mode), "wb") orelse return error.AccessDenied;
     defer _ = std.c.fclose(fp);
     var buf: [DISK_SIZE]u8 = undefined;
     std.mem.writeInt(u64, buf[0..8], record.score, .little);
@@ -69,39 +81,37 @@ fn saveNative(record: Record) !void {
 // Goes through emscripten_run_script_string and parses the result as u64 so scores above
 // 2^31-1 survive the round-trip; a raw c_int return would truncate to a negative value
 // and clamp to 0.
-fn readWebField(field: []const u8) u64 {
-    var buf: [256]u8 = undefined;
+fn readWebField(mode: GameMode, field: []const u8) u64 {
+    const key = webKey(mode);
+    var buf: [384]u8 = undefined;
     const js = std.fmt.bufPrintZ(
         &buf,
-        "(function(){{try{{var d=JSON.parse(localStorage.getItem('death-note.highscore'));return d&&typeof d.{s}==='number'&&isFinite(d.{s})?String(Math.max(0,Math.floor(d.{s}))):'0'}}catch(e){{return '0'}}}})()",
-        .{ field, field, field },
+        "(function(){{try{{var d=JSON.parse(localStorage.getItem('{s}'));return d&&typeof d.{s}==='number'&&isFinite(d.{s})?String(Math.max(0,Math.floor(d.{s}))):'0'}}catch(e){{return '0'}}}})()",
+        .{ key, field, field, field },
     ) catch return 0;
     const cstr = raylib.emscripten_run_script_string(js.ptr) orelse return 0;
-    var len: usize = 0;
-    while (cstr[len] != 0) : (len += 1) {}
-    return std.fmt.parseInt(u64, cstr[0..len], 10) catch 0;
+    return std.fmt.parseInt(u64, std.mem.span(cstr), 10) catch 0;
 }
 
-fn loadWeb() Record {
-    // Clamp untrusted localStorage values before downcasting; a raw @intCast traps on
-    // out-of-range inputs and would crash the web build on corrupt/tampered storage.
-    const wave_v = readWebField("wave");
-    const wpm_v = readWebField("wpm");
-    const acc_v = readWebField("accuracy");
+fn loadWeb(mode: GameMode) Record {
+    const wave_v = readWebField(mode, "wave");
+    const wpm_v = readWebField(mode, "wpm");
+    const acc_v = readWebField(mode, "accuracy");
     return Record{
-        .score = readWebField("score"),
+        .score = readWebField(mode, "score"),
         .wave = if (wave_v > std.math.maxInt(u32)) 0 else @intCast(wave_v),
         .wpm = if (wpm_v > std.math.maxInt(u32)) 0 else @intCast(wpm_v),
         .accuracy = if (acc_v > 100) 0 else @intCast(acc_v),
     };
 }
 
-fn saveWeb(record: Record) void {
-    var js_buf: [256]u8 = undefined;
+fn saveWeb(mode: GameMode, record: Record) void {
+    const key = webKey(mode);
+    var js_buf: [384]u8 = undefined;
     const js = std.fmt.bufPrintZ(
         &js_buf,
-        "localStorage.setItem('death-note.highscore',JSON.stringify({{score:{d},wave:{d},wpm:{d},accuracy:{d}}}));",
-        .{ record.score, record.wave, record.wpm, record.accuracy },
+        "localStorage.setItem('{s}',JSON.stringify({{score:{d},wave:{d},wpm:{d},accuracy:{d}}}));",
+        .{ key, record.score, record.wave, record.wpm, record.accuracy },
     ) catch return;
     raylib.emscripten_run_script(js.ptr);
 }
@@ -112,5 +122,21 @@ test "disk size is stable at 17 bytes" {
 
 test "web load/save signatures stay wired" {
     try std.testing.expect(@typeInfo(@TypeOf(loadWeb)).@"fn".return_type == Record);
-    try std.testing.expect(@typeInfo(@TypeOf(saveWeb)).@"fn".params.len == 1);
+    try std.testing.expect(@typeInfo(@TypeOf(saveWeb)).@"fn".params.len == 2);
+}
+
+test "filename survival returns highscore.dat" {
+    try std.testing.expectEqualStrings("highscore.dat", std.mem.span(filename(.survival)));
+}
+
+test "filename zen returns highscore-zen.dat" {
+    try std.testing.expectEqualStrings("highscore-zen.dat", std.mem.span(filename(.zen)));
+}
+
+test "webKey survival returns death-note.highscore" {
+    try std.testing.expectEqualStrings("death-note.highscore", webKey(.survival));
+}
+
+test "webKey zen returns death-note.highscore.zen" {
+    try std.testing.expectEqualStrings("death-note.highscore.zen", webKey(.zen));
 }
