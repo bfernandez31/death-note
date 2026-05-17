@@ -21,9 +21,9 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Add `GameMode` enum (`survival`, `zen`) to `src/zombie_types.zig` after the `ZombieType` enum (~line 11)
-- [ ] T002 [P] Add `PowerUpType` enum (`freeze`, `bomb`, `shield`) and `pub const POWER_UP_DROP_CHANCE: u8 = 10` constant to `src/zombie_types.zig`
-- [ ] T003 Extend tests in `src/zombie_types.zig`: add test blocks for `PowerUpType` enum size (3 variants via `@typeInfo`), `GameMode` enum size (2 variants), and `POWER_UP_DROP_CHANCE == 10`
+- [X] T001 [P] Add `GameMode` enum (`survival`, `zen`) to `src/zombie_types.zig` after the `ZombieType` enum (~line 11)
+- [X] T002 [P] Add `PowerUpType` enum (`freeze`, `bomb`, `shield`) and `pub const POWER_UP_DROP_CHANCE: u8 = 10` constant to `src/zombie_types.zig`
+- [X] T003 Extend tests in `src/zombie_types.zig`: add test blocks for `PowerUpType` enum size (3 variants via `@typeInfo`), `GameMode` enum size (2 variants), and `POWER_UP_DROP_CHANCE == 10`
 
 ---
 

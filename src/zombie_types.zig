@@ -10,6 +10,19 @@ pub const ZombieType = enum {
     tank,
 };
 
+pub const GameMode = enum {
+    survival,
+    zen,
+};
+
+pub const PowerUpType = enum {
+    freeze,
+    bomb,
+    shield,
+};
+
+pub const POWER_UP_DROP_CHANCE: u8 = 10;
+
 pub const RUNNER_SPEED_MULTIPLIER: f32 = 1.8;
 pub const TANK_SPEED_MULTIPLIER: f32 = 0.5;
 pub const RUNNER_MAX_NAME_LEN: usize = 5;
@@ -54,4 +67,20 @@ pub fn getNameWeights(wave: u32) NameWeights {
     if (wave <= 7) return NAME_WEIGHT_TABLE[1];
     if (wave <= 12) return NAME_WEIGHT_TABLE[2];
     return NAME_WEIGHT_TABLE[3];
+}
+
+const std = @import("std");
+
+test "PowerUpType enum has 3 variants" {
+    const fields = @typeInfo(PowerUpType).@"enum".fields;
+    try std.testing.expectEqual(@as(usize, 3), fields.len);
+}
+
+test "GameMode enum has 2 variants" {
+    const fields = @typeInfo(GameMode).@"enum".fields;
+    try std.testing.expectEqual(@as(usize, 2), fields.len);
+}
+
+test "POWER_UP_DROP_CHANCE is 10" {
+    try std.testing.expectEqual(@as(u8, 10), POWER_UP_DROP_CHANCE);
 }
