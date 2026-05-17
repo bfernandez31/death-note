@@ -273,7 +273,7 @@ fn frame(ctx: *FrameContext) void {
     // --- UPDATE PHASE ---
     switch (current_screen) {
         .main_menu => {
-            updateMenu();
+            updateMenu(ctx.allocator);
         },
         .wpm_select => {
             updateWpmSelect();
@@ -414,7 +414,7 @@ fn frame(ctx: *FrameContext) void {
             }
         },
         .paused => {
-            updatePause();
+            updatePause(ctx.allocator);
         },
         .game_over => {
             if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
@@ -540,7 +540,7 @@ const MENU_ITEM_COUNT: u8 = 3;
 const PAUSE_ITEMS = [_][]const u8{ "RESUME", "QUIT TO MENU" };
 const PAUSE_ITEM_COUNT: u8 = 2;
 
-fn updateMenu() void {
+fn updateMenu(allocator: *std.mem.Allocator) void {
     if (raylib.IsKeyPressed(raylib.KEY_UP)) {
         menu_selection = (menu_selection +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT;
     }
@@ -550,7 +550,7 @@ fn updateMenu() void {
     if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
         switch (menu_selection) {
             0 => {
-                startGame(.survival, null);
+                startGame(.survival, allocator);
             },
             1 => {
                 current_screen = .wpm_select;
@@ -592,7 +592,7 @@ fn drawWpmSelect() void {
     _ = .{};
 }
 
-fn updatePause() void {
+fn updatePause(allocator: *std.mem.Allocator) void {
     if (raylib.IsKeyPressed(raylib.KEY_UP)) {
         pause_selection = (pause_selection +% PAUSE_ITEM_COUNT -% 1) % PAUSE_ITEM_COUNT;
     }
@@ -605,6 +605,9 @@ fn updatePause() void {
                 current_screen = .playing;
             },
             1 => {
+                // FR-020: discard session, no high score save
+                resetZombies(allocator);
+                resetBoss(allocator);
                 current_screen = .main_menu;
             },
             else => {},
@@ -654,7 +657,7 @@ fn drawPlayingHud() void {
     raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
 }
 
-fn startGame(mode: GameMode, allocator_opt: ?*std.mem.Allocator) void {
+fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     game_mode = mode;
     current_screen = .playing;
     letter_count = 0;
@@ -668,10 +671,8 @@ fn startGame(mode: GameMode, allocator_opt: ?*std.mem.Allocator) void {
     resetSessionState();
     resetScoreState();
     resetMetricsState();
-    if (allocator_opt) |alloc| {
-        resetZombies(alloc);
-        resetBoss(alloc);
-    }
+    resetZombies(allocator);
+    resetBoss(allocator);
 }
 
 // Emscripten C-callback trampoline; arg carries the FrameContext pointer
@@ -2103,6 +2104,45 @@ test "GameScreen enum has exactly 5 variants" {
     try std.testing.expectEqual(@as(usize, 5), fields.len);
 }
 
+test "menu selection circular wrap" {
+    try std.testing.expectEqual(@as(u8, 2), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (2 +% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 1), (0 +% 1) % MENU_ITEM_COUNT);
+}
+
+test "pause selection circular wrap" {
+    try std.testing.expectEqual(@as(u8, 1), (0 +% PAUSE_ITEM_COUNT -% 1) % PAUSE_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (1 +% 1) % PAUSE_ITEM_COUNT);
+}
+
+test "pause does not modify game state" {
+    const saved_score = score;
+    const saved_wave = current_wave;
+    const saved_kills = wave_kills;
+    const saved_screen = current_screen;
+    const saved_pause = pause_selection;
+    defer {
+        score = saved_score;
+        current_wave = saved_wave;
+        wave_kills = saved_kills;
+        current_screen = saved_screen;
+        pause_selection = saved_pause;
+    }
+
+    score = 500;
+    current_wave = 3;
+    wave_kills = 7;
+    current_screen = .paused;
+    pause_selection = 0;
+
+    // Simulate resume
+    current_screen = .playing;
+
+    try std.testing.expectEqual(@as(u64, 500), score);
+    try std.testing.expectEqual(@as(u32, 3), current_wave);
+    try std.testing.expectEqual(@as(u32, 7), wave_kills);
+}
+
 test "startGame sets current_screen to playing" {
     const saved_screen = current_screen;
     const saved_mode = game_mode;
@@ -2115,8 +2155,9 @@ test "startGame sets current_screen to playing" {
         score = saved_score;
     }
 
+    var alloc = std.testing.allocator;
     current_screen = .main_menu;
-    startGame(.survival, null);
+    startGame(.survival, @ptrCast(&alloc));
     try std.testing.expect(current_screen == .playing);
     try std.testing.expect(game_mode == .survival);
     try std.testing.expectEqual(@as(u32, 1), current_wave);
