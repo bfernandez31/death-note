@@ -18,16 +18,16 @@
 
 **Purpose**: No new project initialization needed — extending existing Zig project. This phase adds core data types and constants that all user stories depend on.
 
-- [ ] T001 Add `ZombieType` enum (`standard`, `runner`, `tank`) after existing type declarations in `src/main.zig`
-- [ ] T002 Add `zombie_type: ZombieType` field to `Zombie` struct (default `.standard`) in `src/main.zig`
-- [ ] T003 Add `SpawnWeights` and `NameWeights` structs in `src/main.zig`
-- [ ] T004 Add new named constants at module top in `src/main.zig`: `RUNNER_SPEED_MULTIPLIER` (1.8), `TANK_SPEED_MULTIPLIER` (0.5), `RUNNER_MAX_NAME_LEN` (5), `TANK_MIN_NAME_LEN` (8), `MAX_SPAWN_RETRIES` (10)
-- [ ] T005 Add `SPAWN_WEIGHT_TABLE` compile-time array (4 wave brackets) in `src/main.zig`
-- [ ] T006 Add `NAME_WEIGHT_TABLE` compile-time array (4 wave brackets) in `src/main.zig`
-- [ ] T007 Change `MAX_INPUT_CHARS` from 9 to 20 in `src/main.zig`
-- [ ] T008 Add helper functions `getSpeedMultiplier`, `getSpawnWeights`, `getNameWeights`, `selectZombieType`, `getZombieTint` in `src/main.zig`
-- [ ] T009 Add trap cluster state variables (`trap_cluster_group: ?usize`, `trap_cluster_remaining: u8`) as module-level globals in `src/main.zig`
-- [ ] T010 Add `prng: std.Random.DefaultPrng` module-level variable and initialize it in `main()` with `std.time.milliTimestamp()` seed in `src/main.zig`
+- [X] T001 Add `ZombieType` enum (`standard`, `runner`, `tank`) after existing type declarations in `src/main.zig`
+- [X] T002 Add `zombie_type: ZombieType` field to `Zombie` struct (default `.standard`) in `src/main.zig`
+- [X] T003 Add `SpawnWeights` and `NameWeights` structs in `src/main.zig`
+- [X] T004 Add new named constants at module top in `src/main.zig`: `RUNNER_SPEED_MULTIPLIER` (1.8), `TANK_SPEED_MULTIPLIER` (0.5), `RUNNER_MAX_NAME_LEN` (5), `TANK_MIN_NAME_LEN` (8), `MAX_SPAWN_RETRIES` (10)
+- [X] T005 Add `SPAWN_WEIGHT_TABLE` compile-time array (4 wave brackets) in `src/main.zig`
+- [X] T006 Add `NAME_WEIGHT_TABLE` compile-time array (4 wave brackets) in `src/main.zig`
+- [X] T007 Change `MAX_INPUT_CHARS` from 9 to 20 in `src/main.zig`
+- [X] T008 Add helper functions `getSpeedMultiplier`, `getSpawnWeights`, `getNameWeights`, `selectZombieType`, `getZombieTint` in `src/main.zig`
+- [X] T009 Add trap cluster state variables (`trap_cluster_group: ?usize`, `trap_cluster_remaining: u8`) as module-level globals in `src/main.zig`
+- [X] T010 Add `prng: std.Random.DefaultPrng` module-level variable and initialize it in `main()` with `std.time.milliTimestamp()` seed in `src/main.zig`
 
 **Checkpoint**: `zig build` compiles cleanly. `zig build test` passes (existing tests still green). Game runs unchanged — all zombies spawn as `.standard`.
 
@@ -39,23 +39,23 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T011 Create `src/name_lists.zig` with `NameCategory` enum, `TrapGroup` struct, and `NameSelection` struct
-- [ ] T012 Add `PrimaryNames` array (349+ entries, all 49 original names from `src/zombie_names.zig` included) in `src/name_lists.zig`
-- [ ] T013 Add `CompoundNames` array (30+ hyphenated names, each ≤20 chars, ASCII + hyphen only) in `src/name_lists.zig`
-- [ ] T014 Add `TrapGroups` array (15+ groups of 3–5 visually similar names) in `src/name_lists.zig`
-- [ ] T015 Implement `cstrLen` helper function in `src/name_lists.zig`
-- [ ] T016 Implement `selectName` function per contract (`specs/DEATHN-13-zombie-variety-and/contracts/name-lists-module.md`) in `src/name_lists.zig`
-- [ ] T017 Add `const name_lists = @import("name_lists.zig");` import to `src/main.zig`
+- [X] T011 Create `src/name_lists.zig` with `NameCategory` enum, `TrapGroup` struct, and `NameSelection` struct
+- [X] T012 Add `PrimaryNames` array (349+ entries, all 49 original names from `src/zombie_names.zig` included) in `src/name_lists.zig`
+- [X] T013 Add `CompoundNames` array (30+ hyphenated names, each ≤20 chars, ASCII + hyphen only) in `src/name_lists.zig`
+- [X] T014 Add `TrapGroups` array (15+ groups of 3–5 visually similar names) in `src/name_lists.zig`
+- [X] T015 Implement `cstrLen` helper function in `src/name_lists.zig`
+- [X] T016 Implement `selectName` function per contract (`specs/DEATHN-13-zombie-variety-and/contracts/name-lists-module.md`) in `src/name_lists.zig`
+- [X] T017 Add `const name_lists = @import("name_lists.zig");` import to `src/main.zig`
 
 ### Tests for Foundational Phase
 
-- [ ] T018 [P] Add compile-time test `"primary list size"` verifying PrimaryNames.len >= 349 in `src/name_lists.zig`
-- [ ] T019 [P] Add test `"all names ASCII"` scanning every name for bytes in [32, 125] in `src/name_lists.zig`
-- [ ] T020 [P] Add test `"compound names valid"` verifying each ≤20 chars, only [A-Za-z-] in `src/name_lists.zig`
-- [ ] T021 [P] Add test `"trap group sizes"` verifying each has 3–5 entries in `src/name_lists.zig`
-- [ ] T022 [P] Add test `"sufficient runner names"` counting names ≤5 chars ≥ 30 in `src/name_lists.zig`
-- [ ] T023 [P] Add test `"sufficient tank names"` counting names ≥8 chars ≥ 30 in `src/name_lists.zig`
-- [ ] T024 [P] Add test `"weight tables sum to 100"` for both SPAWN_WEIGHT_TABLE and NAME_WEIGHT_TABLE in `src/name_lists.zig` (import from main or validate inline)
+- [X] T018 [P] Add compile-time test `"primary list size"` verifying PrimaryNames.len >= 349 in `src/name_lists.zig`
+- [X] T019 [P] Add test `"all names ASCII"` scanning every name for bytes in [32, 125] in `src/name_lists.zig`
+- [X] T020 [P] Add test `"compound names valid"` verifying each ≤20 chars, only [A-Za-z-] in `src/name_lists.zig`
+- [X] T021 [P] Add test `"trap group sizes"` verifying each has 3–5 entries in `src/name_lists.zig`
+- [X] T022 [P] Add test `"sufficient runner names"` counting names ≤5 chars ≥ 30 in `src/name_lists.zig`
+- [X] T023 [P] Add test `"sufficient tank names"` counting names ≥8 chars ≥ 30 in `src/name_lists.zig`
+- [X] T024 [P] Add test `"weight tables sum to 100"` for both SPAWN_WEIGHT_TABLE and NAME_WEIGHT_TABLE in `src/name_lists.zig` (import from main or validate inline)
 
 **Checkpoint**: `zig build test` passes all new compile-time validations. `zig build` compiles with name_lists imported.
 
@@ -71,17 +71,17 @@
 
 **Extend existing test file `src/main.zig` (lines 1017–1645) with new test blocks:**
 
-- [ ] T025 [P] [US1] Add test `"ZombieType speed multipliers"` verifying getSpeedMultiplier returns 1.0/1.8/0.5 in `src/main.zig`
-- [ ] T026 [P] [US1] Add test `"spawn weight table wave brackets"` verifying getSpawnWeights returns correct weights for waves 1-3, 4-6, 7-10, 11+ in `src/main.zig`
-- [ ] T027 [P] [US1] Add test `"selectZombieType distribution"` seeding PRNG and verifying type selection matches weight distribution in `src/main.zig`
-- [ ] T028 [P] [US1] Add test `"zombie tint colors"` verifying getZombieTint returns WHITE/GREEN/BLUE per type in `src/main.zig`
+- [X] T025 [P] [US1] Add test `"ZombieType speed multipliers"` verifying getSpeedMultiplier returns 1.0/1.8/0.5 in `src/main.zig`
+- [X] T026 [P] [US1] Add test `"spawn weight table wave brackets"` verifying getSpawnWeights returns correct weights for waves 1-3, 4-6, 7-10, 11+ in `src/main.zig`
+- [X] T027 [P] [US1] Add test `"selectZombieType distribution"` seeding PRNG and verifying type selection matches weight distribution in `src/main.zig`
+- [X] T028 [P] [US1] Add test `"zombie tint colors"` verifying getZombieTint returns WHITE/GREEN/BLUE per type in `src/main.zig`
 
 ### Implementation for User Story 1
 
-- [ ] T029 [US1] Rewrite `spawnZombie` to accept `rng` parameter, select `ZombieType` via `selectZombieType(getSpawnWeights(current_wave), ...)`, and set `speed = fall_speed * getSpeedMultiplier(zombie_type)` in `src/main.zig`
-- [ ] T030 [US1] Update `spawnZombie` to call `name_lists.selectName(wave, type, active_names, forced_trap_group, rng)` — build `active_names` slice by scanning zombie slots in `src/main.zig`
-- [ ] T031 [US1] Update call site in `frame()` to pass module-level `prng` to `spawnZombie` in `src/main.zig`
-- [ ] T032 [US1] Update tint block in `drawZombies` (line 582–589) to use `getZombieTint(zomb.zombie_type)` with dying tint priority in `src/main.zig`
+- [X] T029 [US1] Rewrite `spawnZombie` to accept `rng` parameter, select `ZombieType` via `selectZombieType(getSpawnWeights(current_wave), ...)`, and set `speed = fall_speed * getSpeedMultiplier(zombie_type)` in `src/main.zig`
+- [X] T030 [US1] Update `spawnZombie` to call `name_lists.selectName(wave, type, active_names, forced_trap_group, rng)` — build `active_names` slice by scanning zombie slots in `src/main.zig`
+- [X] T031 [US1] Update call site in `frame()` to pass module-level `prng` to `spawnZombie` in `src/main.zig`
+- [X] T032 [US1] Update tint block in `drawZombies` (line 582–589) to use `getZombieTint(zomb.zombie_type)` with dying tint priority in `src/main.zig`
 
 **Checkpoint**: `zig build run` — Runners (green, fast) appear from wave 4, Tanks (blue, slow) from wave 7+. Speed differences visible. All zombies typed correctly.
 
@@ -95,17 +95,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T033 [P] [US2] Add test `"selectName anti-doublon"` passing all names as active, verifying null returned in `src/name_lists.zig`
-- [ ] T034 [P] [US2] Add test `"selectName length filtering"` verifying Runner gets ≤5 chars, Tank gets ≥8 chars in `src/name_lists.zig`
-- [ ] T035 [P] [US2] Add test `"hyphen accepted in input"` verifying key 45 passes the gate and matches in name comparison in `src/main.zig`
-- [ ] T036 [P] [US2] Update existing test `"input buffer bounds"` (line 1031) for new MAX_INPUT_CHARS=20 in `src/main.zig`
-- [ ] T037 [P] [US2] Update existing test `"getCurrentMaxInput returns correct limits"` (line 1168) to expect 20 instead of 9 in `src/main.zig`
+- [X] T033 [P] [US2] Add test `"selectName anti-doublon"` passing all names as active, verifying null returned in `src/name_lists.zig`
+- [X] T034 [P] [US2] Add test `"selectName length filtering"` verifying Runner gets ≤5 chars, Tank gets ≥8 chars in `src/name_lists.zig`
+- [X] T035 [P] [US2] Add test `"hyphen accepted in input"` verifying key 45 passes the gate and matches in name comparison in `src/main.zig`
+- [X] T036 [P] [US2] Update existing test `"input buffer bounds"` (line 1031) for new MAX_INPUT_CHARS=20 in `src/main.zig`
+- [X] T037 [P] [US2] Update existing test `"getCurrentMaxInput returns correct limits"` (line 1168) to expect 20 instead of 9 in `src/main.zig`
 
 ### Implementation for User Story 2
 
-- [ ] T038 [US2] Update text box width in `frame()` for 20-char input: change default from 225px to ~500px, recenter at `screen_width / 2.0 - 250.0` in `src/main.zig`
-- [ ] T039 [US2] Verify zombie name text (`DrawText` at line 606) renders correctly for longer compound names — adjust position if needed in `src/main.zig`
-- [ ] T040 [US2] Add test `"name weight table wave brackets"` verifying getNameWeights returns correct weights for waves 1-3, 4-7, 8-12, 13+ in `src/main.zig`
+- [X] T038 [US2] Update text box width in `frame()` for 20-char input: change default from 225px to ~500px, recenter at `screen_width / 2.0 - 250.0` in `src/main.zig`
+- [X] T039 [US2] Verify zombie name text (`DrawText` at line 606) renders correctly for longer compound names — adjust position if needed in `src/main.zig`
+- [X] T040 [US2] Add test `"name weight table wave brackets"` verifying getNameWeights returns correct weights for waves 1-3, 4-7, 8-12, 13+ in `src/main.zig`
 
 **Checkpoint**: `zig build run` — compound names like "Jean-Pierre" appear from wave 4+. Input box fits 20-char names. Hyphens type correctly.
 
@@ -119,11 +119,11 @@
 
 ### Tests for User Story 3
 
-- [ ] T041 [P] [US3] Add test `"anti-doublon retries exhaust gracefully"` verifying spawnZombie returns false when all names collide, in `src/main.zig`
+- [X] T041 [P] [US3] Add test `"anti-doublon retries exhaust gracefully"` verifying spawnZombie returns false when all names collide, in `src/main.zig`
 
 ### Implementation for User Story 3
 
-- [ ] T042 [US3] Verify anti-doublon is enforced in `spawnZombie` via `name_lists.selectName` active_names parameter (implemented in T030) — no additional code if selectName handles retries in `src/main.zig`
+- [X] T042 [US3] Verify anti-doublon is enforced in `spawnZombie` via `name_lists.selectName` active_names parameter (implemented in T030) — no additional code if selectName handles retries in `src/main.zig`
 
 **Checkpoint**: No duplicate names observed during play. Spawn defers silently when pool exhausted.
 
@@ -137,14 +137,14 @@
 
 ### Tests for User Story 4
 
-- [ ] T043 [P] [US4] Add test `"selectName trap group preference"` verifying forced_trap_group returns name from that group in `src/name_lists.zig`
-- [ ] T044 [P] [US4] Add test `"trap cluster state reset"` verifying `resetZombies` clears trap_cluster_group and trap_cluster_remaining in `src/main.zig`
+- [X] T043 [P] [US4] Add test `"selectName trap group preference"` verifying forced_trap_group returns name from that group in `src/name_lists.zig`
+- [X] T044 [P] [US4] Add test `"trap cluster state reset"` verifying `resetZombies` clears trap_cluster_group and trap_cluster_remaining in `src/main.zig`
 
 ### Implementation for User Story 4
 
-- [ ] T045 [US4] Add trap cluster logic to `spawnZombie`: when `selection.category == .trap`, set `trap_cluster_group` and `trap_cluster_remaining = random(1, 2)`; decrement on subsequent spawns in `src/main.zig`
-- [ ] T046 [US4] Update `resetZombies` to clear trap cluster state (`trap_cluster_group = null`, `trap_cluster_remaining = 0`) in `src/main.zig`
-- [ ] T047 [US4] Update game restart block (around line 392–406) to also clear trap cluster state in `src/main.zig`
+- [X] T045 [US4] Add trap cluster logic to `spawnZombie`: when `selection.category == .trap`, set `trap_cluster_group` and `trap_cluster_remaining = random(1, 2)`; decrement on subsequent spawns in `src/main.zig`
+- [X] T046 [US4] Update `resetZombies` to clear trap cluster state (`trap_cluster_group = null`, `trap_cluster_remaining = 0`) in `src/main.zig`
+- [X] T047 [US4] Update game restart block (around line 392–406) to also clear trap cluster state in `src/main.zig`
 
 **Checkpoint**: `zig build run` — trap name clusters appear in waves 8+. Similar names on screen simultaneously. Exact typing required.
 
@@ -158,12 +158,12 @@
 
 ### Tests for User Story 5
 
-- [ ] T048 [P] [US5] Add test `"runner names are short"` spawning multiple Runners and verifying all names ≤5 chars in `src/name_lists.zig`
-- [ ] T049 [P] [US5] Add test `"tank names are long"` spawning multiple Tanks and verifying all names ≥8 chars in `src/name_lists.zig`
+- [X] T048 [P] [US5] Add test `"runner names are short"` spawning multiple Runners and verifying all names ≤5 chars in `src/name_lists.zig`
+- [X] T049 [P] [US5] Add test `"tank names are long"` spawning multiple Tanks and verifying all names ≥8 chars in `src/name_lists.zig`
 
 ### Implementation for User Story 5
 
-- [ ] T050 [US5] Verify `selectName` length filtering is enforced per zombie_type (implemented in T016/T030) — validate with manual play-test in `src/name_lists.zig`
+- [X] T050 [US5] Verify `selectName` length filtering is enforced per zombie_type (implemented in T016/T030) — validate with manual play-test in `src/name_lists.zig`
 
 **Checkpoint**: Runners always have short names, Tanks always have long names. Standard zombies get any length.
 
@@ -173,10 +173,10 @@
 
 **Purpose**: Final verification, edge cases, and cleanup.
 
-- [ ] T051 Verify `zig build web` compiles without regression (no new deps, no new C imports)
-- [ ] T052 Run full test suite `zig build test` and fix any failures
-- [ ] T053 Manual play-test waves 1–15: verify all zombie types, name variety, trap clusters, input box, speed differences, dying tint, boss encounters unchanged
-- [ ] T054 Remove or deprecate `src/zombie_names.zig` import from `src/main.zig` if fully superseded by `name_lists.zig` (keep file for reference)
+- [X] T051 Verify `zig build web` compiles without regression (no new deps, no new C imports)
+- [X] T052 Run full test suite `zig build test` and fix any failures
+- [X] T053 Manual play-test waves 1–15: verify all zombie types, name variety, trap clusters, input box, speed differences, dying tint, boss encounters unchanged
+- [X] T054 Remove or deprecate `src/zombie_names.zig` import from `src/main.zig` if fully superseded by `name_lists.zig` (keep file for reference)
 
 ---
 
