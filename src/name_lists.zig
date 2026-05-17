@@ -1,5 +1,5 @@
 const std = @import("std");
-const main = @import("main.zig");
+const zt = @import("zombie_types.zig");
 
 pub const NameCategory = enum {
     primary,
@@ -192,13 +192,13 @@ pub const TrapGroups = [_]TrapGroup{
 
 pub fn selectName(
     wave: u32,
-    zombie_type: main.ZombieType,
+    zombie_type: zt.ZombieType,
     active_names: []const [*:0]const u8,
     forced_trap_group: ?usize,
     rng: std.Random,
 ) ?NameSelection {
     var retries: u32 = 0;
-    while (retries < main.MAX_SPAWN_RETRIES) : (retries += 1) {
+    while (retries < zt.MAX_SPAWN_RETRIES) : (retries += 1) {
         const selection = pickCandidate(wave, zombie_type, forced_trap_group, rng) orelse continue;
         if (!isDuplicate(selection.name, active_names)) return selection;
     }
@@ -207,7 +207,7 @@ pub fn selectName(
 
 fn pickCandidate(
     wave: u32,
-    zombie_type: main.ZombieType,
+    zombie_type: zt.ZombieType,
     forced_trap_group: ?usize,
     rng: std.Random,
 ) ?NameSelection {
@@ -225,7 +225,7 @@ fn pickCandidate(
         }
     }
 
-    const weights = main.getNameWeights(wave);
+    const weights = zt.getNameWeights(wave);
     const roll = rng.intRangeAtMost(u8, 0, 99);
 
     if (roll < weights.primary) {
@@ -237,7 +237,7 @@ fn pickCandidate(
     }
 }
 
-fn pickFromPrimary(zombie_type: main.ZombieType, rng: std.Random) ?NameSelection {
+fn pickFromPrimary(zombie_type: zt.ZombieType, rng: std.Random) ?NameSelection {
     var attempts: u32 = 0;
     while (attempts < 50) : (attempts += 1) {
         const idx = rng.intRangeAtMost(usize, 0, PrimaryNames.len - 1);
@@ -253,7 +253,7 @@ fn pickFromPrimary(zombie_type: main.ZombieType, rng: std.Random) ?NameSelection
     return null;
 }
 
-fn pickFromTrap(zombie_type: main.ZombieType, rng: std.Random) ?NameSelection {
+fn pickFromTrap(zombie_type: zt.ZombieType, rng: std.Random) ?NameSelection {
     const group_idx = rng.intRangeAtMost(usize, 0, TrapGroups.len - 1);
     const group = TrapGroups[group_idx];
     const candidate = group.names[rng.intRangeAtMost(usize, 0, group.names.len - 1)];
@@ -267,7 +267,7 @@ fn pickFromTrap(zombie_type: main.ZombieType, rng: std.Random) ?NameSelection {
     return pickFromPrimary(zombie_type, rng);
 }
 
-fn pickFromCompound(zombie_type: main.ZombieType, rng: std.Random) ?NameSelection {
+fn pickFromCompound(zombie_type: zt.ZombieType, rng: std.Random) ?NameSelection {
     if (zombie_type == .runner) return pickFromPrimary(zombie_type, rng);
     const idx = rng.intRangeAtMost(usize, 0, CompoundNames.len - 1);
     const candidate = CompoundNames[idx];
@@ -281,11 +281,11 @@ fn pickFromCompound(zombie_type: main.ZombieType, rng: std.Random) ?NameSelectio
     return pickFromPrimary(zombie_type, rng);
 }
 
-fn meetsLengthConstraint(n: [*:0]const u8, zombie_type: main.ZombieType) bool {
+fn meetsLengthConstraint(n: [*:0]const u8, zombie_type: zt.ZombieType) bool {
     const len = cstrLen(n);
     return switch (zombie_type) {
-        .runner => len <= main.RUNNER_MAX_NAME_LEN,
-        .tank => len >= main.TANK_MIN_NAME_LEN,
+        .runner => len <= zt.RUNNER_MAX_NAME_LEN,
+        .tank => len >= zt.TANK_MIN_NAME_LEN,
         .standard => true,
     };
 }
@@ -350,7 +350,7 @@ test "trap group sizes" {
 test "sufficient runner names" {
     var count: usize = 0;
     for (PrimaryNames) |n| {
-        if (cstrLen(n) <= main.RUNNER_MAX_NAME_LEN) count += 1;
+        if (cstrLen(n) <= zt.RUNNER_MAX_NAME_LEN) count += 1;
     }
     try std.testing.expect(count >= 30);
 }
@@ -358,17 +358,17 @@ test "sufficient runner names" {
 test "sufficient tank names" {
     var count: usize = 0;
     for (PrimaryNames) |n| {
-        if (cstrLen(n) >= main.TANK_MIN_NAME_LEN) count += 1;
+        if (cstrLen(n) >= zt.TANK_MIN_NAME_LEN) count += 1;
     }
     try std.testing.expect(count >= 30);
 }
 
 test "weight tables sum to 100" {
-    for (main.SPAWN_WEIGHT_TABLE) |w| {
+    for (zt.SPAWN_WEIGHT_TABLE) |w| {
         const sum = @as(u16, w.standard) + @as(u16, w.runner) + @as(u16, w.tank);
         try std.testing.expectEqual(@as(u16, 100), sum);
     }
-    for (main.NAME_WEIGHT_TABLE) |w| {
+    for (zt.NAME_WEIGHT_TABLE) |w| {
         const sum = @as(u16, w.primary) + @as(u16, w.trap) + @as(u16, w.compound);
         try std.testing.expectEqual(@as(u16, 100), sum);
     }
@@ -416,13 +416,13 @@ test "selectName length filtering" {
     var i: u32 = 0;
     while (i < 20) : (i += 1) {
         if (selectName(5, .runner, empty, null, rng)) |sel| {
-            try std.testing.expect(cstrLen(sel.name) <= main.RUNNER_MAX_NAME_LEN);
+            try std.testing.expect(cstrLen(sel.name) <= zt.RUNNER_MAX_NAME_LEN);
         }
     }
     i = 0;
     while (i < 20) : (i += 1) {
         if (selectName(8, .tank, empty, null, rng)) |sel| {
-            try std.testing.expect(cstrLen(sel.name) >= main.TANK_MIN_NAME_LEN);
+            try std.testing.expect(cstrLen(sel.name) >= zt.TANK_MIN_NAME_LEN);
         }
     }
 }
@@ -450,7 +450,7 @@ test "runner names are short" {
     var i: u32 = 0;
     while (i < 50) : (i += 1) {
         if (selectName(6, .runner, empty, null, rng)) |sel| {
-            try std.testing.expect(cstrLen(sel.name) <= main.RUNNER_MAX_NAME_LEN);
+            try std.testing.expect(cstrLen(sel.name) <= zt.RUNNER_MAX_NAME_LEN);
         }
     }
 }
@@ -462,7 +462,7 @@ test "tank names are long" {
     var i: u32 = 0;
     while (i < 50) : (i += 1) {
         if (selectName(9, .tank, empty, null, rng)) |sel| {
-            try std.testing.expect(cstrLen(sel.name) >= main.TANK_MIN_NAME_LEN);
+            try std.testing.expect(cstrLen(sel.name) >= zt.TANK_MIN_NAME_LEN);
         }
     }
 }

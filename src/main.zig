@@ -4,6 +4,19 @@ const raylib = @import("raylib.zig").c;
 
 const BossPhrases = @import("boss_phrases.zig").BossPhrases;
 const name_lists = @import("name_lists.zig");
+const zt = @import("zombie_types.zig");
+
+// Aliases for the moved shared declarations (see src/zombie_types.zig). Kept at file
+// scope so the rest of main.zig and its tests keep their original identifiers.
+const ZombieType = zt.ZombieType;
+const SpawnWeights = zt.SpawnWeights;
+const NameWeights = zt.NameWeights;
+const SPAWN_WEIGHT_TABLE = zt.SPAWN_WEIGHT_TABLE;
+const NAME_WEIGHT_TABLE = zt.NAME_WEIGHT_TABLE;
+const RUNNER_SPEED_MULTIPLIER = zt.RUNNER_SPEED_MULTIPLIER;
+const TANK_SPEED_MULTIPLIER = zt.TANK_SPEED_MULTIPLIER;
+const getSpawnWeights = zt.getSpawnWeights;
+const getNameWeights = zt.getNameWeights;
 
 const is_web = builtin.target.os.tag == .emscripten;
 
@@ -46,12 +59,6 @@ const SMOOTHING_FACTOR: f32 = 0.2;
 const CHARS_PER_WORD: f32 = 5.0;
 const SECONDS_PER_MINUTE: f32 = 60.0;
 
-pub const RUNNER_SPEED_MULTIPLIER: f32 = 1.8;
-pub const TANK_SPEED_MULTIPLIER: f32 = 0.5;
-pub const RUNNER_MAX_NAME_LEN: usize = 5;
-pub const TANK_MIN_NAME_LEN: usize = 8;
-pub const MAX_SPAWN_RETRIES: u32 = 10;
-
 const DYING_DURATION: f32 = 1.0;
 const STATS_TITLE_Y: c_int = 30;
 const STATS_TITLE_SIZE: c_int = 48;
@@ -64,38 +71,6 @@ const HIGHSCORE_FILENAME = "highscore.dat";
 // Native on-disk format for HighScoreRecord (see data-model.md §3.8). Field-by-field
 // serialization keeps the file size stable at 17 bytes regardless of in-memory padding.
 const HIGHSCORE_DISK_SIZE: usize = @sizeOf(u64) + @sizeOf(u32) + @sizeOf(u32) + @sizeOf(u8);
-
-pub const ZombieType = enum {
-    standard,
-    runner,
-    tank,
-};
-
-pub const SpawnWeights = struct {
-    standard: u8,
-    runner: u8,
-    tank: u8,
-};
-
-pub const NameWeights = struct {
-    primary: u8,
-    trap: u8,
-    compound: u8,
-};
-
-pub const SPAWN_WEIGHT_TABLE = [_]SpawnWeights{
-    .{ .standard = 100, .runner = 0, .tank = 0 },
-    .{ .standard = 70, .runner = 20, .tank = 10 },
-    .{ .standard = 50, .runner = 30, .tank = 20 },
-    .{ .standard = 40, .runner = 30, .tank = 30 },
-};
-
-pub const NAME_WEIGHT_TABLE = [_]NameWeights{
-    .{ .primary = 100, .trap = 0, .compound = 0 },
-    .{ .primary = 85, .trap = 10, .compound = 5 },
-    .{ .primary = 65, .trap = 20, .compound = 15 },
-    .{ .primary = 50, .trap = 25, .compound = 25 },
-};
 
 const WaveConfig = struct {
     target_wpm: u32,
@@ -222,20 +197,6 @@ fn getSpeedMultiplier(zombie_type: ZombieType) f32 {
         .runner => RUNNER_SPEED_MULTIPLIER,
         .tank => TANK_SPEED_MULTIPLIER,
     };
-}
-
-fn getSpawnWeights(wave: u32) SpawnWeights {
-    if (wave <= 3) return SPAWN_WEIGHT_TABLE[0];
-    if (wave <= 6) return SPAWN_WEIGHT_TABLE[1];
-    if (wave <= 10) return SPAWN_WEIGHT_TABLE[2];
-    return SPAWN_WEIGHT_TABLE[3];
-}
-
-pub fn getNameWeights(wave: u32) NameWeights {
-    if (wave <= 3) return NAME_WEIGHT_TABLE[0];
-    if (wave <= 7) return NAME_WEIGHT_TABLE[1];
-    if (wave <= 12) return NAME_WEIGHT_TABLE[2];
-    return NAME_WEIGHT_TABLE[3];
 }
 
 fn selectZombieType(weights: SpawnWeights, rng: std.Random) ZombieType {
