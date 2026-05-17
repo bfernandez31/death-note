@@ -191,6 +191,10 @@ var freeze_timer: f32 = 0.0;
 var shield_active: bool = false;
 const FREEZE_DURATION: f32 = 3.0;
 
+var zen_wpm_selection: u8 = 0;
+var zen_target_wpm: u32 = 50;
+const ZEN_WPM_TIERS = [_]u32{ 30, 50, 80 };
+
 const GameScreen = enum {
     main_menu,
     wpm_select,
@@ -282,7 +286,7 @@ fn frame(ctx: *FrameContext) void {
             updateMenu(ctx.allocator);
         },
         .wpm_select => {
-            updateWpmSelect();
+            updateWpmSelect(ctx.allocator);
         },
         .playing => {
             // Resize input box for boss mode
@@ -351,22 +355,32 @@ fn frame(ctx: *FrameContext) void {
                         name[letter_count] = '\x00';
                     }
 
-                    const wave_cfg = getWaveConfig(current_wave);
-
                     spawn_timer += raylib.GetFrameTime();
 
-                    if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size and boss == null) {
-                        const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
-                        if (spawned) {
-                            spawn_timer = 0.0;
-                            wave_spawned += 1;
+                    if (game_mode == .zen) {
+                        const zen_timing = deriveWaveTiming(zen_target_wpm);
+                        if (spawn_timer >= zen_timing.spawn_delay) {
+                            const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
+                            if (spawned) {
+                                spawn_timer = 0.0;
+                            }
+                        }
+                    } else {
+                        const wave_cfg = getWaveConfig(current_wave);
+                        if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size and boss == null) {
+                            const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
+                            if (spawned) {
+                                spawn_timer = 0.0;
+                                wave_spawned += 1;
+                            }
                         }
                     }
 
                     updateZombies(ctx.allocator);
 
-                    if (!is_dying) {
-                        if (game_mode == .survival and isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
+                    if (!is_dying and game_mode == .survival) {
+                        const wave_cfg = getWaveConfig(current_wave);
+                        if (isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
                             const threshold = (wave_cfg.pool_size + 1) / 2;
                             if (wave_kills >= threshold) {
                                 spawnBoss(ctx.allocator) catch {};
@@ -374,12 +388,12 @@ fn frame(ctx: *FrameContext) void {
                         }
 
                         updateBoss(ctx.allocator);
-                    }
 
-                    const boss_done = !isBossWave(current_wave) or (boss == null and boss_spawned_this_wave);
-                    if (!is_dying and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
-                        is_transitioning = true;
-                        transition_timer = WAVE_TRANSITION_DURATION;
+                        const boss_done = !isBossWave(current_wave) or (boss == null and boss_spawned_this_wave);
+                        if (!is_dying and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
+                            is_transitioning = true;
+                            transition_timer = WAVE_TRANSITION_DURATION;
+                        }
                     }
                 }
             }
@@ -605,12 +619,37 @@ fn drawMenu() void {
     drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM);
 }
 
-fn updateWpmSelect() void {
-    _ = .{};
+fn updateWpmSelect(allocator: *std.mem.Allocator) void {
+    const tier_count: u8 = @intCast(ZEN_WPM_TIERS.len);
+    if (raylib.IsKeyPressed(raylib.KEY_UP)) {
+        zen_wpm_selection = (zen_wpm_selection +% tier_count -% 1) % tier_count;
+    }
+    if (raylib.IsKeyPressed(raylib.KEY_DOWN)) {
+        zen_wpm_selection = (zen_wpm_selection +% 1) % tier_count;
+    }
+    if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
+        zen_target_wpm = ZEN_WPM_TIERS[zen_wpm_selection];
+        startGame(.zen, allocator);
+    }
+    if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
+        current_screen = .main_menu;
+    }
 }
 
 fn drawWpmSelect() void {
-    _ = .{};
+    drawCenteredTextShadow("SELECT WPM TARGET", 200, 40, CRT_FG);
+
+    const start_y: c_int = 400;
+    const spacing: c_int = 60;
+
+    for (ZEN_WPM_TIERS, 0..) |tier, i| {
+        const y = start_y + @as(c_int, @intCast(i)) * spacing;
+        const color = if (i == zen_wpm_selection) CRT_ACCENT else CRT_DIM;
+        var buf: [32]u8 = undefined;
+        const prefix: []const u8 = if (i == zen_wpm_selection) "> " else "  ";
+        const text = std.fmt.bufPrintZ(&buf, "{s}{d} WPM", .{ prefix, tier }) catch "???";
+        drawCenteredText(text.ptr, y, 30, color);
+    }
 }
 
 fn updatePause(allocator: *std.mem.Allocator) void {
@@ -626,7 +665,20 @@ fn updatePause(allocator: *std.mem.Allocator) void {
                 current_screen = .playing;
             },
             1 => {
-                // FR-020: discard session, no high score save
+                if (game_mode == .zen) {
+                    const avg_wpm = calculateAverageWpm();
+                    const acc: u8 = @intCast(calculateStatsAccuracy());
+                    if (avg_wpm > best_score.wpm or (avg_wpm == best_score.wpm and acc > best_score.accuracy)) {
+                        best_score = highscore.Record{
+                            .score = 0,
+                            .wave = 0,
+                            .wpm = avg_wpm,
+                            .accuracy = acc,
+                        };
+                        highscore.save(best_score);
+                    }
+                }
+                // FR-020: survival sessions discarded from pause don't save
                 resetZombies(allocator);
                 resetBoss(allocator);
                 current_screen = .main_menu;
@@ -654,6 +706,11 @@ fn drawPauseOverlay() void {
 }
 
 fn drawPlayingHud() void {
+    if (game_mode == .zen) {
+        drawZenHud();
+        return;
+    }
+
     const hud_cfg = getWaveConfig(current_wave);
     var hud_buf: [64]u8 = undefined;
     const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
@@ -703,6 +760,29 @@ fn drawPlayingHud() void {
             raylib.DrawText("SHIELD ARMED", SCORE_HUD_X, 80, METRICS_HUD_SIZE, CRT_WARN);
         }
     }
+}
+
+fn getFallSpeed() f32 {
+    if (game_mode == .zen) {
+        return deriveWaveTiming(zen_target_wpm).fall_speed;
+    }
+    return getWaveConfig(current_wave).fall_speed;
+}
+
+fn drawZenHud() void {
+    var target_buf: [32]u8 = undefined;
+    const target_text = std.fmt.bufPrintZ(&target_buf, "ZEN - {d} WPM target", .{zen_target_wpm}) catch "ZEN";
+    drawCenteredText(target_text.ptr, 10, 20, CRT_FG);
+
+    const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
+    var wpm_buf: [32]u8 = undefined;
+    const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
+    raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+
+    const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
+    var acc_buf: [32]u8 = undefined;
+    const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
+    raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
 }
 
 fn activatePowerUp(allocator: *std.mem.Allocator) void {
@@ -1039,7 +1119,7 @@ fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
             new_zombie.* = Zombie{
                 .x = x,
                 .y = 0.0,
-                .speed = getWaveConfig(current_wave).fall_speed * getSpeedMultiplier(zombie_type),
+                .speed = getFallSpeed() * getSpeedMultiplier(zombie_type),
                 .name = selection.name,
                 .is_active = true,
                 .frame = 0,
@@ -2377,4 +2457,25 @@ test "carrier glyph mapping per PowerUpType" {
         .shield => "+",
     };
     try std.testing.expectEqual(@as(u8, '+'), shield_glyph[0]);
+}
+
+test "ZEN_WPM_TIERS has 3 entries with correct values" {
+    try std.testing.expectEqual(@as(usize, 3), ZEN_WPM_TIERS.len);
+    try std.testing.expectEqual(@as(u32, 30), ZEN_WPM_TIERS[0]);
+    try std.testing.expectEqual(@as(u32, 50), ZEN_WPM_TIERS[1]);
+    try std.testing.expectEqual(@as(u32, 80), ZEN_WPM_TIERS[2]);
+}
+
+test "deriveWaveTiming produces valid timing for zen WPM targets" {
+    for (ZEN_WPM_TIERS) |wpm| {
+        const timing = deriveWaveTiming(wpm);
+        try std.testing.expect(timing.spawn_delay > 0);
+        try std.testing.expect(timing.fall_speed > 0);
+    }
+}
+
+test "zen WPM selection circular wrap" {
+    const tier_count: u8 = @intCast(ZEN_WPM_TIERS.len);
+    try std.testing.expectEqual(@as(u8, 2), (0 +% tier_count -% 1) % tier_count);
+    try std.testing.expectEqual(@as(u8, 0), (2 +% 1) % tier_count);
 }
