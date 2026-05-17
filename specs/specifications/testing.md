@@ -35,7 +35,7 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Twenty-six `test "..." {}` blocks exist in `src/main.zig`:
+**Current state**: Thirty-six or more `test "..." {}` blocks exist across `src/main.zig` and `src/name_lists.zig`:
 - `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
 - `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
 - `test "getWaveConfig returns correct values for wave 1"` — verifies wave 1 difficulty parameters
@@ -63,7 +63,29 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 - `test "accuracy zero input returns 100"` — with `correct_chars = 0` and `wrong_chars = 0`, calls `calculateTargetAccuracy()`, asserts result equals `100.0`
 - `test "smoothing convergence toward target WPM"` — sets `displayed_wpm = 0.0`, simulates multiple `updateMetrics`-style interpolation steps with a fixed target of `72.0`, verifies display value increases by 20% of the remaining gap each step
 
-All twenty-six are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
+Additional tests added in `src/main.zig` (DEATHN-13):
+- `test "ZombieType speed multipliers"` — verifies `getSpeedMultiplier` returns 1.0, 1.8, and 0.5 for standard, runner, tank
+- `test "spawn weight table wave brackets"` — verifies `getSpawnWeights` returns correct weights for wave ranges 1–3, 4–6, 7–10, and 11+
+- `test "name weight table wave brackets"` — verifies `getNameWeights` returns correct weights for wave ranges 1–3, 4–7, 8–12, and 13+
+- `test "selectZombieType distribution"` — seeds PRNG deterministically, verifies type selection follows weight distribution over N iterations
+- `test "zombie tint colors"` — verifies `getZombieTint` returns WHITE, GREEN, and BLUE for standard, runner, tank
+- `test "input buffer accepts 20 characters"` — verifies `MAX_INPUT_CHARS == 20` and the buffer can hold 20 printable characters
+- `test "hyphen accepted in input"` — verifies codepoint 45 (hyphen) passes the `(key >= 32) and (key <= 125)` gate
+- `test "trap cluster state reset"` — verifies `resetZombies` clears `trap_cluster_group` and `trap_cluster_remaining`
+
+Tests in `src/name_lists.zig` (discovered via transitive import from `src/main.zig`):
+- `test "primary list size"` — `PrimaryNames.len >= 349`
+- `test "all names ASCII"` — scans every primary name for bytes in [32, 125]
+- `test "compound names valid"` — each compound name is ≤20 chars and contains only [A-Za-z-]
+- `test "trap group sizes"` — each trap group has 3–5 entries
+- `test "sufficient runner names"` — count of names ≤5 chars ≥ 30
+- `test "sufficient tank names"` — count of names ≥8 chars ≥ 30
+- `test "selectName anti-doublon"` — passes all primary names as active, verifies `null` returned
+- `test "selectName length filtering"` — runner type receives name ≤5 chars; tank type receives name ≥8 chars
+- `test "selectName trap group preference"` — forced `trap_group_index` produces a name from that group
+- `test "weight tables sum to 100"` — compile-time validation that each `SpawnWeights` and `NameWeights` entry sums to 100
+
+All tests are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
 
 ---
 
@@ -74,7 +96,8 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(26 blocks — name match, input bounds, wave config×4, frame wrap,\nboss wave detection, boss threshold, boss input limit,\nboss phrase validity, buffer capacity, wave completion gate,\ncalculateScore cases, combo multiplier tiers, mismatch detection,\npopup pool recycling, score/combo reset,\ncircular buffer wrap, resetMetricsState,\nWPM sliding window, WPM early game, WPM zero input,\naccuracy 100/4, accuracy zero input, smoothing convergence)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(36+ blocks — name match, input bounds (20 chars), wave config×4, frame wrap,\nboss wave detection, boss threshold, boss input limit,\nboss phrase validity, buffer capacity, wave completion gate,\ncalculateScore cases, combo multiplier tiers, mismatch detection,\npopup pool recycling, score/combo reset,\ncircular buffer wrap, resetMetricsState,\nWPM sliding window, WPM early game, WPM zero input,\naccuracy 100/4, accuracy zero input, smoothing convergence,\nZombieType speed multipliers, spawn/name weight brackets,\ntype selection distribution, tint colors, hyphen input,\ntrap cluster reset, input buffer 20 chars)"]
+    UNIT_NAMELISTS["Unit tests\nsrc/name_lists.zig\n(10 blocks — primary list size, all-ASCII, compound validity,\ntrap group sizes, runner/tank name counts,\nanti-doublon, length filtering, trap group preference,\nweight table sum validation)"]
     UNIT_NAMES["Unit tests\nsrc/zombie_names.zig\n(0 blocks — reachable via @import)"]
     UNIT_PHRASES["Unit tests\nsrc/boss_phrases.zig\n(0 blocks — reachable via @import)"]
     RAYLIB_ZIG["src/raylib.zig\n(C interop wall — not unit-testable)"]
@@ -84,9 +107,11 @@ graph TB
     CMD --> ADD_TEST
     ADD_TEST --> RUN_ARTIFACT
     RUN_ARTIFACT --> UNIT_MAIN
+    RUN_ARTIFACT --> UNIT_NAMELISTS
     RUN_ARTIFACT --> UNIT_NAMES
     RUN_ARTIFACT --> UNIT_PHRASES
     UNIT_MAIN -.->|not testable in isolation| RAYLIB_ZIG
+    UNIT_NAMELISTS -.->|not testable in isolation| RAYLIB_ZIG
     INTEGRATION -.->|not feasible| RUN_ARTIFACT
     E2E -.->|not feasible| RUN_ARTIFACT
 ```
@@ -99,7 +124,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 26 | Pure-logic tests: name-match equality, input-buffer bounds, wave config (waves 1, 15, 16+), wave completion, frame wrap-around, boss wave detection, boss spawn threshold, boss input limit, boss phrase validity, buffer capacity, boss wave completion gate, score formula reference cases, combo multiplier tier boundaries, mismatch detection, popup pool circular recycling, score/combo state reset, circular buffer wrap, metrics state reset, WPM sliding window, WPM early game, WPM zero input, accuracy calculation, accuracy zero-input default, smoothing convergence |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 36+ | Pure-logic tests in `src/main.zig`: name-match equality, input-buffer bounds (20 chars), wave config, wave completion, frame wrap-around, boss detection, score/combo/WPM/accuracy, ZombieType speed multipliers, spawn/name weight tables, type selection distribution, tint colors, hyphen input, trap cluster reset. Tests in `src/name_lists.zig`: primary list size, ASCII validation, compound name validity, trap group sizes, runner/tank name count minimums, anti-doublon, length filtering, trap group preference, weight sum validation. |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 
@@ -115,7 +140,7 @@ Zig convention places `test "..." { ... }` blocks directly inside the module und
 
 ### Reachability from `src/main.zig`
 
-The `test_step` in `build.zig` specifies `src/main.zig` as the sole `root_source_file`. Zig only discovers test blocks in modules that are reachable (directly or transitively) from that root. `src/zombie_names.zig` is imported via `const ZombieNames = @import("zombie_names.zig").ZombieNames;` and `src/boss_phrases.zig` via `const BossPhrases = @import("boss_phrases.zig").BossPhrases;` — test blocks added to either are automatically discovered. `src/raylib.zig` is also imported, but its contents are a C-interop wall and not unit-testable.
+The `test_step` in `build.zig` specifies `src/main.zig` as the sole `root_source_file`. Zig only discovers test blocks in modules that are reachable (directly or transitively) from that root. `src/name_lists.zig` is imported via `const name_lists = @import("name_lists.zig");`, `src/zombie_names.zig` via `const ZombieNames = @import("zombie_names.zig").ZombieNames;`, and `src/boss_phrases.zig` via `const BossPhrases = @import("boss_phrases.zig").BossPhrases;` — test blocks in any of these are automatically discovered. `src/raylib.zig` is also imported, but its contents are a C-interop wall and not unit-testable.
 
 ### Keeping raylib out of testable helpers
 

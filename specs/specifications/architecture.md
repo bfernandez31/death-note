@@ -43,7 +43,8 @@ graph TB
     subgraph Application
         MAIN["src/main.zig\n(game loop, state, logic)"]
         RLIB["src/raylib.zig\n(C interop wrapper)"]
-        NAMES["src/zombie_names.zig\n(name data table)"]
+        NAMELISTS["src/name_lists.zig\n(expanded name data + selectName logic)"]
+        NAMES["src/zombie_names.zig\n(original 49-name table, superseded)"]
         PHRASES["src/boss_phrases.zig\n(boss phrase data table)"]
     end
 
@@ -58,8 +59,10 @@ graph TB
     end
 
     MAIN --> RLIB
+    MAIN --> NAMELISTS
     MAIN --> NAMES
     MAIN --> PHRASES
+    NAMELISTS --> MAIN
     RLIB --> RAYLIB_LIB
     RAYLIB_LIB --> WINDOW
     RAYLIB_LIB --> AUDIO
@@ -110,8 +113,9 @@ This codebase does not use a traditional layered architecture. All concerns coll
 | **Gameplay State** | `src/main.zig` (`updateZombies`, `updateBoss`, `spawnZombie`, `spawnBoss`, `resetZombies`, `resetBoss`; module-level globals) | Zombie and boss y-position advance, game-over detection, name/phrase-match comparison, spawn timer, pool management, boss priority, wave completion gate |
 | **Resources** | `src/main.zig`; `assets/` directory | Load/unload `zombie-hit.wav` and `z_spritesheet.png` once at startup; boss reuses both assets — no new resource loads |
 | **C Interop** | `src/raylib.zig` (lines 1–5) | Single `pub const c = @cImport(…)` aggregating `raylib.h`, `raymath.h`, `rlgl.h`; all raylib symbols are re-exported from this module |
-| **Name Data** | `src/zombie_names.zig` (line 1) | Compile-time array of 49 zero-terminated C string literals; no logic, no imports |
-| **Boss Phrase Data** | `src/boss_phrases.zig` (line 1) | Compile-time array of 10 zero-terminated C string literals (multi-word phrases ≤ 35 chars); no logic, no imports; follows `zombie_names.zig` pattern |
+| **Name Data** | `src/name_lists.zig` | Compile-time arrays `PrimaryNames` (349+), `CompoundNames` (31), `TrapGroups` (15); `selectName` function with wave-weighted category selection, type-based length filtering, and anti-doublon retry; test blocks for data validity |
+| **Boss Phrase Data** | `src/boss_phrases.zig` (line 1) | Compile-time array of 10 zero-terminated C string literals (multi-word phrases ≤ 35 chars); no logic, no imports |
+| **Legacy Name Data** | `src/zombie_names.zig` (line 1) | Original 49-name compile-time array; still imported but superseded by `name_lists.zig` for all regular zombie spawning |
 
 > **Note on collapse**: Because Zig does not enforce package boundaries within a binary in the way that multi-crate or multi-module systems do, every layer above is reachable from every other layer within `src/main.zig`. The walling of C interop into `src/raylib.zig` is the sole enforced boundary.
 
@@ -123,9 +127,9 @@ This codebase does not use a traditional layered architecture. All concerns coll
 |---|---|---|
 | **raylib** (commit `52f2a10db610d0e9f619fd7c521db08a876547d0`) | `build.zig.zon` lines 6–8; fetched from `https://github.com/raysan5/raylib/archive/52f2a10db610d0e9f619fd7c521db08a876547d0.tar.gz` | Window creation, input polling, 2D rendering, texture/sound loading and playback; linked as a static library via `exe.linkLibrary(raylib_dep.artifact("raylib"))` (`build.zig` line 42) |
 | **Zig standard library — `std.heap.page_allocator`** | Built-in; used at `src/main.zig` line 69 | Allocates and frees individual `Zombie` structs in `spawnZombie` / `resetZombies` |
-| **Zig standard library — `std.Random.DefaultPrng`** | Built-in; used at `src/main.zig` line 47 | Seeded from `std.time.milliTimestamp()`; generates random x-position and name index for each spawned zombie |
-| **Zig standard library — `std.mem.eql`** | Built-in; used at `src/main.zig` line 193 | Byte-for-byte comparison of typed input buffer slice against zombie name slice |
-| **Zig standard library — `std.time.milliTimestamp`** | Built-in; used at `src/main.zig` line 47 | Seeds the PRNG at startup |
+| **Zig standard library — `std.Random.DefaultPrng`** | Built-in; used at `src/main.zig` | Seeded from `std.c.clock_gettime(.REALTIME, …)` at startup (`std.time.milliTimestamp` was removed in Zig 0.16); used for zombie type selection (`selectZombieType`) and name selection (`name_lists.selectName`) |
+| **Zig standard library — `std.mem.eql`** | Built-in; used at `src/main.zig` | Byte-for-byte comparison of typed input buffer slice against zombie name slice |
+| **Zig standard library — `std.c`** | Built-in; used at `src/main.zig` | `std.c.clock_gettime` for PRNG seeding; `std.c.fopen`/`fread`/`fwrite` for native high score persistence (`std.fs` was removed in Zig 0.16) |
 | **OS window manager** | Platform (X11, Wayland, Win32, Cocoa) | Provides the native window surface that raylib's `InitWindow` targets |
 | **OS audio device** | Platform ALSA/PulseAudio/CoreAudio/XAudio | Provides the audio output that `raylib.InitAudioDevice` / `PlaySound` targets |
 | **Emscripten SDK** (`3.1.64`) | Build-time only; not linked into the native binary | Required for `zig build web`. Provides the `emcc` linker, `emscripten/emscripten.h` (for `emscripten_set_main_loop_arg`), Emscripten's JS runtime glue, and WebGL/OpenAL backends for browser deployment. Not present on `PATH` in a standard native dev environment. |
@@ -180,6 +184,7 @@ Animation is per-zombie mutable state (`frame: f32`, `animationTimer: f32` field
 graph LR
     MAIN["src/main.zig"]
     RLIB["src/raylib.zig"]
+    NAMELISTS["src/name_lists.zig"]
     NAMES["src/zombie_names.zig"]
     PHRASES["src/boss_phrases.zig"]
     CIMPORT["@cImport\n(raylib.h, raymath.h, rlgl.h)"]
@@ -187,8 +192,10 @@ graph LR
     BUILD["build.zig"]
 
     MAIN -->|"@import('raylib.zig')"| RLIB
+    MAIN -->|"@import('name_lists.zig')"| NAMELISTS
     MAIN -->|"@import('zombie_names.zig')"| NAMES
     MAIN -->|"@import('boss_phrases.zig')"| PHRASES
+    NAMELISTS -->|"@import('main.zig') for ZombieType"| MAIN
     RLIB -->|"pub const c = @cImport"| CIMPORT
     BUILD -->|"b.dependency('raylib')"| RAYLIB_DEP
     CIMPORT -.->|"headers from"| RAYLIB_DEP
