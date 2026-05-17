@@ -412,12 +412,12 @@ const HighScoreRecord = struct {
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 8 bytes | `score` (u64, native-endian) |
-| 8 | 4 bytes | `wave` (u32, native-endian) |
-| 12 | 4 bytes | `wpm` (u32, native-endian) |
+| 0 | 8 bytes | `score` (u64, little-endian) |
+| 8 | 4 bytes | `wave` (u32, little-endian) |
+| 12 | 4 bytes | `wpm` (u32, little-endian) |
 | 16 | 1 byte | `accuracy` (u8) |
 
-Total: `@sizeOf(HighScoreRecord)` = 17 bytes. On load, the file size is compared to `@sizeOf(HighScoreRecord)`; a mismatch treats the file as corrupt and defaults all fields to 0. Written via `std.c.fopen`/`std.c.fwrite`; read via `std.c.fopen`/`std.c.fread`.
+Total: `HIGHSCORE_DISK_SIZE` = 17 bytes. The on-disk format is independent of the in-memory struct layout: load/save serialize each field via `std.mem.readInt`/`writeInt` through a fixed 17-byte buffer (the in-memory `HighScoreRecord` is a normal Zig struct, so its `@sizeOf` may differ from the on-disk size due to alignment padding). On load, the read length is compared to `HIGHSCORE_DISK_SIZE`; a mismatch treats the file as corrupt and defaults all fields to 0. Written via `std.c.fopen`/`std.c.fwrite`; read via `std.c.fopen`/`std.c.fread`.
 
 **Web persistence (`localStorage`):**
 

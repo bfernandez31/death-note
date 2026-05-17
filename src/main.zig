@@ -49,10 +49,16 @@ const SECONDS_PER_MINUTE: f32 = 60.0;
 
 const DYING_DURATION: f32 = 1.0;
 const STATS_TITLE_Y: c_int = 30;
+const STATS_TITLE_SIZE: c_int = 48;
 const STATS_LINE_START_Y: c_int = 80;
 const STATS_LINE_SPACING: c_int = 35;
 const STATS_FONT_SIZE: c_int = 24;
+const STATS_RESTART_HINT_Y: c_int = 405;
+const STATS_RESTART_HINT_SIZE: c_int = 18;
 const HIGHSCORE_FILENAME = "highscore.dat";
+// Native on-disk format for HighScoreRecord (see data-model.md §3.8). Field-by-field
+// serialization keeps the file size stable at 17 bytes regardless of in-memory padding.
+const HIGHSCORE_DISK_SIZE: usize = @sizeOf(u64) + @sizeOf(u32) + @sizeOf(u32) + @sizeOf(u8);
 
 const WaveConfig = struct {
     target_wpm: u32,
@@ -243,22 +249,27 @@ fn frame(ctx: *FrameContext) void {
             }
         }
 
-        // Update zombies (may set is_game_over if a zombie reaches the bottom)
+        // Update zombies (may set is_dying if a zombie reaches the bottom). When that
+        // happens we must short-circuit the rest of the update phase so boss spawn,
+        // boss movement, and wave-completion detection do not run in the same frame
+        // the dying transition started.
         updateZombies(ctx.allocator);
 
-        if (isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
-            const threshold = (wave_cfg.pool_size + 1) / 2;
-            if (wave_kills >= threshold) {
-                spawnBoss(ctx.allocator) catch {};
+        if (!is_dying) {
+            if (isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
+                const threshold = (wave_cfg.pool_size + 1) / 2;
+                if (wave_kills >= threshold) {
+                    spawnBoss(ctx.allocator) catch {};
+                }
             }
+
+            updateBoss(ctx.allocator);
         }
 
-        updateBoss(ctx.allocator);
-
-        // Wave completion detection — guarded against is_game_over so a kill+death in the
-        // same frame does not silently start a wave transition behind the game-over screen.
+        // Wave completion detection — guarded against is_game_over/is_dying so a kill+death
+        // in the same frame does not silently start a wave transition behind the game-over screen.
         const boss_done = !isBossWave(current_wave) or (boss == null and boss_spawned_this_wave);
-        if (!is_game_over and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
+        if (!is_game_over and !is_dying and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
             is_transitioning = true;
             transition_timer = WAVE_TRANSITION_DURATION;
             combo_count = 0;
@@ -359,7 +370,7 @@ fn frame(ctx: *FrameContext) void {
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
 
     if (is_game_over) {
-        drawCenteredText("GAME OVER", STATS_TITLE_Y, 48, raylib.RED);
+        drawCenteredText("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, raylib.RED);
 
         var line_y: c_int = STATS_LINE_START_Y;
         drawCenteredStat("Wave reached: {d}", .{current_wave}, &line_y);
@@ -376,7 +387,7 @@ fn frame(ctx: *FrameContext) void {
         drawCenteredStat("Accuracy: {d}%", .{calculateStatsAccuracy()}, &line_y);
         drawCenteredStat("Kills: {d}", .{total_kills}, &line_y);
 
-        drawCenteredText("Press ENTER to restart", 405, 18, raylib.GRAY);
+        drawCenteredText("Press ENTER to restart", STATS_RESTART_HINT_Y, STATS_RESTART_HINT_SIZE, raylib.GRAY);
 
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
             is_game_over = false;
@@ -507,7 +518,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                 is_dying = true;
                 dying_timer = DYING_DURATION;
                 dying_zombie_index = i;
-                return;
+                break;
             }
 
             if (boss_protected) continue;
@@ -697,6 +708,9 @@ fn drawBoss() void {
             .height = @as(f32, @floatFromInt(zombie_texture.height)),
         };
 
+        // Boss-caused game-over uses a darker tint so the player sees a distinct visual cue
+        // during the dying transition (mirrors the red-tint logic for zombies in drawZombies).
+        const boss_tint: raylib.Color = if (is_dying and dying_zombie_index == null) BOSS_DARK_RED else raylib.RED;
         raylib.DrawTexturePro(
             zombie_texture,
             src_rect,
@@ -708,7 +722,7 @@ fn drawBoss() void {
             },
             raylib.Vector2{ .x = 0, .y = 0 },
             0.0,
-            raylib.RED,
+            boss_tint,
         );
 
         const boss_x: c_int = @intFromFloat(b.x);
@@ -915,37 +929,56 @@ fn calculateStatsAccuracy() u32 {
 fn loadHighScore() !HighScoreRecord {
     const fp = std.c.fopen(HIGHSCORE_FILENAME, "rb") orelse return error.FileNotFound;
     defer _ = std.c.fclose(fp);
-    var buf: [@sizeOf(HighScoreRecord)]u8 = undefined;
-    const n = std.c.fread(&buf, 1, @sizeOf(HighScoreRecord), fp);
-    if (n != @sizeOf(HighScoreRecord)) return error.InvalidSize;
-    return @as(*const HighScoreRecord, @ptrCast(@alignCast(&buf))).*;
+    var buf: [HIGHSCORE_DISK_SIZE]u8 = undefined;
+    const n = std.c.fread(&buf, 1, HIGHSCORE_DISK_SIZE, fp);
+    if (n != HIGHSCORE_DISK_SIZE) return error.InvalidSize;
+    return HighScoreRecord{
+        .score = std.mem.readInt(u64, buf[0..8], .little),
+        .wave = std.mem.readInt(u32, buf[8..12], .little),
+        .wpm = std.mem.readInt(u32, buf[12..16], .little),
+        .accuracy = buf[16],
+    };
 }
 
 fn saveHighScore(record: HighScoreRecord) !void {
     const fp = std.c.fopen(HIGHSCORE_FILENAME, "wb") orelse return error.AccessDenied;
     defer _ = std.c.fclose(fp);
-    const bytes = @as([*]const u8, @ptrCast(&record))[0..@sizeOf(HighScoreRecord)];
-    const n = std.c.fwrite(bytes.ptr, 1, @sizeOf(HighScoreRecord), fp);
-    if (n != @sizeOf(HighScoreRecord)) return error.InputOutput;
+    var buf: [HIGHSCORE_DISK_SIZE]u8 = undefined;
+    std.mem.writeInt(u64, buf[0..8], record.score, .little);
+    std.mem.writeInt(u32, buf[8..12], record.wave, .little);
+    std.mem.writeInt(u32, buf[12..16], record.wpm, .little);
+    buf[16] = record.accuracy;
+    const n = std.c.fwrite(&buf, 1, HIGHSCORE_DISK_SIZE, fp);
+    if (n != HIGHSCORE_DISK_SIZE) return error.InputOutput;
 }
 
+// Reads a numeric field from localStorage. Returns u64 (not c_int) by going through
+// emscripten_run_script_string so scores above 2^31-1 are preserved instead of being
+// truncated to a negative c_int and clamped to 0.
 fn readHighScoreField(field: []const u8) u64 {
     var buf: [256]u8 = undefined;
     const js = std.fmt.bufPrintZ(
         &buf,
-        "try{{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.{s}?d.{s}:0}}catch(e){{0}}",
-        .{ field, field },
+        "(function(){{try{{var d=JSON.parse(localStorage.getItem('death-note.highscore'));return d&&typeof d.{s}==='number'&&isFinite(d.{s})?String(Math.max(0,Math.floor(d.{s}))):'0'}}catch(e){{return '0'}}}})()",
+        .{ field, field, field },
     ) catch return 0;
-    const v = raylib.emscripten_run_script_int(js.ptr);
-    return if (v >= 0) @intCast(v) else 0;
+    const cstr = raylib.emscripten_run_script_string(js.ptr) orelse return 0;
+    var len: usize = 0;
+    while (cstr[len] != 0) : (len += 1) {}
+    return std.fmt.parseInt(u64, cstr[0..len], 10) catch 0;
 }
 
 fn loadHighScoreWeb() HighScoreRecord {
+    // Clamp untrusted localStorage values before downcasting; raw @intCast traps on
+    // out-of-range inputs and would crash the web build on corrupt/tampered storage.
+    const wave_v = readHighScoreField("wave");
+    const wpm_v = readHighScoreField("wpm");
+    const acc_v = readHighScoreField("accuracy");
     return HighScoreRecord{
         .score = readHighScoreField("score"),
-        .wave = @intCast(readHighScoreField("wave")),
-        .wpm = @intCast(readHighScoreField("wpm")),
-        .accuracy = @intCast(readHighScoreField("accuracy")),
+        .wave = if (wave_v > std.math.maxInt(u32)) 0 else @intCast(wave_v),
+        .wpm = if (wpm_v > std.math.maxInt(u32)) 0 else @intCast(wpm_v),
+        .accuracy = if (acc_v > 100) 0 else @intCast(acc_v),
     };
 }
 
@@ -1315,11 +1348,7 @@ test "restart resets session state but preserves best_score" {
     dying_zombie_index = 3;
     is_new_high_score = true;
 
-    total_kills = 0;
-    is_dying = false;
-    dying_timer = 0.0;
-    dying_zombie_index = null;
-    is_new_high_score = false;
+    resetSessionState();
 
     try std.testing.expectEqual(@as(u32, 0), total_kills);
     try std.testing.expect(!is_dying);
@@ -1578,10 +1607,9 @@ test "accuracy edge case zero input stats" {
     try std.testing.expectEqual(@as(u32, 0), calculateStatsAccuracy());
 }
 
-test "HighScoreRecord struct size" {
-    try std.testing.expectEqual(@as(usize, @sizeOf(HighScoreRecord)), @sizeOf(HighScoreRecord));
-    try std.testing.expect(@sizeOf(HighScoreRecord) > 0);
-    try std.testing.expect(@sizeOf(HighScoreRecord) <= 24);
+test "HighScoreRecord disk size" {
+    // FR-011 / ARD-2 mandate a fixed 17-byte on-disk format for highscore.dat.
+    try std.testing.expectEqual(@as(usize, 17), HIGHSCORE_DISK_SIZE);
 }
 
 test "emscripten persistence branch compiles" {

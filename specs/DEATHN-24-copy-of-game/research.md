@@ -22,9 +22,9 @@ All tests are in `src/main.zig` as `test "..." { ... }` blocks (Zig convention).
 
 ### U-1: How to persist binary data from Zig
 
-- **Decision**: Use `std.fs.cwd().createFile` / `openFile` with `std.fs.File.writeAll` / `readAll` for native. The `highscore.dat` file is a fixed-size struct written as raw bytes.
-- **Rationale**: Zig's `std.fs` provides all needed file I/O. `@bitSizeOf(HighScoreRecord)` gives the exact expected size for corruption validation (FR-011).
-- **Alternatives considered**: JSON text file (simpler but inconsistent with spec FR-008 which mandates binary); `std.io.Writer` streaming (unnecessary complexity for a fixed-size write).
+- **Decision**: Use `std.c.fopen`/`fread`/`fwrite` for native I/O, writing the record field-by-field through a 17-byte buffer (`std.mem.writeInt`/`readInt` with little-endian byte order). `HighScoreRecord` itself stays a normal Zig struct (in-memory padding is not load-bearing); the on-disk size is a separate `HIGHSCORE_DISK_SIZE = 17` constant.
+- **Rationale**: Zig 0.16 removed the `std.fs` APIs we originally planned to use, so the implementation switched to `std.c` libc bindings. Field-by-field serialization decouples the on-disk format from in-memory struct padding, keeping the documented 17-byte layout stable regardless of how Zig lays out the struct (FR-011 / ARD-2).
+- **Alternatives considered**: JSON text file (simpler but inconsistent with spec FR-008 which mandates binary); raw `@ptrCast` of the struct (depends on Zig padding, produces a 24-byte file with default layout); `extern struct` (deterministic but still 24 bytes due to u64 alignment); `packed struct` (would be 17 bytes but constrains the in-memory type to bit-packing semantics).
 
 ### U-2: How to access localStorage from wasm32-emscripten
 
