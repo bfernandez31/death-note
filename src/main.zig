@@ -44,6 +44,13 @@ const SMOOTHING_FACTOR: f32 = 0.2;
 const CHARS_PER_WORD: f32 = 5.0;
 const SECONDS_PER_MINUTE: f32 = 60.0;
 
+const DYING_DURATION: f32 = 1.0;
+const STATS_TITLE_Y: c_int = 30;
+const STATS_LINE_START_Y: c_int = 80;
+const STATS_LINE_SPACING: c_int = 35;
+const STATS_FONT_SIZE: c_int = 24;
+const HIGHSCORE_FILENAME = "highscore.dat";
+
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
@@ -100,6 +107,12 @@ var elapsed_time: f32 = 0.0;
 var displayed_wpm: f32 = 0.0;
 var displayed_accuracy: f32 = 100.0;
 
+var total_kills: u32 = 0;
+var is_dying: bool = false;
+var dying_timer: f32 = 0.0;
+var dying_zombie_index: ?usize = null;
+var best_score: HighScoreRecord = .{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 };
+
 // Define the Zombie structure
 const Zombie = struct {
     x: f32,
@@ -117,6 +130,13 @@ const ScorePopup = struct {
     points: u64,
     timer: f32,
     active: bool,
+};
+
+const HighScoreRecord = struct {
+    score: u64,
+    wave: u32,
+    wpm: u32,
+    accuracy: u8,
 };
 
 // Array to hold zombie pointers
@@ -471,6 +491,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                 letter_count = 0;
                 name[letter_count] = '\x00';
                 wave_kills += 1;
+                total_kills += 1;
                 raylib.PlaySound(zombie_kill_sound);
             }
         }
@@ -592,6 +613,7 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
             boss = null;
             letter_count = 0;
             name[0] = '\x00';
+            total_kills += 1;
             raylib.PlaySound(zombie_kill_sound);
         }
     }
@@ -1303,6 +1325,18 @@ test "accuracy zero input returns 100" {
 
     const result = calculateTargetAccuracy();
     try std.testing.expectApproxEqAbs(@as(f32, 100.0), result, 0.001);
+}
+
+test "total_kills increments correctly" {
+    const saved = total_kills;
+    defer total_kills = saved;
+
+    total_kills = 0;
+    try std.testing.expectEqual(@as(u32, 0), total_kills);
+    total_kills += 1;
+    try std.testing.expectEqual(@as(u32, 1), total_kills);
+    total_kills += 1;
+    try std.testing.expectEqual(@as(u32, 2), total_kills);
 }
 
 test "smoothing convergence toward target WPM" {

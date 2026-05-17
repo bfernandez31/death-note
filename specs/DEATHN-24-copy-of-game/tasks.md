@@ -23,8 +23,8 @@
 
 **Purpose**: Declare new types, constants, and shared state needed by all user stories
 
-- [ ] T001 Declare `HighScoreRecord` struct (fields: `score: u64`, `wave: u32`, `wpm: u32`, `accuracy: u8`) after existing `ScorePopup` struct in `src/main.zig`
-- [ ] T002 Declare named constants for stats screen layout and persistence in `src/main.zig`: `DYING_DURATION: f32 = 1.0`, `STATS_TITLE_Y: c_int = 30`, `STATS_LINE_START_Y: c_int = 80`, `STATS_LINE_SPACING: c_int = 35`, `STATS_FONT_SIZE: c_int = 24`, `HIGHSCORE_FILENAME = "highscore.dat"`
+- [X] T001 Declare `HighScoreRecord` struct (fields: `score: u64`, `wave: u32`, `wpm: u32`, `accuracy: u8`) after existing `ScorePopup` struct in `src/main.zig`
+- [X] T002 Declare named constants for stats screen layout and persistence in `src/main.zig`: `DYING_DURATION: f32 = 1.0`, `STATS_TITLE_Y: c_int = 30`, `STATS_LINE_START_Y: c_int = 80`, `STATS_LINE_SPACING: c_int = 35`, `STATS_FONT_SIZE: c_int = 24`, `HIGHSCORE_FILENAME = "highscore.dat"`
 
 ---
 
@@ -34,9 +34,9 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T003 Declare new module-level state variables near existing state block (~line 76-101) in `src/main.zig`: `total_kills: u32 = 0`, `is_dying: bool = false`, `dying_timer: f32 = 0.0`, `dying_zombie_index: ?usize = null`, `best_score: HighScoreRecord = .{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 }`
-- [ ] T004 Increment `total_kills` in `updateZombies` (on regular zombie kill, after `wave_kills += 1`) and in `updateBoss` (on boss kill, after `raylib.PlaySound`) in `src/main.zig`
-- [ ] T005 Extend existing `resetScoreState` test to verify `total_kills` increments correctly in `src/main.zig`
+- [X] T003 Declare new module-level state variables near existing state block (~line 76-101) in `src/main.zig`: `total_kills: u32 = 0`, `is_dying: bool = false`, `dying_timer: f32 = 0.0`, `dying_zombie_index: ?usize = null`, `best_score: HighScoreRecord = .{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 }`
+- [X] T004 Increment `total_kills` in `updateZombies` (on regular zombie kill, after `wave_kills += 1`) and in `updateBoss` (on boss kill, after `raylib.PlaySound`) in `src/main.zig`
+- [X] T005 Extend existing `resetScoreState` test to verify `total_kills` increments correctly in `src/main.zig`
 
 **Checkpoint**: Foundation ready — user story implementation can now begin
 
