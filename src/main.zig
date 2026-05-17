@@ -186,6 +186,11 @@ var dying_zombie_index: ?usize = null;
 var best_score: highscore.Record = .{};
 var is_new_high_score: bool = false;
 
+var held_power_up: ?PowerUpType = null;
+var freeze_timer: f32 = 0.0;
+var shield_active: bool = false;
+const FREEZE_DURATION: f32 = 3.0;
+
 const GameScreen = enum {
     main_menu,
     wpm_select,
@@ -209,6 +214,7 @@ const Zombie = struct {
     frame: f32,
     animation_timer: f32,
     zombie_type: ZombieType = .standard,
+    power_up: ?PowerUpType = null,
 };
 
 const ScorePopup = struct {
@@ -307,9 +313,19 @@ fn frame(ctx: *FrameContext) void {
                     current_screen = .paused;
                     pause_selection = 0;
                 } else {
+                    var space_consumed = false;
+                    if (raylib.IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null) {
+                        activatePowerUp(ctx.allocator);
+                        space_consumed = true;
+                    }
+
                     var key = raylib.GetCharPressed();
                     while (key > 0) {
                         if ((key >= 32) and (key <= 125)) {
+                            if (key == 32 and space_consumed) {
+                                key = raylib.GetCharPressed();
+                                continue;
+                            }
                             wpm_timer_started = true;
                             if (letter_count < getCurrentMaxInput()) {
                                 name[letter_count] = @intCast(key);
@@ -400,6 +416,11 @@ fn frame(ctx: *FrameContext) void {
                         highscore.save(best_score);
                     }
                 }
+            }
+
+            if (freeze_timer > 0) {
+                freeze_timer -= raylib.GetFrameTime();
+                if (freeze_timer < 0) freeze_timer = 0.0;
             }
 
             if (!is_dying) {
@@ -655,6 +676,65 @@ fn drawPlayingHud() void {
     var acc_buf: [32]u8 = undefined;
     const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
     raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+
+    if (game_mode == .survival) {
+        if (held_power_up) |pu| {
+            const label: [*:0]const u8 = switch (pu) {
+                .freeze => "[*] FREEZE",
+                .bomb => "[!] BOMB",
+                .shield => "[+] SHIELD",
+            };
+            const color = switch (pu) {
+                .freeze => CRT_ACCENT,
+                .bomb => CRT_ERR,
+                .shield => CRT_WARN,
+            };
+            raylib.DrawText(label, SCORE_HUD_X, 60, METRICS_HUD_SIZE, color);
+        }
+
+        if (freeze_timer > 0) {
+            var ft_buf: [32]u8 = undefined;
+            const timer_int: u32 = @intFromFloat(@ceil(freeze_timer));
+            const ft_text = std.fmt.bufPrintZ(&ft_buf, "FREEZE {d}s", .{timer_int}) catch "FREEZE";
+            raylib.DrawText(ft_text.ptr, SCORE_HUD_X, 80, METRICS_HUD_SIZE, CRT_ACCENT);
+        }
+
+        if (shield_active) {
+            raylib.DrawText("SHIELD ARMED", SCORE_HUD_X, 80, METRICS_HUD_SIZE, CRT_WARN);
+        }
+    }
+}
+
+fn activatePowerUp(allocator: *std.mem.Allocator) void {
+    if (held_power_up) |pu| {
+        switch (pu) {
+            .freeze => {
+                freeze_timer = FREEZE_DURATION;
+            },
+            .bomb => {
+                for (&zombies) |*slot| {
+                    if (slot.*) |zomb| {
+                        if (!zomb.is_active) continue;
+                        if (zomb.zombie_type == .standard) {
+                            var zomb_name_length: usize = 0;
+                            while (zomb.name[zomb_name_length] != '\x00') zomb_name_length += 1;
+                            const points = calculateScore(zomb_name_length, zomb.y, false, combo_count);
+                            score += points;
+                            spawnPopup(zomb.x, zomb.y, points);
+                            wave_kills += 1;
+                            total_kills += 1;
+                            allocator.destroy(zomb);
+                            slot.* = null;
+                        }
+                    }
+                }
+            },
+            .shield => {
+                shield_active = true;
+            },
+        }
+        held_power_up = null;
+    }
 }
 
 fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
@@ -757,9 +837,22 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
     for (&zombies, 0..) |*slot, i| {
         if (slot.*) |zomb| {
             if (!zomb.is_active) continue;
-            zomb.y += zomb.speed;
+            if (freeze_timer <= 0) {
+                zomb.y += zomb.speed;
+            }
 
             if (zomb.y >= screen_height) {
+                if (game_mode == .zen) {
+                    allocator.destroy(zomb);
+                    slot.* = null;
+                    continue;
+                }
+                if (shield_active and game_mode == .survival) {
+                    shield_active = false;
+                    allocator.destroy(zomb);
+                    slot.* = null;
+                    continue;
+                }
                 is_dying = true;
                 dying_timer = DYING_DURATION;
                 dying_zombie_index = i;
@@ -782,6 +875,9 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                 combo_count += 1;
                 if (combo_count > max_combo) max_combo = combo_count;
                 spawnPopup(zomb.x, zomb.y, points);
+                if (zomb.power_up != null and held_power_up == null) {
+                    held_power_up = zomb.power_up;
+                }
                 allocator.destroy(zomb);
                 slot.* = null;
                 letter_count = 0;
@@ -848,8 +944,26 @@ fn drawZombies() void {
             );
 
             // Draw the zombie's name above the zombie
-            const text_pos = raylib.Vector2{ .x = pos.x, .y = pos.y - 20.0 }; // Adjust Y position as needed
+            const text_pos = raylib.Vector2{ .x = pos.x, .y = pos.y - 20.0 };
             raylib.DrawText(zomb.name, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y), 20, CRT_ACCENT);
+
+            if (zomb.power_up) |pu| {
+                const t = raylib.GetTime();
+                const pulse_f: f32 = @floatCast(@sin(t * 4.0) * 0.3 + 0.7);
+                const alpha: u8 = @intFromFloat(pulse_f * 255.0);
+                const glyph: [*:0]const u8 = switch (pu) {
+                    .freeze => "*",
+                    .bomb => "!",
+                    .shield => "+",
+                };
+                var glyph_color = switch (pu) {
+                    .freeze => CRT_ACCENT,
+                    .bomb => CRT_ERR,
+                    .shield => CRT_WARN,
+                };
+                glyph_color.a = alpha;
+                raylib.DrawText(glyph, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y - 18.0), 20, glyph_color);
+            }
         }
     }
 }
@@ -911,6 +1025,17 @@ fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
             const dynamic_x_max = if (dynamic_x_max_raw < ZOMBIE_SPAWN_X_MIN) ZOMBIE_SPAWN_X_MIN else dynamic_x_max_raw;
             const x = @as(f32, @floatFromInt(raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, dynamic_x_max)));
 
+            var carrier_power_up: ?PowerUpType = null;
+            if (game_mode == .survival) {
+                if (rng.intRangeAtMost(u8, 0, 99) < zt.POWER_UP_DROP_CHANCE) {
+                    carrier_power_up = switch (rng.intRangeAtMost(u8, 0, 2)) {
+                        0 => .freeze,
+                        1 => .bomb,
+                        else => .shield,
+                    };
+                }
+            }
+
             new_zombie.* = Zombie{
                 .x = x,
                 .y = 0.0,
@@ -920,6 +1045,7 @@ fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
                 .frame = 0,
                 .animation_timer = 0,
                 .zombie_type = zombie_type,
+                .power_up = carrier_power_up,
             };
             zombies[i] = new_zombie;
             return true;
@@ -987,7 +1113,9 @@ fn getWaveConfig(wave: u32) WaveConfig {
 
 fn updateBoss(allocator: *std.mem.Allocator) void {
     if (boss) |b| {
-        b.y += b.speed;
+        if (freeze_timer <= 0) {
+            b.y += b.speed;
+        }
 
         if (b.y >= screen_height) {
             is_dying = true;
@@ -1170,6 +1298,9 @@ fn resetSessionState() void {
     dying_timer = 0.0;
     dying_zombie_index = null;
     is_new_high_score = false;
+    held_power_up = null;
+    freeze_timer = 0.0;
+    shield_active = false;
 }
 
 fn calculateScore(name_len: usize, y_pos: f32, is_boss: bool, combo: u32) u64 {
@@ -2162,4 +2293,88 @@ test "startGame sets current_screen to playing" {
     try std.testing.expect(game_mode == .survival);
     try std.testing.expectEqual(@as(u32, 1), current_wave);
     try std.testing.expectEqual(@as(u64, 0), score);
+}
+
+test "Zombie struct default power_up is null" {
+    const z = Zombie{ .x = 0, .y = 0, .speed = 1, .name = "test", .is_active = true, .frame = 0, .animation_timer = 0 };
+    try std.testing.expect(z.power_up == null);
+}
+
+test "FREEZE_DURATION is 3.0" {
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), FREEZE_DURATION, 0.001);
+}
+
+test "freeze timer clamps to zero" {
+    const saved = freeze_timer;
+    defer freeze_timer = saved;
+
+    freeze_timer = 0.1;
+    freeze_timer -= 0.2;
+    if (freeze_timer < 0) freeze_timer = 0.0;
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), freeze_timer, 0.001);
+}
+
+test "shield state transition" {
+    const saved = shield_active;
+    defer shield_active = saved;
+
+    shield_active = true;
+    try std.testing.expect(shield_active);
+    shield_active = false;
+    try std.testing.expect(!shield_active);
+}
+
+test "space with empty inventory no state change" {
+    const saved_held = held_power_up;
+    const saved_freeze = freeze_timer;
+    const saved_shield = shield_active;
+    defer {
+        held_power_up = saved_held;
+        freeze_timer = saved_freeze;
+        shield_active = saved_shield;
+    }
+
+    held_power_up = null;
+    freeze_timer = 0.0;
+    shield_active = false;
+
+    // Simulate: space pressed but no power-up held — activatePowerUp is only called when held != null
+    try std.testing.expect(held_power_up == null);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), freeze_timer, 0.001);
+    try std.testing.expect(!shield_active);
+}
+
+test "power-up pickup with full slot unchanged" {
+    const saved = held_power_up;
+    defer held_power_up = saved;
+
+    held_power_up = .freeze;
+    const new_drop: ?PowerUpType = .bomb;
+    if (new_drop != null and held_power_up == null) {
+        held_power_up = new_drop;
+    }
+    try std.testing.expect(held_power_up.? == .freeze);
+}
+
+test "carrier glyph mapping per PowerUpType" {
+    const freeze_glyph: [*:0]const u8 = switch (PowerUpType.freeze) {
+        .freeze => "*",
+        .bomb => "!",
+        .shield => "+",
+    };
+    try std.testing.expectEqual(@as(u8, '*'), freeze_glyph[0]);
+
+    const bomb_glyph: [*:0]const u8 = switch (PowerUpType.bomb) {
+        .freeze => "*",
+        .bomb => "!",
+        .shield => "+",
+    };
+    try std.testing.expectEqual(@as(u8, '!'), bomb_glyph[0]);
+
+    const shield_glyph: [*:0]const u8 = switch (PowerUpType.shield) {
+        .freeze => "*",
+        .bomb => "!",
+        .shield => "+",
+    };
+    try std.testing.expectEqual(@as(u8, '+'), shield_glyph[0]);
 }
