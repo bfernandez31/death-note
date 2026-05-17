@@ -425,32 +425,6 @@ fn frame(ctx: *FrameContext) void {
         CRT_BG,
     );
 
-    // HUD: wave number, target WPM, kill progress (not shown during game-over)
-    if (!is_game_over) {
-        const hud_cfg = getWaveConfig(current_wave);
-        var hud_buf: [64]u8 = undefined;
-        const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
-        drawCenteredText(hud_text.ptr, 10, 20, CRT_FG);
-
-        var score_buf: [32]u8 = undefined;
-        const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d:0>6}", .{score}) catch "Score: ?";
-        raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, CRT_FG);
-
-        var combo_buf: [32]u8 = undefined;
-        const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
-        raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
-
-        const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
-        var wpm_buf: [32]u8 = undefined;
-        const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
-        raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
-
-        const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
-        var acc_buf: [32]u8 = undefined;
-        const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
-        raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
-    }
-
     raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
     const border_color = if (ctx.mouse_on_text) CRT_WARN else CRT_FG;
     raylib.DrawRectangleLines(
@@ -535,6 +509,34 @@ fn frame(ctx: *FrameContext) void {
     }
 
     drawCrtOverlay();
+
+    // HUD draws AFTER the overlay so the vignette (alpha 60-90 black at the screen
+    // edges) doesn't dim the corner-anchored text into illegibility.
+    if (!is_game_over) {
+        const hud_cfg = getWaveConfig(current_wave);
+        var hud_buf: [64]u8 = undefined;
+        const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
+        drawCenteredText(hud_text.ptr, 10, 20, CRT_FG);
+
+        var score_buf: [32]u8 = undefined;
+        const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d:0>6}", .{score}) catch "Score: ?";
+        raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, CRT_FG);
+
+        var combo_buf: [32]u8 = undefined;
+        const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
+        raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
+
+        const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
+        var wpm_buf: [32]u8 = undefined;
+        const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
+        raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+
+        const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
+        var acc_buf: [32]u8 = undefined;
+        const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
+        raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+    }
+
     // Popups draw last so the vignette/scanlines don't dim the kill-feedback text.
     // Layers on top of every game state — the wave-ending kill and the floor-cross
     // game-over both need their popup to be visible.
@@ -767,7 +769,15 @@ fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
             const new_zombie = try allocator.create(Zombie);
             errdefer allocator.destroy(new_zombie);
 
-            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)));
+            // Clamp spawn x so the displayed name (drawn left-aligned at zombie.x in size 20)
+            // never overflows the right edge. Long names like "marie-claire" can be ~130px
+            // wide, exceeding the ~51px sprite footprint the static X_MAX assumes.
+            const name_width = raylib.MeasureText(selection.name, 20);
+            const sprite_width: c_int = screen_width - ZOMBIE_SPAWN_X_MAX;
+            const required = if (name_width > sprite_width) name_width else sprite_width;
+            const dynamic_x_max_raw = screen_width - required - 5;
+            const dynamic_x_max = if (dynamic_x_max_raw < ZOMBIE_SPAWN_X_MIN) ZOMBIE_SPAWN_X_MIN else dynamic_x_max_raw;
+            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, dynamic_x_max)));
 
             new_zombie.* = Zombie{
                 .x = x,
