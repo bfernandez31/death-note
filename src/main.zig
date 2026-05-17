@@ -711,6 +711,18 @@ fn drawPauseOverlay() void {
     }
 }
 
+fn drawMetricsHud() void {
+    const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
+    var wpm_buf: [32]u8 = undefined;
+    const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
+    raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+
+    const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
+    var acc_buf: [32]u8 = undefined;
+    const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
+    raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+}
+
 fn drawPlayingHud() void {
     if (game_mode == .zen) {
         drawZenHud();
@@ -730,15 +742,7 @@ fn drawPlayingHud() void {
     const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
     raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
 
-    const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
-    var wpm_buf: [32]u8 = undefined;
-    const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
-    raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
-
-    const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
-    var acc_buf: [32]u8 = undefined;
-    const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
-    raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+    drawMetricsHud();
 
     if (game_mode == .survival) {
         if (held_power_up) |pu| {
@@ -779,16 +783,7 @@ fn drawZenHud() void {
     var target_buf: [32]u8 = undefined;
     const target_text = std.fmt.bufPrintZ(&target_buf, "ZEN - {d} WPM target", .{zen_target_wpm}) catch "ZEN";
     drawCenteredText(target_text.ptr, 10, 20, CRT_FG);
-
-    const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
-    var wpm_buf: [32]u8 = undefined;
-    const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
-    raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
-
-    const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
-    var acc_buf: [32]u8 = undefined;
-    const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
-    raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+    drawMetricsHud();
 }
 
 fn activatePowerUp(allocator: *std.mem.Allocator) void {
@@ -935,7 +930,8 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                     slot.* = null;
                     continue;
                 }
-                if (shield_active and game_mode == .survival) {
+                // Survival: a shield absorbs one fatal landing then disarms.
+                if (shield_active) {
                     shield_active = false;
                     allocator.destroy(zomb);
                     slot.* = null;
@@ -1009,14 +1005,8 @@ fn drawZombies() void {
             };
 
             const scale = 0.2;
-            const tint: raylib.Color = blk: {
-                if (is_dying) {
-                    if (dying_zombie_index) |idx| {
-                        if (idx == i) break :blk CRT_ERR;
-                    }
-                }
-                break :blk getZombieTint(zomb.zombie_type);
-            };
+            const is_dying_target = is_dying and dying_zombie_index == i;
+            const tint: raylib.Color = if (is_dying_target) CRT_ERR else getZombieTint(zomb.zombie_type);
             raylib.DrawTexturePro(
                 zombie_texture,
                 src_rect,

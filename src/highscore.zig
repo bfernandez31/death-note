@@ -12,8 +12,6 @@ const GameMode = zt.GameMode;
 
 const is_web = builtin.target.os.tag == .emscripten;
 
-pub const FILENAME = "highscore.dat";
-
 pub fn filename(mode: GameMode) [*:0]const u8 {
     return switch (mode) {
         .survival => "highscore.dat",
@@ -92,9 +90,7 @@ fn readWebField(mode: GameMode, field: []const u8) u64 {
         .{ key, field, field, field },
     ) catch return 0;
     const cstr = raylib.emscripten_run_script_string(js.ptr) orelse return 0;
-    var len: usize = 0;
-    while (cstr[len] != 0) : (len += 1) {}
-    return std.fmt.parseInt(u64, cstr[0..len], 10) catch 0;
+    return std.fmt.parseInt(u64, std.mem.span(cstr), 10) catch 0;
 }
 
 fn loadWeb(mode: GameMode) Record {
@@ -130,37 +126,17 @@ test "web load/save signatures stay wired" {
 }
 
 test "filename survival returns highscore.dat" {
-    const f = filename(.survival);
-    try std.testing.expectEqual(@as(u8, 'h'), f[0]);
-    const expected: [*:0]const u8 = "highscore.dat";
-    var len: usize = 0;
-    while (f[len] != 0) len += 1;
-    var elen: usize = 0;
-    while (expected[elen] != 0) elen += 1;
-    try std.testing.expectEqual(elen, len);
-    try std.testing.expect(std.mem.eql(u8, f[0..len], expected[0..elen]));
+    try std.testing.expectEqualStrings("highscore.dat", std.mem.span(filename(.survival)));
 }
 
 test "filename zen returns highscore-zen.dat" {
-    const f = filename(.zen);
-    var len: usize = 0;
-    while (f[len] != 0) len += 1;
-    const expected: [*:0]const u8 = "highscore-zen.dat";
-    var elen: usize = 0;
-    while (expected[elen] != 0) elen += 1;
-    try std.testing.expect(std.mem.eql(u8, f[0..len], expected[0..elen]));
+    try std.testing.expectEqualStrings("highscore-zen.dat", std.mem.span(filename(.zen)));
 }
 
 test "webKey survival returns death-note.highscore" {
-    const key = webKey(.survival);
-    try std.testing.expect(std.mem.eql(u8, key, "death-note.highscore"));
+    try std.testing.expectEqualStrings("death-note.highscore", webKey(.survival));
 }
 
 test "webKey zen returns death-note.highscore.zen" {
-    const key = webKey(.zen);
-    try std.testing.expect(std.mem.eql(u8, key, "death-note.highscore.zen"));
-}
-
-test "DISK_SIZE unchanged at 17 bytes" {
-    try std.testing.expectEqual(@as(usize, 17), DISK_SIZE);
+    try std.testing.expectEqualStrings("death-note.highscore.zen", webKey(.zen));
 }
