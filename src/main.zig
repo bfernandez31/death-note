@@ -29,6 +29,25 @@ const BOSS_SPEED_MULTIPLIER: f32 = 0.5;
 const BOSS_HEALTH_BAR_WIDTH: c_int = 200;
 const BOSS_HEALTH_BAR_HEIGHT: c_int = 8;
 const BOSS_DARK_RED = raylib.Color{ .r = 139, .g = 0, .b = 0, .a = 255 };
+
+const CRT_FG = raylib.Color{ .r = 212, .g = 138, .b = 255, .a = 255 };
+const CRT_DIM = raylib.Color{ .r = 58, .g = 26, .b = 90, .a = 255 };
+const CRT_BG = raylib.Color{ .r = 8, .g = 2, .b = 10, .a = 255 };
+const CRT_ACCENT = raylib.Color{ .r = 240, .g = 200, .b = 255, .a = 255 };
+const CRT_WARN = raylib.Color{ .r = 255, .g = 177, .b = 58, .a = 255 };
+const CRT_ERR = raylib.Color{ .r = 255, .g = 90, .b = 138, .a = 255 };
+const CRT_BEZEL_OUTER = raylib.Color{ .r = 20, .g = 5, .b = 25, .a = 255 };
+const CRT_BEZEL_INNER = raylib.Color{ .r = 35, .g = 10, .b = 45, .a = 255 };
+const CRT_SCANLINE = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
+const CRT_VIGNETTE_OUTER = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 60 };
+const CRT_VIGNETTE_INNER = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
+const CRT_BG_CENTER = raylib.Color{ .r = 25, .g = 8, .b = 35, .a = 255 };
+const CRT_FLICKER = raylib.Color{ .r = 212, .g = 138, .b = 255, .a = 8 };
+const CRT_TANK = raylib.Color{ .r = 138, .g = 72, .b = 200, .a = 255 };
+const CRT_SCANLINE_STEP: c_int = 3;
+const CRT_VIGNETTE_OUTER_PX: c_int = 20;
+const CRT_VIGNETTE_INNER_PX: c_int = 10;
+const CRT_FLICKER_PERIOD_S: f64 = 7.0;
 const BOSS_WAVE_INTERVAL: u32 = 5;
 
 const ZOMBIE_FRAME_COUNT = 17;
@@ -197,9 +216,12 @@ fn selectZombieType(weights: SpawnWeights, rng: std.Random) ZombieType {
 
 fn getZombieTint(zombie_type: ZombieType) raylib.Color {
     return switch (zombie_type) {
-        .standard => raylib.WHITE,
-        .runner => raylib.GREEN,
-        .tank => raylib.BLUE,
+        .standard => CRT_FG,
+        .runner => CRT_WARN,
+        // CRT_DIM is too dark to multiply against the spritesheet outlines and
+        // leaves tanks nearly invisible against CRT_BG; CRT_TANK is a brighter
+        // violet that keeps them visually distinct as their own zombie type.
+        .tank => CRT_TANK,
     };
 }
 
@@ -357,18 +379,29 @@ fn frame(ctx: *FrameContext) void {
     raylib.BeginDrawing();
     defer raylib.EndDrawing();
 
-    raylib.ClearBackground(raylib.RAYWHITE);
+    raylib.ClearBackground(CRT_BG);
+    // Radial-gradient approximation (DEATHN-25 spec): a faint violet pool at the screen
+    // center fading to CRT_BG matches the web shell's CSS radial-gradient on native too.
+    raylib.DrawCircleGradient(
+        raylib.Vector2{
+            .x = @as(f32, @floatFromInt(screen_width)) / 2.0,
+            .y = @as(f32, @floatFromInt(screen_height)) / 2.0,
+        },
+        @as(f32, @floatFromInt(screen_height)),
+        CRT_BG_CENTER,
+        CRT_BG,
+    );
 
     // HUD: wave number, target WPM, kill progress (not shown during game-over)
     if (!is_game_over) {
         const hud_cfg = getWaveConfig(current_wave);
         var hud_buf: [64]u8 = undefined;
         const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
-        drawCenteredText(hud_text.ptr, 10, 20, raylib.DARKGRAY);
+        drawCenteredText(hud_text.ptr, 10, 20, CRT_DIM);
 
         var score_buf: [32]u8 = undefined;
         const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d}", .{score}) catch "Score: ?";
-        raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, raylib.DARKGREEN);
+        raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, CRT_FG);
 
         var combo_buf: [32]u8 = undefined;
         const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
@@ -377,16 +410,16 @@ fn frame(ctx: *FrameContext) void {
         const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
         var wpm_buf: [32]u8 = undefined;
         const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
-        raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, raylib.DARKGRAY);
+        raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_DIM);
 
         const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
         var acc_buf: [32]u8 = undefined;
         const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
-        raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, raylib.DARKGRAY);
+        raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_DIM);
     }
 
-    raylib.DrawRectangleRec(ctx.text_box, raylib.LIGHTGRAY);
-    const border_color = if (ctx.mouse_on_text) raylib.RED else raylib.DARKGRAY;
+    raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
+    const border_color = if (ctx.mouse_on_text) CRT_WARN else CRT_FG;
     raylib.DrawRectangleLines(
         @intFromFloat(ctx.text_box.x),
         @intFromFloat(ctx.text_box.y),
@@ -395,17 +428,17 @@ fn frame(ctx: *FrameContext) void {
         border_color,
     );
 
-    raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
+    raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
 
     if (is_game_over) {
-        drawCenteredText("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, raylib.RED);
+        drawCenteredText("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, CRT_ERR);
 
         var line_y: c_int = STATS_LINE_START_Y;
         drawCenteredStat("Wave reached: {d}", .{current_wave}, &line_y);
         drawCenteredStat("Score: {d}", .{score}, &line_y);
 
         if (is_new_high_score) {
-            drawCenteredText("NEW HIGH SCORE!", line_y, STATS_FONT_SIZE, raylib.GOLD);
+            drawCenteredText("NEW HIGH SCORE!", line_y, STATS_FONT_SIZE, CRT_WARN);
             line_y += STATS_LINE_SPACING;
         } else {
             drawCenteredStat("Best: {d}", .{best_score.score}, &line_y);
@@ -415,7 +448,7 @@ fn frame(ctx: *FrameContext) void {
         drawCenteredStat("Accuracy: {d}%", .{calculateStatsAccuracy()}, &line_y);
         drawCenteredStat("Kills: {d}", .{total_kills}, &line_y);
 
-        drawCenteredText("Press ENTER to restart", STATS_RESTART_HINT_Y, STATS_RESTART_HINT_SIZE, raylib.GRAY);
+        drawCenteredText("Press ENTER to restart", STATS_RESTART_HINT_Y, STATS_RESTART_HINT_SIZE, CRT_DIM);
 
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
             is_game_over = false;
@@ -440,23 +473,25 @@ fn frame(ctx: *FrameContext) void {
 
         var wave_buf: [64]u8 = undefined;
         const wave_text = std.fmt.bufPrintZ(&wave_buf, "WAVE {d} - {d} WPM challenge - {d}...", .{ next_wave, next_cfg.target_wpm, countdown }) catch "NEXT WAVE";
-        drawCenteredText(wave_text.ptr, screen_height / 2 - 15, 30, raylib.DARKGRAY);
+        drawCenteredText(wave_text.ptr, screen_height / 2 - 15, 30, CRT_FG);
     } else {
         drawZombies();
         drawBoss();
     }
-    // Popups layer on top of every state so the visual feedback for the kill that
-    // ended the wave (transition branch) or that coincided with the floor-cross
-    // game-over (game_over branch) is never silently dropped.
-    drawPopups();
     // Draw blinking underscore char
     if (ctx.mouse_on_text and letter_count < getCurrentMaxInput() and ((ctx.frames_counter / 20) % 2) == 0) {
-        raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, raylib.MAROON);
+        raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, CRT_ACCENT);
     }
 
     if (ctx.mouse_on_text and letter_count >= getCurrentMaxInput()) {
-        raylib.DrawText("Press BACKSPACE to delete chars...", 230, 300, 20, raylib.GRAY);
+        raylib.DrawText("Press BACKSPACE to delete chars...", 230, 300, 20, CRT_DIM);
     }
+
+    drawCrtOverlay();
+    // Popups draw last so the vignette/scanlines don't dim the kill-feedback text.
+    // Layers on top of every game state — the wave-ending kill and the floor-cross
+    // game-over both need their popup to be visible.
+    drawPopups();
 }
 
 // Emscripten C-callback trampoline; arg carries the FrameContext pointer
@@ -611,7 +646,7 @@ fn drawZombies() void {
             const tint: raylib.Color = blk: {
                 if (is_dying) {
                     if (dying_zombie_index) |idx| {
-                        if (idx == i) break :blk raylib.RED;
+                        if (idx == i) break :blk CRT_ERR;
                     }
                 }
                 break :blk getZombieTint(zomb.zombie_type);
@@ -632,7 +667,7 @@ fn drawZombies() void {
 
             // Draw the zombie's name above the zombie
             const text_pos = raylib.Vector2{ .x = pos.x, .y = pos.y - 20.0 }; // Adjust Y position as needed
-            raylib.DrawText(zomb.name, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y), 20, raylib.DARKGREEN); // Adjust font size and color as needed
+            raylib.DrawText(zomb.name, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y), 20, CRT_ACCENT);
         }
     }
 }
@@ -711,7 +746,7 @@ fn drawCenteredText(text: [*:0]const u8, y: c_int, size: c_int, color: raylib.Co
 fn drawCenteredStat(comptime fmt: []const u8, args: anytype, y: *c_int) void {
     var buf: [32]u8 = undefined;
     const text = std.fmt.bufPrintZ(&buf, fmt, args) catch "?";
-    drawCenteredText(text.ptr, y.*, STATS_FONT_SIZE, raylib.DARKGRAY);
+    drawCenteredText(text.ptr, y.*, STATS_FONT_SIZE, CRT_FG);
     y.* += STATS_LINE_SPACING;
 }
 
@@ -780,7 +815,7 @@ fn drawBoss() void {
 
         // Boss-caused game-over uses a darker tint so the player sees a distinct visual cue
         // during the dying transition (mirrors the red-tint logic for zombies in drawZombies).
-        const boss_tint: raylib.Color = if (is_dying and dying_zombie_index == null) BOSS_DARK_RED else raylib.RED;
+        const boss_tint: raylib.Color = if (is_dying and dying_zombie_index == null) BOSS_DARK_RED else CRT_ERR;
         raylib.DrawTexturePro(
             zombie_texture,
             src_rect,
@@ -799,11 +834,11 @@ fn drawBoss() void {
         const boss_y: c_int = @intFromFloat(b.y);
         // FR-007: phrase text sits above the sprite; health bar sits below the phrase
         // (between phrase and sprite). Stacked top→bottom: phrase, bar, sprite.
-        raylib.DrawText(b.name, boss_x, boss_y - 50, 20, BOSS_DARK_RED);
+        raylib.DrawText(b.name, boss_x, boss_y - 50, 20, CRT_ERR);
 
         const bar_x = boss_x;
         const bar_y = boss_y - 25;
-        raylib.DrawRectangle(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.LIGHTGRAY);
+        raylib.DrawRectangle(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, CRT_DIM);
 
         if (boss_phrase_len > 0) {
             // c_int * usize is not implicitly coercible — promote lengths to c_int for arithmetic.
@@ -813,10 +848,10 @@ fn drawBoss() void {
                 @divTrunc(BOSS_HEALTH_BAR_WIDTH * (phrase_len_i - letter_count_i), phrase_len_i)
             else
                 BOSS_HEALTH_BAR_WIDTH;
-            raylib.DrawRectangle(bar_x, bar_y, fill_width, BOSS_HEALTH_BAR_HEIGHT, raylib.RED);
+            raylib.DrawRectangle(bar_x, bar_y, fill_width, BOSS_HEALTH_BAR_HEIGHT, CRT_ERR);
         }
 
-        raylib.DrawRectangleLines(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, raylib.DARKGRAY);
+        raylib.DrawRectangleLines(bar_x, bar_y, BOSS_HEALTH_BAR_WIDTH, BOSS_HEALTH_BAR_HEIGHT, CRT_FG);
     }
 }
 
@@ -892,9 +927,9 @@ fn getComboMultiplier(combo: u32) u64 {
 }
 
 fn getComboColor(combo: u32) raylib.Color {
-    if (combo >= 15) return raylib.RED;
-    if (combo >= 5) return raylib.ORANGE;
-    return raylib.DARKGRAY;
+    if (combo >= 15) return CRT_ERR;
+    if (combo >= 5) return CRT_WARN;
+    return CRT_DIM;
 }
 
 fn resetScoreState() void {
@@ -1006,13 +1041,50 @@ fn updateMetrics() void {
     displayed_accuracy += SMOOTHING_FACTOR * (target_accuracy - displayed_accuracy);
 }
 
+fn drawCrtOverlay() void {
+    var y: c_int = 0;
+    while (y < screen_height) : (y += CRT_SCANLINE_STEP) {
+        raylib.DrawRectangle(0, y, screen_width, 1, CRT_SCANLINE);
+    }
+
+    const outer = CRT_VIGNETTE_OUTER_PX;
+    raylib.DrawRectangle(0, 0, screen_width, outer, CRT_VIGNETTE_OUTER);
+    raylib.DrawRectangle(0, screen_height - outer, screen_width, outer, CRT_VIGNETTE_OUTER);
+    raylib.DrawRectangle(0, 0, outer, screen_height, CRT_VIGNETTE_OUTER);
+    raylib.DrawRectangle(screen_width - outer, 0, outer, screen_height, CRT_VIGNETTE_OUTER);
+
+    // Inner ring nests inside the outer ring so the band closest to the center
+    // (outer-inner..outer px from the edge) layers both alphas. Without this offset
+    // the 0..inner strip would receive both ring alphas, inverting the gradient.
+    const inner = CRT_VIGNETTE_INNER_PX;
+    const inner_offset = outer - inner;
+    raylib.DrawRectangle(0, inner_offset, screen_width, inner, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(0, screen_height - outer, screen_width, inner, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(inner_offset, 0, inner, screen_height, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(screen_width - outer, 0, inner, screen_height, CRT_VIGNETTE_INNER);
+
+    raylib.DrawRectangleLines(0, 0, screen_width, screen_height, CRT_BEZEL_OUTER);
+    raylib.DrawRectangleLines(1, 1, screen_width - 2, screen_height - 2, CRT_BEZEL_OUTER);
+    raylib.DrawRectangleLines(2, 2, screen_width - 4, screen_height - 4, CRT_BEZEL_INNER);
+    raylib.DrawRectangleLines(3, 3, screen_width - 6, screen_height - 6, CRT_BEZEL_INNER);
+
+    // DEATHN-25: subtle magenta flicker pulse every 7s (~2-3% opacity) mirrors the
+    // .crt-flicker CSS animation so the native build matches the web rendering.
+    const elapsed = raylib.GetTime();
+    const phase = @mod(elapsed, CRT_FLICKER_PERIOD_S) / CRT_FLICKER_PERIOD_S;
+    if (phase > 0.94 and phase < 0.98) {
+        raylib.DrawRectangle(0, 0, screen_width, screen_height, CRT_FLICKER);
+    }
+}
+
 fn drawPopups() void {
     for (&popups) |*p| {
         if (!p.active) continue;
         const progress = 1.0 - (p.timer / POPUP_DURATION);
         const draw_y = p.y - (POPUP_RISE_PX * progress);
         const alpha: u8 = @intFromFloat((p.timer / POPUP_DURATION) * 255.0);
-        const color = raylib.Color{ .r = 255, .g = 203, .b = 0, .a = alpha };
+        var color = CRT_WARN;
+        color.a = alpha;
         var buf: [32]u8 = undefined;
         const text = std.fmt.bufPrintZ(&buf, "+{d}", .{p.points}) catch "+?";
         raylib.DrawText(text.ptr, @intFromFloat(p.x), @intFromFloat(draw_y), POPUP_FONT_SIZE, color);
@@ -1705,20 +1777,20 @@ test "selectZombieType distribution" {
 }
 
 test "zombie tint colors" {
-    const white = getZombieTint(.standard);
-    try std.testing.expectEqual(raylib.WHITE.r, white.r);
-    try std.testing.expectEqual(raylib.WHITE.g, white.g);
-    try std.testing.expectEqual(raylib.WHITE.b, white.b);
+    const standard = getZombieTint(.standard);
+    try std.testing.expectEqual(CRT_FG.r, standard.r);
+    try std.testing.expectEqual(CRT_FG.g, standard.g);
+    try std.testing.expectEqual(CRT_FG.b, standard.b);
 
-    const green = getZombieTint(.runner);
-    try std.testing.expectEqual(raylib.GREEN.r, green.r);
-    try std.testing.expectEqual(raylib.GREEN.g, green.g);
-    try std.testing.expectEqual(raylib.GREEN.b, green.b);
+    const runner = getZombieTint(.runner);
+    try std.testing.expectEqual(CRT_WARN.r, runner.r);
+    try std.testing.expectEqual(CRT_WARN.g, runner.g);
+    try std.testing.expectEqual(CRT_WARN.b, runner.b);
 
-    const blue = getZombieTint(.tank);
-    try std.testing.expectEqual(raylib.BLUE.r, blue.r);
-    try std.testing.expectEqual(raylib.BLUE.g, blue.g);
-    try std.testing.expectEqual(raylib.BLUE.b, blue.b);
+    const tank = getZombieTint(.tank);
+    try std.testing.expectEqual(CRT_TANK.r, tank.r);
+    try std.testing.expectEqual(CRT_TANK.g, tank.g);
+    try std.testing.expectEqual(CRT_TANK.b, tank.b);
 }
 
 test "hyphen accepted in input" {
