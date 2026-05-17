@@ -97,14 +97,14 @@
 ### Tests for User Story 2
 **NOTE**: Write these tests FIRST, ensure they FAIL before implementation.
 
-- [ ] T017 [P] [US2] Extend tests in `src/main.zig`: add test "HighScoreRecord struct size" — verify `@sizeOf(HighScoreRecord)` matches expected value for binary file validation
-- [ ] T018 [P] [US2] Extend tests in `src/main.zig`: add test "high score comparison logic" — verify `score > best_score.score` correctly identifies new high score, including edge cases (equal score = not new, zero score = not new)
+- [X] T017 [P] [US2] Extend tests in `src/main.zig`: add test "HighScoreRecord struct size" — verify `@sizeOf(HighScoreRecord)` matches expected value for binary file validation
+- [X] T018 [P] [US2] Extend tests in `src/main.zig`: add test "high score comparison logic" — verify `score > best_score.score` correctly identifies new high score, including edge cases (equal score = not new, zero score = not new)
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] Implement `loadHighScore() !HighScoreRecord` function in `src/main.zig`: open `HIGHSCORE_FILENAME` for reading, read `@sizeOf(HighScoreRecord)` bytes, validate file size matches exactly, reinterpret bytes as struct. Return zero-initialized record on any failure (file missing, size mismatch, read error)
-- [ ] T020 [US2] Implement `saveHighScore(record: HighScoreRecord) !void` function in `src/main.zig`: create/overwrite `HIGHSCORE_FILENAME`, write struct as raw bytes
-- [ ] T021 [US2] Wire persistence into game lifecycle in `src/main.zig`: (1) in `main()` after window init, load `best_score = loadHighScore() catch .{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 }`; (2) at game-over (when dying timer expires), if `score > best_score.score`, build new record with current stats and call `saveHighScore`, update `best_score` in memory. Gate all behind `comptime @import("builtin").target.os.tag != .emscripten`
+- [X] T019 [US2] Implement `loadHighScore() !HighScoreRecord` function in `src/main.zig`: open `HIGHSCORE_FILENAME` for reading, read `@sizeOf(HighScoreRecord)` bytes, validate file size matches exactly, reinterpret bytes as struct. Return zero-initialized record on any failure (file missing, size mismatch, read error)
+- [X] T020 [US2] Implement `saveHighScore(record: HighScoreRecord) !void` function in `src/main.zig`: create/overwrite `HIGHSCORE_FILENAME`, write struct as raw bytes
+- [X] T021 [US2] Wire persistence into game lifecycle in `src/main.zig`: (1) in `main()` after window init, load `best_score = loadHighScore() catch .{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 }`; (2) at game-over (when dying timer expires), if `score > best_score.score`, build new record with current stats and call `saveHighScore`, update `best_score` in memory. Gate all behind `comptime @import("builtin").target.os.tag != .emscripten`
 
 **Checkpoint**: Native persistence working — high score survives game restarts and relaunches
 

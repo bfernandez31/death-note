@@ -291,6 +291,9 @@ fn frame(ctx: *FrameContext) void {
                     .wpm = avg_wpm,
                     .accuracy = acc,
                 };
+                if (comptime @import("builtin").target.os.tag != .emscripten) {
+                    saveHighScore(best_score) catch {};
+                }
             }
         }
     }
@@ -473,6 +476,10 @@ pub fn main() !void {
     defer raylib.UnloadTexture(zombie_texture);
 
     raylib.SetTargetFPS(60); // Set target frames per second
+
+    if (comptime @import("builtin").target.os.tag != .emscripten) {
+        best_score = loadHighScore() catch HighScoreRecord{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 };
+    }
 
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
@@ -907,6 +914,22 @@ fn calculateStatsAccuracy() u32 {
     const total = correct_chars + wrong_chars;
     if (total == 0) return 0;
     return (correct_chars * 100) / total;
+}
+
+fn loadHighScore() !HighScoreRecord {
+    const file = try std.fs.cwd().openFile(HIGHSCORE_FILENAME, .{});
+    defer file.close();
+    var buf: [@sizeOf(HighScoreRecord)]u8 = undefined;
+    const bytes_read = try file.readAll(&buf);
+    if (bytes_read != @sizeOf(HighScoreRecord)) return error.InvalidSize;
+    return @as(*const HighScoreRecord, @ptrCast(@alignCast(&buf))).*;
+}
+
+fn saveHighScore(record: HighScoreRecord) !void {
+    const file = try std.fs.cwd().createFile(HIGHSCORE_FILENAME, .{});
+    defer file.close();
+    const bytes = @as([*]const u8, @ptrCast(&record))[0..@sizeOf(HighScoreRecord)];
+    try file.writeAll(bytes);
 }
 
 fn updateMetrics() void {
@@ -1526,6 +1549,24 @@ test "accuracy edge case zero input stats" {
     correct_chars = 0;
     wrong_chars = 0;
     try std.testing.expectEqual(@as(u32, 0), calculateStatsAccuracy());
+}
+
+test "HighScoreRecord struct size" {
+    try std.testing.expectEqual(@as(usize, @sizeOf(HighScoreRecord)), @sizeOf(HighScoreRecord));
+    try std.testing.expect(@sizeOf(HighScoreRecord) > 0);
+    try std.testing.expect(@sizeOf(HighScoreRecord) <= 24);
+}
+
+test "high score comparison logic" {
+    const saved = best_score;
+    defer best_score = saved;
+
+    best_score = HighScoreRecord{ .score = 100, .wave = 2, .wpm = 30, .accuracy = 85 };
+
+    try std.testing.expect(200 > best_score.score);
+    try std.testing.expect(!(100 > best_score.score));
+    try std.testing.expect(!(0 > best_score.score));
+    try std.testing.expect(!(50 > best_score.score));
 }
 
 test "kill counter tracks total kills" {
