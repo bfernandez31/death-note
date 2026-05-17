@@ -136,8 +136,8 @@
 
 **Purpose**: Final validation and cleanup
 
-- [ ] T027 Verify `zig build` compiles cleanly with all changes in `src/main.zig` and `src/raylib.zig`
-- [ ] T028 Run `zig build test` and verify all new and existing tests pass
+- [X] T027 Verify `zig build` compiles cleanly with all changes in `src/main.zig` and `src/raylib.zig`
+- [X] T028 Run `zig build test` and verify all new and existing tests pass
 - [ ] T029 Manual play-test: verify death transition (red tint, 1s pause), all 8 stat lines on game-over screen, restart behavior, and "NEW HIGH SCORE!" display
 
 ---

@@ -921,19 +921,20 @@ fn calculateStatsAccuracy() u32 {
 }
 
 fn loadHighScore() !HighScoreRecord {
-    const file = try std.fs.cwd().openFile(HIGHSCORE_FILENAME, .{});
-    defer file.close();
+    const fp = std.c.fopen(HIGHSCORE_FILENAME, "rb") orelse return error.FileNotFound;
+    defer _ = std.c.fclose(fp);
     var buf: [@sizeOf(HighScoreRecord)]u8 = undefined;
-    const bytes_read = try file.readAll(&buf);
-    if (bytes_read != @sizeOf(HighScoreRecord)) return error.InvalidSize;
+    const n = std.c.fread(&buf, 1, @sizeOf(HighScoreRecord), fp);
+    if (n != @sizeOf(HighScoreRecord)) return error.InvalidSize;
     return @as(*const HighScoreRecord, @ptrCast(@alignCast(&buf))).*;
 }
 
 fn saveHighScore(record: HighScoreRecord) !void {
-    const file = try std.fs.cwd().createFile(HIGHSCORE_FILENAME, .{});
-    defer file.close();
+    const fp = std.c.fopen(HIGHSCORE_FILENAME, "wb") orelse return error.AccessDenied;
+    defer _ = std.c.fclose(fp);
     const bytes = @as([*]const u8, @ptrCast(&record))[0..@sizeOf(HighScoreRecord)];
-    try file.writeAll(bytes);
+    const n = std.c.fwrite(bytes.ptr, 1, @sizeOf(HighScoreRecord), fp);
+    if (n != @sizeOf(HighScoreRecord)) return error.InputOutput;
 }
 
 fn loadHighScoreWeb() HighScoreRecord {
