@@ -44,11 +44,23 @@ const SMOOTHING_FACTOR: f32 = 0.2;
 const CHARS_PER_WORD: f32 = 5.0;
 const SECONDS_PER_MINUTE: f32 = 60.0;
 
+const GAME_OVER_TRANSITION_DURATION: f32 = 1.0;
+const HIGHSCORE_FILE: [*:0]const u8 = "highscore.dat";
+const STATS_Y_START: c_int = 80;
+const STATS_Y_STEP: c_int = 35;
+
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
     fall_speed: f32,
     pool_size: u32,
+};
+
+const HighScore = struct {
+    score: u64,
+    wave: u32,
+    wpm: u32,
+    accuracy: u8,
 };
 
 const WAVE_TABLE = [_]WaveConfig{
@@ -99,6 +111,13 @@ var wrong_chars: u32 = 0;
 var elapsed_time: f32 = 0.0;
 var displayed_wpm: f32 = 0.0;
 var displayed_accuracy: f32 = 100.0;
+
+var total_kills: u32 = 0;
+var game_over_transition_active: bool = false;
+var game_over_transition_timer: f32 = 0.0;
+var game_over_killer_zombie: ?*Zombie = null;
+var best_score: u64 = 0;
+var is_new_highscore: bool = false;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -170,7 +189,7 @@ fn frame(ctx: *FrameContext) void {
         ctx.frames_counter = 0;
     }
 
-    if (!is_game_over and !is_transitioning) {
+    if (!is_game_over and !is_transitioning and !game_over_transition_active) {
         // Accept keystrokes regardless of mouse position so players can start typing
         // immediately on load (especially on web, where focus is on the canvas, not the
         // text box hit-test rectangle).
@@ -255,7 +274,28 @@ fn frame(ctx: *FrameContext) void {
         }
     }
 
-    if (!is_game_over) {
+    if (game_over_transition_active) {
+        game_over_transition_timer -= raylib.GetFrameTime();
+        if (game_over_transition_timer <= 0) {
+            game_over_transition_active = false;
+            game_over_killer_zombie = null;
+            is_game_over = true;
+            const final_acc: u8 = @intCast(@min(100, @as(u32, @intFromFloat(@round(calculateTargetAccuracy())))));
+            const final_wpm = calculateSessionWpm();
+            is_new_highscore = score > best_score;
+            if (is_new_highscore) {
+                best_score = score;
+                saveHighScore(HighScore{
+                    .score = score,
+                    .wave = current_wave,
+                    .wpm = final_wpm,
+                    .accuracy = final_acc,
+                });
+            }
+        }
+    }
+
+    if (!is_game_over and !game_over_transition_active) {
         updateMetrics();
     }
 
@@ -311,23 +351,8 @@ fn frame(ctx: *FrameContext) void {
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
 
     if (is_game_over) {
-        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 40, 40, raylib.RED);
+        drawStatsScreen();
 
-        var go_wave_buf: [32]u8 = undefined;
-        const go_wave_text = std.fmt.bufPrintZ(&go_wave_buf, "Wave reached: {d}", .{current_wave}) catch "Wave reached: ?";
-        drawCenteredText(go_wave_text.ptr, screen_height / 2 + 5, 20, raylib.GRAY);
-
-        var go_wpm_buf: [32]u8 = undefined;
-        const go_wpm_text = std.fmt.bufPrintZ(&go_wpm_buf, "Required WPM: {d}", .{getWaveConfig(current_wave).target_wpm}) catch "Required WPM: ?";
-        drawCenteredText(go_wpm_text.ptr, screen_height / 2 + 30, 20, raylib.GRAY);
-
-        var go_score_buf: [32]u8 = undefined;
-        const go_score_text = std.fmt.bufPrintZ(&go_score_buf, "Score: {d}", .{score}) catch "Score: ?";
-        drawCenteredText(go_score_text.ptr, screen_height / 2 + 55, 20, raylib.GRAY);
-
-        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 85, 20, raylib.GRAY);
-
-        // Restart game if Enter is pressed
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
             is_game_over = false;
             letter_count = 0;
@@ -338,11 +363,16 @@ fn frame(ctx: *FrameContext) void {
             wave_spawned = 0;
             is_transitioning = false;
             transition_timer = 0.0;
+            total_kills = 0;
+            is_new_highscore = false;
             resetScoreState();
             resetMetricsState();
             resetZombies(ctx.allocator);
             resetBoss(ctx.allocator);
         }
+    } else if (game_over_transition_active) {
+        drawZombies();
+        drawBoss();
     } else if (is_transitioning) {
         const next_wave = current_wave + 1;
         const next_cfg = getWaveConfig(next_wave);
@@ -405,6 +435,8 @@ pub fn main() !void {
 
     raylib.SetTargetFPS(60); // Set target frames per second
 
+    best_score = loadHighScore().score;
+
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
     // c_allocator forwards to libc malloc/free, which emcc provides.
@@ -447,7 +479,9 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
             zomb.y += zomb.speed;
 
             if (zomb.y >= screen_height) {
-                is_game_over = true;
+                game_over_transition_active = true;
+                game_over_transition_timer = GAME_OVER_TRANSITION_DURATION;
+                game_over_killer_zombie = zomb;
                 return;
             }
 
@@ -471,6 +505,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                 letter_count = 0;
                 name[letter_count] = '\x00';
                 wave_kills += 1;
+                total_kills += 1;
                 raylib.PlaySound(zombie_kill_sound);
             }
         }
@@ -508,6 +543,14 @@ fn drawZombies() void {
             };
 
             const scale = 0.2; // Adjust the scale factor to make the zombie smaller
+            const tint: raylib.Color = blk: {
+                if (game_over_transition_active) {
+                    if (game_over_killer_zombie) |killer| {
+                        if (killer == zomb) break :blk raylib.RED;
+                    }
+                }
+                break :blk raylib.WHITE;
+            };
             raylib.DrawTexturePro(
                 zombie_texture,
                 src_rect,
@@ -519,7 +562,7 @@ fn drawZombies() void {
                 },
                 raylib.Vector2{ .x = 0, .y = 0 }, // Origin for scaling
                 0.0, // Rotation
-                raylib.WHITE,
+                tint,
             );
 
             // Draw the zombie's name above the zombie
@@ -579,7 +622,9 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
         b.y += b.speed;
 
         if (b.y >= screen_height) {
-            is_game_over = true;
+            game_over_transition_active = true;
+            game_over_transition_timer = GAME_OVER_TRANSITION_DURATION;
+            game_over_killer_zombie = null; // boss reached floor; boss sprite already draws in red
             return;
         }
 
@@ -592,6 +637,7 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
             boss = null;
             letter_count = 0;
             name[0] = '\x00';
+            total_kills += 1;
             raylib.PlaySound(zombie_kill_sound);
         }
     }
@@ -793,6 +839,127 @@ fn resetMetricsState() void {
     elapsed_time = 0.0;
     displayed_wpm = 0.0;
     displayed_accuracy = 100.0;
+}
+
+fn calculateSessionWpm() u32 {
+    if (elapsed_time < 1.0) return 0;
+    const session_minutes = elapsed_time / SECONDS_PER_MINUTE;
+    const wpm = (@as(f32, @floatFromInt(correct_chars)) / CHARS_PER_WORD) / session_minutes;
+    return @intFromFloat(@round(wpm));
+}
+
+// Extracts an unsigned 64-bit integer value from a JSON string for a given key.
+// Only handles the simple flat format {"key":N,...}; no nesting, no floats.
+fn jsonGetU64(json: []const u8, key: []const u8) u64 {
+    var key_buf: [64]u8 = undefined;
+    const pattern = std.fmt.bufPrint(&key_buf, "\"{s}\":", .{key}) catch return 0;
+    const idx = std.mem.indexOf(u8, json, pattern) orelse return 0;
+    var pos = idx + pattern.len;
+    while (pos < json.len and json[pos] == ' ') pos += 1;
+    const start = pos;
+    while (pos < json.len and json[pos] >= '0' and json[pos] <= '9') pos += 1;
+    if (pos == start) return 0;
+    return std.fmt.parseInt(u64, json[start..pos], 10) catch 0;
+}
+
+fn loadHighScore() HighScore {
+    const zero = HighScore{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 };
+    if (comptime @import("builtin").target.os.tag == .emscripten) {
+        const raw = raylib.emscripten_run_script_string(
+            "var v=localStorage.getItem('death-note.highscore');v!=null?v:'{}'");
+        if (raw == null) return zero;
+        var len: usize = 0;
+        while (raw[len] != 0) : (len += 1) {}
+        var buf: [512]u8 = undefined;
+        const copy_len = @min(len, buf.len - 1);
+        @memcpy(buf[0..copy_len], raw[0..copy_len]);
+        const json = buf[0..copy_len];
+        return HighScore{
+            .score = jsonGetU64(json, "score"),
+            .wave = @intCast(@min(std.math.maxInt(u32), jsonGetU64(json, "wave"))),
+            .wpm = @intCast(@min(std.math.maxInt(u32), jsonGetU64(json, "wpm"))),
+            .accuracy = @intCast(@min(100, jsonGetU64(json, "accuracy"))),
+        };
+    } else {
+        const file = std.c.fopen(HIGHSCORE_FILE, "rb") orelse return zero;
+        defer _ = std.c.fclose(file);
+        var buf: [17]u8 = undefined;
+        const n = std.c.fread(&buf, 1, 17, file);
+        if (n < 17) return zero;
+        return HighScore{
+            .score = std.mem.readInt(u64, buf[0..8], .little),
+            .wave = std.mem.readInt(u32, buf[8..12], .little),
+            .wpm = std.mem.readInt(u32, buf[12..16], .little),
+            .accuracy = buf[16],
+        };
+    }
+}
+
+fn saveHighScore(hs: HighScore) void {
+    if (comptime @import("builtin").target.os.tag == .emscripten) {
+        var js_buf: [256]u8 = undefined;
+        const js = std.fmt.bufPrintZ(
+            &js_buf,
+            "localStorage.setItem('death-note.highscore','{{\"score\":{d},\"wave\":{d},\"wpm\":{d},\"accuracy\":{d}}}')",
+            .{ hs.score, hs.wave, hs.wpm, hs.accuracy },
+        ) catch return;
+        raylib.emscripten_run_script(js.ptr);
+    } else {
+        const file = std.c.fopen(HIGHSCORE_FILE, "wb") orelse return;
+        defer _ = std.c.fclose(file);
+        var buf: [17]u8 = undefined;
+        std.mem.writeInt(u64, buf[0..8], hs.score, .little);
+        std.mem.writeInt(u32, buf[8..12], hs.wave, .little);
+        std.mem.writeInt(u32, buf[12..16], hs.wpm, .little);
+        buf[16] = hs.accuracy;
+        _ = std.c.fwrite(&buf, 1, 17, file);
+    }
+}
+
+fn drawStatsScreen() void {
+    // Cover any previously drawn elements (text box, etc.) with a clean white slate
+    raylib.DrawRectangle(0, 0, screen_width, screen_height, raylib.RAYWHITE);
+
+    var y: c_int = STATS_Y_START;
+
+    drawCenteredText("GAME OVER", y, 48, raylib.RED);
+    y += STATS_Y_STEP;
+
+    var wave_buf: [64]u8 = undefined;
+    const wave_text = std.fmt.bufPrintZ(&wave_buf, "Wave reached: {d}", .{current_wave}) catch "Wave reached: ?";
+    drawCenteredText(wave_text.ptr, y, 24, raylib.DARKGRAY);
+    y += STATS_Y_STEP;
+
+    var score_buf: [64]u8 = undefined;
+    const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d}", .{score}) catch "Score: ?";
+    drawCenteredText(score_text.ptr, y, 24, raylib.DARKGRAY);
+    y += STATS_Y_STEP;
+
+    if (is_new_highscore) {
+        drawCenteredText("NEW HIGH SCORE!", y, 24, raylib.Color{ .r = 255, .g = 203, .b = 0, .a = 255 });
+    } else {
+        var best_buf: [64]u8 = undefined;
+        const best_text = std.fmt.bufPrintZ(&best_buf, "Best: {d}", .{best_score}) catch "Best: ?";
+        drawCenteredText(best_text.ptr, y, 24, raylib.DARKGRAY);
+    }
+    y += STATS_Y_STEP;
+
+    var wpm_buf: [64]u8 = undefined;
+    const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "Average WPM: {d}", .{calculateSessionWpm()}) catch "Average WPM: ?";
+    drawCenteredText(wpm_text.ptr, y, 24, raylib.DARKGRAY);
+    y += STATS_Y_STEP;
+
+    const acc_val: u32 = @intFromFloat(@round(calculateTargetAccuracy()));
+    var acc_buf: [64]u8 = undefined;
+    const acc_text = std.fmt.bufPrintZ(&acc_buf, "Accuracy: {d}%", .{acc_val}) catch "Accuracy: ?%";
+    drawCenteredText(acc_text.ptr, y, 24, raylib.DARKGRAY);
+    y += STATS_Y_STEP;
+
+    var kills_buf: [64]u8 = undefined;
+    const kills_text = std.fmt.bufPrintZ(&kills_buf, "Kills: {d}", .{total_kills}) catch "Kills: ?";
+    drawCenteredText(kills_text.ptr, y, 24, raylib.DARKGRAY);
+
+    drawCenteredText("Press ENTER to restart", screen_height - 40, 18, raylib.GRAY);
 }
 
 fn charsToWpm(chars: u32, time_seconds: f32) f32 {
@@ -1303,6 +1470,91 @@ test "accuracy zero input returns 100" {
 
     const result = calculateTargetAccuracy();
     try std.testing.expectApproxEqAbs(@as(f32, 100.0), result, 0.001);
+}
+
+test "calculateSessionWpm 600 chars in 60 seconds yields 120" {
+    const saved_correct = correct_chars;
+    const saved_elapsed = elapsed_time;
+    defer {
+        correct_chars = saved_correct;
+        elapsed_time = saved_elapsed;
+    }
+
+    correct_chars = 600;
+    elapsed_time = 60.0;
+    try std.testing.expectEqual(@as(u32, 120), calculateSessionWpm());
+}
+
+test "calculateSessionWpm zero elapsed returns 0" {
+    const saved_correct = correct_chars;
+    const saved_elapsed = elapsed_time;
+    defer {
+        correct_chars = saved_correct;
+        elapsed_time = saved_elapsed;
+    }
+
+    correct_chars = 100;
+    elapsed_time = 0.0;
+    try std.testing.expectEqual(@as(u32, 0), calculateSessionWpm());
+}
+
+test "new high score detection" {
+    const saved_score = score;
+    const saved_best = best_score;
+    defer {
+        score = saved_score;
+        best_score = saved_best;
+    }
+
+    score = 1000;
+    best_score = 500;
+    try std.testing.expect(score > best_score);
+
+    score = 500;
+    best_score = 1000;
+    try std.testing.expect(!(score > best_score));
+
+    score = 1000;
+    best_score = 1000;
+    try std.testing.expect(!(score > best_score));
+}
+
+test "jsonGetU64 extracts values from JSON" {
+    const json = "{\"score\":47230,\"wave\":12,\"wpm\":52,\"accuracy\":94}";
+    try std.testing.expectEqual(@as(u64, 47230), jsonGetU64(json, "score"));
+    try std.testing.expectEqual(@as(u64, 12), jsonGetU64(json, "wave"));
+    try std.testing.expectEqual(@as(u64, 52), jsonGetU64(json, "wpm"));
+    try std.testing.expectEqual(@as(u64, 94), jsonGetU64(json, "accuracy"));
+    try std.testing.expectEqual(@as(u64, 0), jsonGetU64(json, "missing"));
+}
+
+test "jsonGetU64 returns 0 for empty JSON" {
+    try std.testing.expectEqual(@as(u64, 0), jsonGetU64("{}", "score"));
+}
+
+test "highscore binary round-trip" {
+    // Write to a temp file, read it back, verify values match
+    const hs = HighScore{ .score = 99999, .wave = 7, .wpm = 88, .accuracy = 93 };
+
+    // Serialize manually the same way saveHighScore does
+    var buf: [17]u8 = undefined;
+    std.mem.writeInt(u64, buf[0..8], hs.score, .little);
+    std.mem.writeInt(u32, buf[8..12], hs.wave, .little);
+    std.mem.writeInt(u32, buf[12..16], hs.wpm, .little);
+    buf[16] = hs.accuracy;
+
+    // Deserialize the same way loadHighScore does
+    const loaded = HighScore{
+        .score = std.mem.readInt(u64, buf[0..8], .little),
+        .wave = std.mem.readInt(u32, buf[8..12], .little),
+        .wpm = std.mem.readInt(u32, buf[12..16], .little),
+        .accuracy = buf[16],
+    };
+
+    try std.testing.expectEqual(hs.score, loaded.score);
+    try std.testing.expectEqual(hs.wave, loaded.wave);
+    try std.testing.expectEqual(hs.wpm, loaded.wpm);
+    try std.testing.expectEqual(hs.accuracy, loaded.accuracy);
 }
 
 test "smoothing convergence toward target WPM" {
