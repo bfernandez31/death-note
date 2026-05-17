@@ -41,9 +41,13 @@ const CRT_BEZEL_INNER = raylib.Color{ .r = 35, .g = 10, .b = 45, .a = 255 };
 const CRT_SCANLINE = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
 const CRT_VIGNETTE_OUTER = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 60 };
 const CRT_VIGNETTE_INNER = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
+const CRT_BG_CENTER = raylib.Color{ .r = 25, .g = 8, .b = 35, .a = 255 };
+const CRT_FLICKER = raylib.Color{ .r = 212, .g = 138, .b = 255, .a = 8 };
+const CRT_TANK = raylib.Color{ .r = 138, .g = 72, .b = 200, .a = 255 };
 const CRT_SCANLINE_STEP: c_int = 3;
 const CRT_VIGNETTE_OUTER_PX: c_int = 20;
 const CRT_VIGNETTE_INNER_PX: c_int = 10;
+const CRT_FLICKER_PERIOD_S: f64 = 7.0;
 const BOSS_WAVE_INTERVAL: u32 = 5;
 
 const ZOMBIE_FRAME_COUNT = 17;
@@ -214,7 +218,10 @@ fn getZombieTint(zombie_type: ZombieType) raylib.Color {
     return switch (zombie_type) {
         .standard => CRT_FG,
         .runner => CRT_WARN,
-        .tank => CRT_DIM,
+        // CRT_DIM is too dark to multiply against the spritesheet outlines and
+        // leaves tanks nearly invisible against CRT_BG; CRT_TANK is a brighter
+        // violet that keeps them visually distinct as their own zombie type.
+        .tank => CRT_TANK,
     };
 }
 
@@ -373,6 +380,17 @@ fn frame(ctx: *FrameContext) void {
     defer raylib.EndDrawing();
 
     raylib.ClearBackground(CRT_BG);
+    // Radial-gradient approximation (DEATHN-25 spec): a faint violet pool at the screen
+    // center fading to CRT_BG matches the web shell's CSS radial-gradient on native too.
+    raylib.DrawCircleGradient(
+        raylib.Vector2{
+            .x = @as(f32, @floatFromInt(screen_width)) / 2.0,
+            .y = @as(f32, @floatFromInt(screen_height)) / 2.0,
+        },
+        @as(f32, @floatFromInt(screen_height)),
+        CRT_BG_CENTER,
+        CRT_BG,
+    );
 
     // HUD: wave number, target WPM, kill progress (not shown during game-over)
     if (!is_game_over) {
@@ -460,10 +478,6 @@ fn frame(ctx: *FrameContext) void {
         drawZombies();
         drawBoss();
     }
-    // Popups layer on top of every state so the visual feedback for the kill that
-    // ended the wave (transition branch) or that coincided with the floor-cross
-    // game-over (game_over branch) is never silently dropped.
-    drawPopups();
     // Draw blinking underscore char
     if (ctx.mouse_on_text and letter_count < getCurrentMaxInput() and ((ctx.frames_counter / 20) % 2) == 0) {
         raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, CRT_ACCENT);
@@ -474,6 +488,10 @@ fn frame(ctx: *FrameContext) void {
     }
 
     drawCrtOverlay();
+    // Popups draw last so the vignette/scanlines don't dim the kill-feedback text.
+    // Layers on top of every game state — the wave-ending kill and the floor-cross
+    // game-over both need their popup to be visible.
+    drawPopups();
 }
 
 // Emscripten C-callback trampoline; arg carries the FrameContext pointer
@@ -1035,16 +1053,28 @@ fn drawCrtOverlay() void {
     raylib.DrawRectangle(0, 0, outer, screen_height, CRT_VIGNETTE_OUTER);
     raylib.DrawRectangle(screen_width - outer, 0, outer, screen_height, CRT_VIGNETTE_OUTER);
 
+    // Inner ring nests inside the outer ring so the band closest to the center
+    // (outer-inner..outer px from the edge) layers both alphas. Without this offset
+    // the 0..inner strip would receive both ring alphas, inverting the gradient.
     const inner = CRT_VIGNETTE_INNER_PX;
-    raylib.DrawRectangle(0, 0, screen_width, inner, CRT_VIGNETTE_INNER);
-    raylib.DrawRectangle(0, screen_height - inner, screen_width, inner, CRT_VIGNETTE_INNER);
-    raylib.DrawRectangle(0, 0, inner, screen_height, CRT_VIGNETTE_INNER);
-    raylib.DrawRectangle(screen_width - inner, 0, inner, screen_height, CRT_VIGNETTE_INNER);
+    const inner_offset = outer - inner;
+    raylib.DrawRectangle(0, inner_offset, screen_width, inner, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(0, screen_height - outer, screen_width, inner, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(inner_offset, 0, inner, screen_height, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(screen_width - outer, 0, inner, screen_height, CRT_VIGNETTE_INNER);
 
     raylib.DrawRectangleLines(0, 0, screen_width, screen_height, CRT_BEZEL_OUTER);
     raylib.DrawRectangleLines(1, 1, screen_width - 2, screen_height - 2, CRT_BEZEL_OUTER);
     raylib.DrawRectangleLines(2, 2, screen_width - 4, screen_height - 4, CRT_BEZEL_INNER);
     raylib.DrawRectangleLines(3, 3, screen_width - 6, screen_height - 6, CRT_BEZEL_INNER);
+
+    // DEATHN-25: subtle magenta flicker pulse every 7s (~2-3% opacity) mirrors the
+    // .crt-flicker CSS animation so the native build matches the web rendering.
+    const elapsed = raylib.GetTime();
+    const phase = @mod(elapsed, CRT_FLICKER_PERIOD_S) / CRT_FLICKER_PERIOD_S;
+    if (phase > 0.94 and phase < 0.98) {
+        raylib.DrawRectangle(0, 0, screen_width, screen_height, CRT_FLICKER);
+    }
 }
 
 fn drawPopups() void {
@@ -1758,9 +1788,9 @@ test "zombie tint colors" {
     try std.testing.expectEqual(CRT_WARN.b, runner.b);
 
     const tank = getZombieTint(.tank);
-    try std.testing.expectEqual(CRT_DIM.r, tank.r);
-    try std.testing.expectEqual(CRT_DIM.g, tank.g);
-    try std.testing.expectEqual(CRT_DIM.b, tank.b);
+    try std.testing.expectEqual(CRT_TANK.r, tank.r);
+    try std.testing.expectEqual(CRT_TANK.g, tank.g);
+    try std.testing.expectEqual(CRT_TANK.b, tank.b);
 }
 
 test "hyphen accepted in input" {
