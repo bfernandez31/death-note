@@ -119,14 +119,14 @@
 ### Tests for User Story 3
 **NOTE**: Limited testing — web persistence requires a browser. Manual test only.
 
-- [ ] T022 [US3] Extend tests in `src/main.zig`: add test "emscripten persistence branch compiles" — compile-time verification that the emscripten-gated code has no syntax errors (use `comptime` assertion or conditional compilation check)
+- [X] T022 [US3] Extend tests in `src/main.zig`: add test "emscripten persistence branch compiles" — compile-time verification that the emscripten-gated code has no syntax errors (use `comptime` assertion or conditional compilation check)
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] Verify `emscripten_run_script` and `emscripten_run_script_int` are accessible through existing `@cImport` in `src/raylib.zig` — if not, add them to the emscripten conditional import block
-- [ ] T024 [US3] Implement `loadHighScoreWeb() HighScoreRecord` function in `src/main.zig`: use `raylib.emscripten_run_script_int(...)` to read `localStorage.getItem('death-note.highscore')` and parse JSON fields. Return zero record on any failure (null, parse error)
-- [ ] T025 [US3] Implement `saveHighScoreWeb(record: HighScoreRecord) void` function in `src/main.zig`: build JS string for `localStorage.setItem('death-note.highscore', JSON.stringify({score:N,wave:N,wpm:N,accuracy:N}))` and call `raylib.emscripten_run_script(js_string)`
-- [ ] T026 [US3] Wire web persistence into game lifecycle in `src/main.zig`: dispatch to web variants at startup and game-over, gated behind `comptime @import("builtin").target.os.tag == .emscripten`
+- [X] T023 [US3] Verify `emscripten_run_script` and `emscripten_run_script_int` are accessible through existing `@cImport` in `src/raylib.zig` — if not, add them to the emscripten conditional import block
+- [X] T024 [US3] Implement `loadHighScoreWeb() HighScoreRecord` function in `src/main.zig`: use `raylib.emscripten_run_script_int(...)` to read `localStorage.getItem('death-note.highscore')` and parse JSON fields. Return zero record on any failure (null, parse error)
+- [X] T025 [US3] Implement `saveHighScoreWeb(record: HighScoreRecord) void` function in `src/main.zig`: build JS string for `localStorage.setItem('death-note.highscore', JSON.stringify({score:N,wave:N,wpm:N,accuracy:N}))` and call `raylib.emscripten_run_script(js_string)`
+- [X] T026 [US3] Wire web persistence into game lifecycle in `src/main.zig`: dispatch to web variants at startup and game-over, gated behind `comptime @import("builtin").target.os.tag == .emscripten`
 
 **Checkpoint**: Both native and web persistence working — high score survives across sessions on all platforms
 

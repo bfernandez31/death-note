@@ -291,7 +291,9 @@ fn frame(ctx: *FrameContext) void {
                     .wpm = avg_wpm,
                     .accuracy = acc,
                 };
-                if (comptime @import("builtin").target.os.tag != .emscripten) {
+                if (comptime @import("builtin").target.os.tag == .emscripten) {
+                    saveHighScoreWeb(best_score);
+                } else {
                     saveHighScore(best_score) catch {};
                 }
             }
@@ -477,7 +479,9 @@ pub fn main() !void {
 
     raylib.SetTargetFPS(60); // Set target frames per second
 
-    if (comptime @import("builtin").target.os.tag != .emscripten) {
+    if (comptime @import("builtin").target.os.tag == .emscripten) {
+        best_score = loadHighScoreWeb();
+    } else {
         best_score = loadHighScore() catch HighScoreRecord{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 };
     }
 
@@ -930,6 +934,37 @@ fn saveHighScore(record: HighScoreRecord) !void {
     defer file.close();
     const bytes = @as([*]const u8, @ptrCast(&record))[0..@sizeOf(HighScoreRecord)];
     try file.writeAll(bytes);
+}
+
+fn loadHighScoreWeb() HighScoreRecord {
+    const s = raylib.emscripten_run_script_int(
+        "try{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.score?d.score:0}catch(e){0}",
+    );
+    const w = raylib.emscripten_run_script_int(
+        "try{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.wave?d.wave:0}catch(e){0}",
+    );
+    const wpm = raylib.emscripten_run_script_int(
+        "try{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.wpm?d.wpm:0}catch(e){0}",
+    );
+    const acc = raylib.emscripten_run_script_int(
+        "try{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.accuracy?d.accuracy:0}catch(e){0}",
+    );
+    return HighScoreRecord{
+        .score = if (s >= 0) @intCast(s) else 0,
+        .wave = if (w >= 0) @intCast(w) else 0,
+        .wpm = if (wpm >= 0) @intCast(wpm) else 0,
+        .accuracy = if (acc >= 0) @intCast(acc) else 0,
+    };
+}
+
+fn saveHighScoreWeb(record: HighScoreRecord) void {
+    var js_buf: [256]u8 = undefined;
+    const js = std.fmt.bufPrintZ(
+        &js_buf,
+        "localStorage.setItem('death-note.highscore',JSON.stringify({{score:{d},wave:{d},wpm:{d},accuracy:{d}}}));",
+        .{ record.score, record.wave, record.wpm, record.accuracy },
+    ) catch return;
+    raylib.emscripten_run_script(js.ptr);
 }
 
 fn updateMetrics() void {
@@ -1555,6 +1590,11 @@ test "HighScoreRecord struct size" {
     try std.testing.expectEqual(@as(usize, @sizeOf(HighScoreRecord)), @sizeOf(HighScoreRecord));
     try std.testing.expect(@sizeOf(HighScoreRecord) > 0);
     try std.testing.expect(@sizeOf(HighScoreRecord) <= 24);
+}
+
+test "emscripten persistence branch compiles" {
+    try std.testing.expect(@typeInfo(@TypeOf(loadHighScoreWeb)).@"fn".return_type == HighScoreRecord);
+    try std.testing.expect(@typeInfo(@TypeOf(saveHighScoreWeb)).@"fn".params.len == 1);
 }
 
 test "high score comparison logic" {
