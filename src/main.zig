@@ -231,7 +231,7 @@ fn getSpawnWeights(wave: u32) SpawnWeights {
     return SPAWN_WEIGHT_TABLE[3];
 }
 
-fn getNameWeights(wave: u32) NameWeights {
+pub fn getNameWeights(wave: u32) NameWeights {
     if (wave <= 3) return NAME_WEIGHT_TABLE[0];
     if (wave <= 7) return NAME_WEIGHT_TABLE[1];
     if (wave <= 12) return NAME_WEIGHT_TABLE[2];

@@ -219,7 +219,7 @@ fn pickCandidate(
         }
     }
 
-    const weights = getNameWeightsLocal(wave);
+    const weights = main.getNameWeights(wave);
     const roll = rng.intRangeAtMost(u8, 0, 99);
 
     if (roll < weights.primary) {
@@ -293,15 +293,6 @@ fn isDuplicate(candidate: [*:0]const u8, active_names: []const [*:0]const u8) bo
     }
     return false;
 }
-
-fn getNameWeightsLocal(wave: u32) main.NameWeights {
-    if (wave <= 3) return main.NAME_WEIGHT_TABLE[0];
-    if (wave <= 7) return main.NAME_WEIGHT_TABLE[1];
-    if (wave <= 12) return main.NAME_WEIGHT_TABLE[2];
-    return main.NAME_WEIGHT_TABLE[3];
-}
-
-// Tests
 
 test "primary list size" {
     try std.testing.expect(PrimaryNames.len >= 349);
