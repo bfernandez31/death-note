@@ -39,56 +39,11 @@
       border: 3px solid #1a0525;
       outline: 3px solid #0d0115;
     }
-    /* Scanlines */
-    .crt-wrapper::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: repeating-linear-gradient(
-        to bottom,
-        transparent 0px,
-        transparent 2px,
-        rgba(255,255,255,0.05) 2px,
-        rgba(255,255,255,0.05) 3px
-      );
-      pointer-events: none;
-      z-index: 2;
-    }
-    /* Vignette */
-    .crt-wrapper::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: radial-gradient(
-        ellipse at center,
-        transparent 60%,
-        rgba(8,2,10,0.6) 85%,
-        rgba(8,2,10,0.95) 100%
-      );
-      pointer-events: none;
-      z-index: 3;
-    }
-    /* Flicker overlay */
-    .crt-flicker {
-      position: absolute;
-      inset: 0;
-      background: rgba(212,138,255,0.02);
-      pointer-events: none;
-      z-index: 4;
-      animation: flicker 7s ease-in-out infinite;
-    }
-    @keyframes flicker {
-      0%, 92%, 100% { opacity: 0; }
-      94% { opacity: 1; }
-      96% { opacity: 0.5; }
-      98% { opacity: 0.8; }
-    }
 
     #canvas {
       display: none;
       cursor: default;
-      position: relative;
-      z-index: 1;
+      outline: none;
     }
     #webgl-error {
       display: none;
@@ -108,7 +63,6 @@
 
   <div class="crt-wrapper" id="crt-wrapper" style="display:none;">
     <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
-    <div class="crt-flicker"></div>
   </div>
 
   <div id="webgl-error">
