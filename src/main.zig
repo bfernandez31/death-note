@@ -1900,8 +1900,8 @@ test "hyphen accepted in input" {
     const key_hyphen: i32 = 45;
     try std.testing.expect(key_hyphen >= 32 and key_hyphen <= 125);
 
-    const hyphen_name: [*:0]const u8 = "Jean-Luc";
-    var typed_buf = [_]u8{ 'J', 'e', 'a', 'n', '-', 'L', 'u', 'c', '\x00' };
+    const hyphen_name: [*:0]const u8 = "jean-luc";
+    var typed_buf = [_]u8{ 'j', 'e', 'a', 'n', '-', 'l', 'u', 'c', '\x00' };
     const typed_name = typed_buf[0..8];
     var zomb_len: usize = 0;
     while (hyphen_name[zomb_len] != '\x00') zomb_len += 1;
