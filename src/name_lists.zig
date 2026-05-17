@@ -72,6 +72,9 @@ pub const PrimaryNames = [_][*:0]const u8{
     "Shay",     "Skye",     "Thea",     "Toby",     "Todd",
     "Tony",     "Tori",     "Troy",     "Ty",       "Vern",
     "Wade",     "Walt",     "Will",     "Xena",     "Yael",
+    // Trap-only names also mirrored here so they remain reachable via primary selection
+    // (contract: TrapGroup names also appear in the searchable pool, not separate).
+    "Sera",     "Sana",     "Eris",
     // Medium-length names (6-7 chars)
     "Albert",   "Alexis",   "Alfred",   "Alicia",   "Amelia",
     "Andrea",   "Angela",   "Archie",   "Arthur",   "Austin",
@@ -182,6 +185,9 @@ pub const TrapGroups = [_]TrapGroup{
     .{ .names = &[_][*:0]const u8{ "Lily", "Lisa", "Lois" } },
     .{ .names = &[_][*:0]const u8{ "Hugo", "Hans", "Hope" } },
     .{ .names = &[_][*:0]const u8{ "Kate", "Kara", "Kent" } },
+    // Long trap group — without at least one ≥TANK_MIN_NAME_LEN trap group, tank zombies
+    // can never trigger a trap cluster because all short groups fail the length filter.
+    .{ .names = &[_][*:0]const u8{ "Catharine", "Catalina", "Carolina" } },
 };
 
 pub fn selectName(

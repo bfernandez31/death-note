@@ -2,8 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const raylib = @import("raylib.zig").c;
 
-// Importing the list of zombie names
-const ZombieNames = @import("zombie_names.zig").ZombieNames;
 const BossPhrases = @import("boss_phrases.zig").BossPhrases;
 const name_lists = @import("name_lists.zig");
 
@@ -194,8 +192,10 @@ const HighScoreRecord = struct {
     accuracy: u8 = 0,
 };
 
-// Array to hold zombie pointers
-var zombies: [MAX_ZOMBIES]?*Zombie = undefined;
+// Array to hold zombie pointers. Initialized explicitly to null per constitution rule;
+// `undefined` debug-fills with 0xAA bytes which read as non-null pointers and crash
+// on the first iteration before any zombie is spawned.
+var zombies: [MAX_ZOMBIES]?*Zombie = [_]?*Zombie{null} ** MAX_ZOMBIES;
 
 var zombie_texture: raylib.Texture2D = undefined;
 var zombie_kill_sound: raylib.Sound = undefined;
@@ -719,7 +719,17 @@ fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
                 active_buf[0..active_count],
                 forced_group,
                 rng,
-            ) orelse return false;
+            ) orelse {
+                // Anti-doublon retries exhausted. Count this as a cluster tick anyway,
+                // otherwise the cluster counter stays frozen and forces the same exhausted
+                // group on every subsequent frame — the spawner stalls for the rest of the
+                // wave.
+                if (trap_cluster_remaining > 0) {
+                    trap_cluster_remaining -= 1;
+                    if (trap_cluster_remaining == 0) trap_cluster_group = null;
+                }
+                return false;
+            };
 
             if (selection.category == .trap and trap_cluster_remaining == 0) {
                 trap_cluster_group = selection.trap_group_index;
@@ -767,11 +777,14 @@ fn getWaveConfig(wave: u32) WaveConfig {
     if (wave >= 1 and wave <= WAVE_TABLE.len) {
         return WAVE_TABLE[wave - 1];
     }
+    // Cap at MAX_ZOMBIES — past wave ~49 the formula exceeds the pool capacity, at which
+    // point wave_spawned can never reach pool_size and the wave never completes (soft-lock).
+    const calculated: u32 = 33 + 2 * (wave - 15);
     return WaveConfig{
         .target_wpm = 110,
         .spawn_delay = 0.66,
         .fall_speed = 2.0,
-        .pool_size = 33 + 2 * (wave - 15),
+        .pool_size = if (calculated > MAX_ZOMBIES) MAX_ZOMBIES else calculated,
     };
 }
 
@@ -1239,8 +1252,19 @@ test "getWaveConfig scales correctly for wave 16+" {
     const cfg20 = getWaveConfig(20);
     try std.testing.expectEqual(@as(u32, 43), cfg20.pool_size);
 
+    // Past the pool capacity the formula would yield 203, but the cap pins pool_size at
+    // MAX_ZOMBIES to prevent a soft-lock (wave_spawned could never reach an above-pool
+    // target).
     const cfg100 = getWaveConfig(100);
-    try std.testing.expectEqual(@as(u32, 203), cfg100.pool_size);
+    try std.testing.expectEqual(@as(u32, MAX_ZOMBIES), cfg100.pool_size);
+
+    // Just past the cap threshold should also clamp.
+    const cfg_threshold = getWaveConfig(49);
+    try std.testing.expectEqual(@as(u32, MAX_ZOMBIES), cfg_threshold.pool_size);
+
+    // Just below the threshold should still scale linearly.
+    const cfg48 = getWaveConfig(48);
+    try std.testing.expectEqual(@as(u32, 99), cfg48.pool_size);
 }
 
 // T005: frame-index wrap — mirrors the animation increment in drawZombies
