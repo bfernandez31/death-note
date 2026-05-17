@@ -543,14 +543,8 @@ fn drawZombies() void {
             };
 
             const scale = 0.2; // Adjust the scale factor to make the zombie smaller
-            const tint: raylib.Color = blk: {
-                if (game_over_transition_active) {
-                    if (game_over_killer_zombie) |killer| {
-                        if (killer == zomb) break :blk raylib.RED;
-                    }
-                }
-                break :blk raylib.WHITE;
-            };
+            const is_killer = game_over_transition_active and game_over_killer_zombie == zomb;
+            const tint = if (is_killer) raylib.RED else raylib.WHITE;
             raylib.DrawTexturePro(
                 zombie_texture,
                 src_rect,
@@ -916,6 +910,12 @@ fn saveHighScore(hs: HighScore) void {
     }
 }
 
+fn drawStatLine(y: c_int, comptime fmt: []const u8, args: anytype) void {
+    var buf: [64]u8 = undefined;
+    const text = std.fmt.bufPrintZ(&buf, fmt, args) catch "?";
+    drawCenteredText(text.ptr, y, 24, raylib.DARKGRAY);
+}
+
 fn drawStatsScreen() void {
     // Cover any previously drawn elements (text box, etc.) with a clean white slate
     raylib.DrawRectangle(0, 0, screen_width, screen_height, raylib.RAYWHITE);
@@ -925,39 +925,27 @@ fn drawStatsScreen() void {
     drawCenteredText("GAME OVER", y, 48, raylib.RED);
     y += STATS_Y_STEP;
 
-    var wave_buf: [64]u8 = undefined;
-    const wave_text = std.fmt.bufPrintZ(&wave_buf, "Wave reached: {d}", .{current_wave}) catch "Wave reached: ?";
-    drawCenteredText(wave_text.ptr, y, 24, raylib.DARKGRAY);
+    drawStatLine(y, "Wave reached: {d}", .{current_wave});
     y += STATS_Y_STEP;
 
-    var score_buf: [64]u8 = undefined;
-    const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d}", .{score}) catch "Score: ?";
-    drawCenteredText(score_text.ptr, y, 24, raylib.DARKGRAY);
+    drawStatLine(y, "Score: {d}", .{score});
     y += STATS_Y_STEP;
 
     if (is_new_highscore) {
         drawCenteredText("NEW HIGH SCORE!", y, 24, raylib.Color{ .r = 255, .g = 203, .b = 0, .a = 255 });
     } else {
-        var best_buf: [64]u8 = undefined;
-        const best_text = std.fmt.bufPrintZ(&best_buf, "Best: {d}", .{best_score}) catch "Best: ?";
-        drawCenteredText(best_text.ptr, y, 24, raylib.DARKGRAY);
+        drawStatLine(y, "Best: {d}", .{best_score});
     }
     y += STATS_Y_STEP;
 
-    var wpm_buf: [64]u8 = undefined;
-    const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "Average WPM: {d}", .{calculateSessionWpm()}) catch "Average WPM: ?";
-    drawCenteredText(wpm_text.ptr, y, 24, raylib.DARKGRAY);
+    drawStatLine(y, "Average WPM: {d}", .{calculateSessionWpm()});
     y += STATS_Y_STEP;
 
     const acc_val: u32 = @intFromFloat(@round(calculateTargetAccuracy()));
-    var acc_buf: [64]u8 = undefined;
-    const acc_text = std.fmt.bufPrintZ(&acc_buf, "Accuracy: {d}%", .{acc_val}) catch "Accuracy: ?%";
-    drawCenteredText(acc_text.ptr, y, 24, raylib.DARKGRAY);
+    drawStatLine(y, "Accuracy: {d}%", .{acc_val});
     y += STATS_Y_STEP;
 
-    var kills_buf: [64]u8 = undefined;
-    const kills_text = std.fmt.bufPrintZ(&kills_buf, "Kills: {d}", .{total_kills}) catch "Kills: ?";
-    drawCenteredText(kills_text.ptr, y, 24, raylib.DARKGRAY);
+    drawStatLine(y, "Kills: {d}", .{total_kills});
 
     drawCenteredText("Press ENTER to restart", screen_height - 40, 18, raylib.GRAY);
 }
