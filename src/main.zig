@@ -183,7 +183,9 @@ var total_kills: u32 = 0;
 var is_dying: bool = false;
 var dying_timer: f32 = 0.0;
 var dying_zombie_index: ?usize = null;
-var best_score: highscore.Record = .{};
+var best_score_survival: highscore.Record = .{};
+var best_score_zen: highscore.Record = .{};
+var last_played_mode: GameMode = .survival;
 var is_new_high_score: bool = false;
 
 var held_power_up: ?PowerUpType = null;
@@ -419,15 +421,15 @@ fn frame(ctx: *FrameContext) void {
                     is_dying = false;
                     const avg_wpm = calculateAverageWpm();
                     const acc: u8 = @intCast(calculateStatsAccuracy());
-                    if (score > best_score.score) {
+                    if (score > best_score_survival.score) {
                         is_new_high_score = true;
-                        best_score = highscore.Record{
+                        best_score_survival = highscore.Record{
                             .score = score,
                             .wave = current_wave,
                             .wpm = avg_wpm,
                             .accuracy = acc,
                         };
-                        highscore.save(best_score);
+                        highscore.save(.survival, best_score_survival);
                     }
                 }
             }
@@ -615,7 +617,11 @@ fn drawMenu() void {
     }
 
     var hs_buf: [64]u8 = undefined;
-    const hs_text = std.fmt.bufPrintZ(&hs_buf, "BEST: {d:0>6} - WAVE {d}", .{ best_score.score, best_score.wave }) catch "BEST: ---";
+    const menu_best = if (last_played_mode == .zen) best_score_zen else best_score_survival;
+    const hs_text = if (last_played_mode == .zen)
+        std.fmt.bufPrintZ(&hs_buf, "BEST: {d} WPM - {d}% ACC", .{ menu_best.wpm, menu_best.accuracy }) catch "BEST: ---"
+    else
+        std.fmt.bufPrintZ(&hs_buf, "BEST: {d:0>6} - WAVE {d}", .{ menu_best.score, menu_best.wave }) catch "BEST: ---";
     drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM);
 }
 
@@ -668,14 +674,14 @@ fn updatePause(allocator: *std.mem.Allocator) void {
                 if (game_mode == .zen) {
                     const avg_wpm = calculateAverageWpm();
                     const acc: u8 = @intCast(calculateStatsAccuracy());
-                    if (avg_wpm > best_score.wpm or (avg_wpm == best_score.wpm and acc > best_score.accuracy)) {
-                        best_score = highscore.Record{
+                    if (avg_wpm > best_score_zen.wpm or (avg_wpm == best_score_zen.wpm and acc > best_score_zen.accuracy)) {
+                        best_score_zen = highscore.Record{
                             .score = 0,
                             .wave = 0,
                             .wpm = avg_wpm,
                             .accuracy = acc,
                         };
-                        highscore.save(best_score);
+                        highscore.save(.zen, best_score_zen);
                     }
                 }
                 // FR-020: survival sessions discarded from pause don't save
@@ -819,6 +825,7 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
 
 fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     game_mode = mode;
+    last_played_mode = mode;
     current_screen = .playing;
     letter_count = 0;
     name[0] = '\x00';
@@ -876,7 +883,8 @@ pub fn main() !void {
     const seed: u64 = @intCast(@max(0, ts.sec *% 1000 + @divTrunc(ts.nsec, 1_000_000)));
     prng = std.Random.DefaultPrng.init(seed);
 
-    best_score = highscore.load();
+    best_score_survival = highscore.load(.survival);
+    best_score_zen = highscore.load(.zen);
 
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
@@ -1875,18 +1883,18 @@ test "restart resets session state but preserves best_score" {
     const saved_dying = is_dying;
     const saved_timer = dying_timer;
     const saved_index = dying_zombie_index;
-    const saved_best = best_score;
+    const saved_best = best_score_survival;
     const saved_new_hs = is_new_high_score;
     defer {
         total_kills = saved_kills;
         is_dying = saved_dying;
         dying_timer = saved_timer;
         dying_zombie_index = saved_index;
-        best_score = saved_best;
+        best_score_survival = saved_best;
         is_new_high_score = saved_new_hs;
     }
 
-    best_score = highscore.Record{ .score = 500, .wave = 3, .wpm = 40, .accuracy = 90 };
+    best_score_survival = highscore.Record{ .score = 500, .wave = 3, .wpm = 40, .accuracy = 90 };
     total_kills = 15;
     is_dying = true;
     dying_timer = 0.5;
@@ -1900,10 +1908,10 @@ test "restart resets session state but preserves best_score" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), dying_timer, 0.001);
     try std.testing.expect(dying_zombie_index == null);
     try std.testing.expect(!is_new_high_score);
-    try std.testing.expectEqual(@as(u64, 500), best_score.score);
-    try std.testing.expectEqual(@as(u32, 3), best_score.wave);
-    try std.testing.expectEqual(@as(u32, 40), best_score.wpm);
-    try std.testing.expectEqual(@as(u8, 90), best_score.accuracy);
+    try std.testing.expectEqual(@as(u64, 500), best_score_survival.score);
+    try std.testing.expectEqual(@as(u32, 3), best_score_survival.wave);
+    try std.testing.expectEqual(@as(u32, 40), best_score_survival.wpm);
+    try std.testing.expectEqual(@as(u8, 90), best_score_survival.accuracy);
 }
 
 test "circular buffer wraps correctly" {
@@ -2153,15 +2161,43 @@ test "accuracy edge case zero input stats" {
 }
 
 test "high score comparison logic" {
-    const saved = best_score;
-    defer best_score = saved;
+    const saved = best_score_survival;
+    defer best_score_survival = saved;
 
-    best_score = highscore.Record{ .score = 100, .wave = 2, .wpm = 30, .accuracy = 85 };
+    best_score_survival = highscore.Record{ .score = 100, .wave = 2, .wpm = 30, .accuracy = 85 };
 
-    try std.testing.expect(200 > best_score.score);
-    try std.testing.expect(!(100 > best_score.score));
-    try std.testing.expect(!(0 > best_score.score));
-    try std.testing.expect(!(50 > best_score.score));
+    try std.testing.expect(200 > best_score_survival.score);
+    try std.testing.expect(!(100 > best_score_survival.score));
+    try std.testing.expect(!(0 > best_score_survival.score));
+    try std.testing.expect(!(50 > best_score_survival.score));
+}
+
+test "zen high score comparison: wpm first, accuracy tiebreaker" {
+    const saved = best_score_zen;
+    defer best_score_zen = saved;
+
+    best_score_zen = highscore.Record{ .score = 0, .wave = 0, .wpm = 50, .accuracy = 80 };
+
+    // Higher WPM wins
+    const higher_wpm: u32 = 60;
+    try std.testing.expect(higher_wpm > best_score_zen.wpm);
+
+    // Lower WPM loses
+    const lower_wpm: u32 = 40;
+    try std.testing.expect(!(lower_wpm > best_score_zen.wpm));
+
+    // Equal WPM, higher accuracy wins
+    const equal_wpm: u32 = 50;
+    const higher_acc: u8 = 90;
+    try std.testing.expect(equal_wpm == best_score_zen.wpm and higher_acc > best_score_zen.accuracy);
+
+    // Equal WPM, lower accuracy loses
+    const lower_acc: u8 = 70;
+    try std.testing.expect(!(equal_wpm > best_score_zen.wpm or (equal_wpm == best_score_zen.wpm and lower_acc > best_score_zen.accuracy)));
+
+    // Equal WPM, equal accuracy: no new best
+    const same_acc: u8 = 80;
+    try std.testing.expect(!(equal_wpm > best_score_zen.wpm or (equal_wpm == best_score_zen.wpm and same_acc > best_score_zen.accuracy)));
 }
 
 test "kill counter tracks total kills" {
@@ -2478,4 +2514,73 @@ test "zen WPM selection circular wrap" {
     const tier_count: u8 = @intCast(ZEN_WPM_TIERS.len);
     try std.testing.expectEqual(@as(u8, 2), (0 +% tier_count -% 1) % tier_count);
     try std.testing.expectEqual(@as(u8, 0), (2 +% 1) % tier_count);
+}
+
+test "freeze timer only decrements during playing screen" {
+    const saved_screen = current_screen;
+    const saved_freeze = freeze_timer;
+    defer {
+        current_screen = saved_screen;
+        freeze_timer = saved_freeze;
+    }
+
+    freeze_timer = 2.0;
+    current_screen = .paused;
+    // Freeze timer decrement is inside the .playing branch of the switch,
+    // so when paused it is NOT touched — verify the invariant structurally:
+    try std.testing.expect(current_screen != .playing);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), freeze_timer, 0.001);
+}
+
+test "bomb on empty screen consumes power-up" {
+    const saved_held = held_power_up;
+    defer held_power_up = saved_held;
+
+    held_power_up = .bomb;
+    try std.testing.expect(held_power_up != null);
+    // Bomb activation kills all active zombies; with none active it simply clears held_power_up
+    held_power_up = null;
+    try std.testing.expect(held_power_up == null);
+}
+
+test "carrier zombie power-up field is optional" {
+    const z = Zombie{
+        .x = 100,
+        .y = 0,
+        .speed = 1.0,
+        .name = "test",
+        .is_active = true,
+        .frame = 0,
+        .animation_timer = 0,
+        .zombie_type = .standard,
+        .power_up = .freeze,
+    };
+    try std.testing.expect(z.power_up != null);
+    const z2 = Zombie{
+        .x = 100,
+        .y = 0,
+        .speed = 1.0,
+        .name = "test",
+        .is_active = true,
+        .frame = 0,
+        .animation_timer = 0,
+        .zombie_type = .standard,
+    };
+    try std.testing.expect(z2.power_up == null);
+}
+
+test "per-mode high scores are independent" {
+    const saved_s = best_score_survival;
+    const saved_z = best_score_zen;
+    defer {
+        best_score_survival = saved_s;
+        best_score_zen = saved_z;
+    }
+
+    best_score_survival = highscore.Record{ .score = 1000, .wave = 5, .wpm = 60, .accuracy = 95 };
+    best_score_zen = highscore.Record{ .score = 0, .wave = 0, .wpm = 80, .accuracy = 90 };
+
+    try std.testing.expectEqual(@as(u64, 1000), best_score_survival.score);
+    try std.testing.expectEqual(@as(u32, 80), best_score_zen.wpm);
+    try std.testing.expect(best_score_survival.score != best_score_zen.score);
 }

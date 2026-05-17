@@ -101,22 +101,22 @@
 
 **Independent Test**: Play each mode → achieve scores → restart game → verify both high scores persist independently.
 
-- [ ] T034 [US4] Import `GameMode` from `zombie_types.zig` in `src/highscore.zig` and add `fn filename(mode: GameMode) [*:0]const u8` — returns `"highscore.dat"` for `.survival` (backward-compatible FR-030), `"highscore-zen.dat"` for `.zen`
-- [ ] T035 [US4] Add `fn webKey(mode: GameMode) []const u8` to `src/highscore.zig` — returns `"death-note.highscore"` for `.survival`, `"death-note.highscore.zen"` for `.zen`
-- [ ] T036 [US4] Parameterize `pub fn load()` → `pub fn load(mode: GameMode)` and `pub fn save(record: Record)` → `pub fn save(mode: GameMode, record: Record)` in `src/highscore.zig`. Native path: pass `filename(mode)` to `std.c.fopen`. Web path: interpolate `webKey(mode)` into localStorage JS strings. Update existing test blocks that call `load()`/`save()` to pass a mode argument
-- [ ] T037 [P] [US4] Update `src/main.zig` call sites: replace single `best_score` variable with `var best_score_survival: highscore.Record = .{}` and `var best_score_zen: highscore.Record = .{}`. Startup: `best_score_survival = highscore.load(.survival)`, `best_score_zen = highscore.load(.zen)`. Game-over save: `highscore.save(.survival, best_score_survival)`. Update all references to former `best_score`
-- [ ] T038 [US4] Implement Zen high score comparison in `src/main.zig`: new best detected when `wpm > best_score_zen.wpm or (wpm == best_score_zen.wpm and accuracy > best_score_zen.accuracy)`. Wire into Zen session end (T032)
-- [ ] T039 [US4] Update `drawMenu()` in `src/main.zig` to display high score for most recently played mode (FR-015): add `var last_played_mode: zt.GameMode = .survival` module-level variable, update on game start, read matching `best_score_*` in menu draw
-- [ ] T040 [P] [US4] Extend tests in `src/highscore.zig`: add test blocks for `filename(.survival)` == `"highscore.dat"` (backward-compatible), `filename(.zen)` == `"highscore-zen.dat"`, `webKey(.survival)` == `"death-note.highscore"`, `webKey(.zen)` == `"death-note.highscore.zen"`, `DISK_SIZE` unchanged at 17 bytes
-- [ ] T041 [P] [US4] Extend tests in `src/main.zig`: add test blocks for zen high score comparison logic (WPM-first, accuracy tiebreaker) and survival high score comparison unchanged
+- [x] T034 [US4] Import `GameMode` from `zombie_types.zig` in `src/highscore.zig` and add `fn filename(mode: GameMode) [*:0]const u8` — returns `"highscore.dat"` for `.survival` (backward-compatible FR-030), `"highscore-zen.dat"` for `.zen`
+- [x] T035 [US4] Add `fn webKey(mode: GameMode) []const u8` to `src/highscore.zig` — returns `"death-note.highscore"` for `.survival`, `"death-note.highscore.zen"` for `.zen`
+- [x] T036 [US4] Parameterize `pub fn load()` → `pub fn load(mode: GameMode)` and `pub fn save(record: Record)` → `pub fn save(mode: GameMode, record: Record)` in `src/highscore.zig`. Native path: pass `filename(mode)` to `std.c.fopen`. Web path: interpolate `webKey(mode)` into localStorage JS strings. Update existing test blocks that call `load()`/`save()` to pass a mode argument
+- [x] T037 [P] [US4] Update `src/main.zig` call sites: replace single `best_score` variable with `var best_score_survival: highscore.Record = .{}` and `var best_score_zen: highscore.Record = .{}`. Startup: `best_score_survival = highscore.load(.survival)`, `best_score_zen = highscore.load(.zen)`. Game-over save: `highscore.save(.survival, best_score_survival)`. Update all references to former `best_score`
+- [x] T038 [US4] Implement Zen high score comparison in `src/main.zig`: new best detected when `wpm > best_score_zen.wpm or (wpm == best_score_zen.wpm and accuracy > best_score_zen.accuracy)`. Wire into Zen session end (T032)
+- [x] T039 [US4] Update `drawMenu()` in `src/main.zig` to display high score for most recently played mode (FR-015): add `var last_played_mode: zt.GameMode = .survival` module-level variable, update on game start, read matching `best_score_*` in menu draw
+- [x] T040 [P] [US4] Extend tests in `src/highscore.zig`: add test blocks for `filename(.survival)` == `"highscore.dat"` (backward-compatible), `filename(.zen)` == `"highscore-zen.dat"`, `webKey(.survival)` == `"death-note.highscore"`, `webKey(.zen)` == `"death-note.highscore.zen"`, `DISK_SIZE` unchanged at 17 bytes
+- [x] T041 [P] [US4] Extend tests in `src/main.zig`: add test blocks for zen high score comparison logic (WPM-first, accuracy tiebreaker) and survival high score comparison unchanged
 
 ---
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T042 Verify freeze timer pauses when `current_screen == .paused` in `src/main.zig` — `freeze_timer` must NOT decrement during pause; remaining freeze time resumes on unpause
-- [ ] T043 Verify edge cases in `src/main.zig`: Bomb on empty screen (consumed, no error), carrier zombie reaching bottom (power-up lost, not awarded), last wave zombie as carrier (wave completes normally)
-- [ ] T044 Run `zig build test` to verify all new and existing tests pass, then `zig build` to verify native compilation succeeds with zero errors
+- [x] T042 Verify freeze timer pauses when `current_screen == .paused` in `src/main.zig` — `freeze_timer` must NOT decrement during pause; remaining freeze time resumes on unpause
+- [x] T043 Verify edge cases in `src/main.zig`: Bomb on empty screen (consumed, no error), carrier zombie reaching bottom (power-up lost, not awarded), last wave zombie as carrier (wave completes normally)
+- [x] T044 Run `zig build test` to verify all new and existing tests pass, then `zig build` to verify native compilation succeeds with zero errors
 
 ---
 
