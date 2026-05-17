@@ -34,7 +34,7 @@ The data containers in the project are:
 | `zombies[MAX_ZOMBIES]` pool | `src/main.zig` (runtime) | Fixed array of heap-allocated `?*Zombie` pointers; slot freed and set to `null` immediately on zombie kill |
 | `boss` pointer | `src/main.zig` (runtime) | Single `?*Zombie` pointer for the active boss zombie; null when no boss is present |
 | `popups[MAX_POPUPS]` pool | `src/main.zig` (runtime) | Fixed stack-allocated array of 32 `ScorePopup` value-type entries; mutable at runtime |
-| `best_score` | `src/main.zig` (runtime) | `highscore.Record` loaded via `highscore.load(game_mode)` at game start; one record loaded at a time (Survival or Zen); persisted via `highscore.save()` when beaten |
+| `best_score_survival` / `best_score_zen` | `src/main.zig` (runtime) | Two `highscore.Record` values, one per `GameMode`; both loaded via `highscore.load(.survival)` / `highscore.load(.zen)` at startup so the menu can display the relevant record for `last_played_mode`; each persisted via `highscore.save()` when its mode's session beats it |
 | `PrimaryNames` | `src/name_lists.zig` (compile-time) | Read-only array of 349+ null-terminated first-name C string pointers |
 | `CompoundNames` | `src/name_lists.zig` (compile-time) | Read-only array of 31 null-terminated hyphenated-name pointers (e.g. `"Jean-Pierre"`) |
 | `TrapGroups` | `src/name_lists.zig` (compile-time) | Read-only array of 15 `TrapGroup` structs, each containing 3–5 visually similar names |

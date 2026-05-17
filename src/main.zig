@@ -43,6 +43,7 @@ const CRT_BEZEL_INNER = raylib.Color{ .r = 35, .g = 10, .b = 45, .a = 255 };
 const CRT_SCANLINE = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
 const CRT_VIGNETTE_OUTER = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 60 };
 const CRT_VIGNETTE_INNER = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
+const CRT_PAUSE_OVERLAY = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 150 };
 const CRT_BG_CENTER = raylib.Color{ .r = 25, .g = 8, .b = 35, .a = 255 };
 const CRT_FLICKER = raylib.Color{ .r = 212, .g = 138, .b = 255, .a = 8 };
 const CRT_TANK = raylib.Color{ .r = 138, .g = 72, .b = 200, .a = 255 };
@@ -209,6 +210,10 @@ var current_screen: GameScreen = .main_menu;
 var game_mode: GameMode = .survival;
 var menu_selection: u8 = 0;
 var pause_selection: u8 = 0;
+// Set by the main-menu Quit entry so the main loop exits cleanly between frames.
+// Tearing raylib down inside `frame()` would leave the rest of the same frame drawing
+// onto a destroyed context.
+var should_quit_app: bool = false;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -455,7 +460,9 @@ fn frame(ctx: *FrameContext) void {
         },
         .game_over => {
             if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
-                startGame(.survival, ctx.allocator);
+                // Retry the mode the player was actually playing — hard-coding `.survival` here
+                // would silently override the choice if game-over is ever wired up for other modes.
+                startGame(last_played_mode, ctx.allocator);
             } else if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
                 current_screen = .main_menu;
             }
@@ -593,7 +600,11 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 current_screen = .wpm_select;
             },
             2 => {
-                raylib.CloseWindow();
+                // Defensive: Zen sessions can only reach this branch via Pause → Quit-to-Menu (which
+                // already saves), but call again in case future flows route here from active play.
+                saveZenScoreIfBest();
+                // Set a flag instead of calling CloseWindow here — see comment on `should_quit_app`.
+                should_quit_app = true;
             },
             else => {},
         }
@@ -671,20 +682,8 @@ fn updatePause(allocator: *std.mem.Allocator) void {
                 current_screen = .playing;
             },
             1 => {
-                if (game_mode == .zen) {
-                    const avg_wpm = calculateAverageWpm();
-                    const acc: u8 = @intCast(calculateStatsAccuracy());
-                    if (avg_wpm > best_score_zen.wpm or (avg_wpm == best_score_zen.wpm and acc > best_score_zen.accuracy)) {
-                        best_score_zen = highscore.Record{
-                            .score = 0,
-                            .wave = 0,
-                            .wpm = avg_wpm,
-                            .accuracy = acc,
-                        };
-                        highscore.save(.zen, best_score_zen);
-                    }
-                }
-                // FR-020: survival sessions discarded from pause don't save
+                // FR-020: survival sessions discarded from pause don't save; Zen WPM record is preserved.
+                saveZenScoreIfBest();
                 resetZombies(allocator);
                 resetBoss(allocator);
                 current_screen = .main_menu;
@@ -695,7 +694,7 @@ fn updatePause(allocator: *std.mem.Allocator) void {
 }
 
 fn drawPauseOverlay() void {
-    raylib.DrawRectangle(0, 0, screen_width, screen_height, raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 150 });
+    raylib.DrawRectangle(0, 0, screen_width, screen_height, CRT_PAUSE_OVERLAY);
     drawCenteredTextShadow("PAUSED", screen_height / 2 - 100, 50, CRT_FG);
 
     const pause_start_y: c_int = screen_height / 2;
@@ -767,7 +766,9 @@ fn drawPlayingHud() void {
         }
 
         if (shield_active) {
-            raylib.DrawText("SHIELD ARMED", SCORE_HUD_X, 80, METRICS_HUD_SIZE, CRT_WARN);
+            // Drawn on its own row so it does not overlap the FREEZE countdown when both effects are active.
+            const shield_y: c_int = if (freeze_timer > 0) 100 else 80;
+            raylib.DrawText("SHIELD ARMED", SCORE_HUD_X, shield_y, METRICS_HUD_SIZE, CRT_WARN);
         }
     }
 }
@@ -793,6 +794,7 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
                 freeze_timer = FREEZE_DURATION;
             },
             .bomb => {
+                var bomb_killed_any = false;
                 for (&zombies) |*slot| {
                     if (slot.*) |zomb| {
                         if (!zomb.is_active) continue;
@@ -801,14 +803,18 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
                             while (zomb.name[zomb_name_length] != '\x00') zomb_name_length += 1;
                             const points = calculateScore(zomb_name_length, zomb.y, false, combo_count);
                             score += points;
+                            combo_count += 1;
+                            if (combo_count > max_combo) max_combo = combo_count;
                             spawnPopup(zomb.x, zomb.y, points);
-                            wave_kills += 1;
+                            // F-36: wave_kills is NOT incremented for bomb kills (only typed kills count toward wave completion).
                             total_kills += 1;
                             allocator.destroy(zomb);
                             slot.* = null;
+                            bomb_killed_any = true;
                         }
                     }
                 }
+                if (bomb_killed_any) raylib.PlaySound(zombie_kill_sound);
             },
             .shield => {
                 shield_active = true;
@@ -818,7 +824,28 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
     }
 }
 
+// Persist the current Zen session's WPM/accuracy if it beats `best_score_zen`.
+// Called from every transition that ends an active Zen session (start new game,
+// quit-to-menu, quit-to-OS) so a record is never silently dropped.
+fn saveZenScoreIfBest() void {
+    if (game_mode != .zen) return;
+    const avg_wpm = calculateAverageWpm();
+    const acc: u8 = @intCast(calculateStatsAccuracy());
+    if (avg_wpm > best_score_zen.wpm or (avg_wpm == best_score_zen.wpm and acc > best_score_zen.accuracy)) {
+        best_score_zen = highscore.Record{
+            .score = 0,
+            .wave = 0,
+            .wpm = avg_wpm,
+            .accuracy = acc,
+        };
+        highscore.save(.zen, best_score_zen);
+    }
+}
+
 fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
+    // If we were mid-Zen (e.g. user picked a new mode from the menu), preserve the WPM record
+    // before the session counters are reset below.
+    if (current_screen == .playing) saveZenScoreIfBest();
     game_mode = mode;
     last_played_mode = mode;
     current_screen = .playing;
@@ -903,7 +930,7 @@ pub fn main() !void {
         _ = raylib.atexit(&cleanup_on_exit);
         raylib.emscripten_set_main_loop_arg(frame_c_callback, &ctx, 0, 1);
     } else {
-        while (!raylib.WindowShouldClose()) { // Main game loop
+        while (!raylib.WindowShouldClose() and !should_quit_app) { // Main game loop
             frame(&ctx);
         }
     }
@@ -917,6 +944,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
 
     // Free killed zombies and null their slots so spawnZombie can reuse them; otherwise
     // pool_size values above MAX_ZOMBIES (waves 49+) soft-lock once every slot is consumed.
+    var shield_absorbed_any = false;
     for (&zombies, 0..) |*slot, i| {
         if (slot.*) |zomb| {
             if (!zomb.is_active) continue;
@@ -930,11 +958,13 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                     slot.* = null;
                     continue;
                 }
-                // Survival: a shield absorbs one fatal landing then disarms.
+                // Survival: a shield absorbs every zombie that crosses this frame, then disarms once.
+                // Disarming after the loop prevents a cluster (e.g. freeze expiry advancing several past
+                // the bottom in one step) from leaking a second zombie past the shield.
                 if (shield_active) {
-                    shield_active = false;
                     allocator.destroy(zomb);
                     slot.* = null;
+                    shield_absorbed_any = true;
                     continue;
                 }
                 is_dying = true;
@@ -972,6 +1002,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
             }
         }
     }
+    if (shield_absorbed_any) shield_active = false;
 }
 
 fn drawZombies() void {

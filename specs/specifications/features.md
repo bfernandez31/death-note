@@ -1001,15 +1001,15 @@ graph TB
 
 ### F-37 Shield Power-up
 
-**Description.** Activating the Shield power-up arms a passive protective effect. When the next zombie crosses `screen_height`, the shield intercepts: the zombie is destroyed (no game-over, no dying state), the shield is consumed, and gameplay continues. The shield does not stack and does not interact with the boss.
+**Description.** Activating the Shield power-up arms a passive protective effect. While armed, every zombie that crosses `screen_height` during the same frame is intercepted — each is destroyed (no game-over, no dying state). The shield then disarms at the end of that frame. The shield does not stack and does not interact with the boss.
 
-**User-facing behavior.** Pressing Space with Shield equipped shows a "SHIELD: ACTIVE" indicator in the HUD. The next zombie to reach the bottom vanishes instead of triggering game over. The HUD indicator disappears after the shield absorbs a hit.
+**User-facing behavior.** Pressing Space with Shield equipped shows a "SHIELD: ACTIVE" indicator in the HUD. Any zombies reaching the bottom during the next danger moment vanish instead of triggering game over (e.g. when freeze expires and a tight cluster crosses together, the shield absorbs the entire batch). The HUD indicator disappears after the shield absorbs that batch.
 
 **System behavior.**
 - `activatePowerUp`: sets `shield_active = true`.
-- In `updateZombies`, zombie-at-bottom detection: if `shield_active` → `shield_active = false`; free zombie (`allocator.destroy`, slot = `null`); return (no `is_dying` set).
+- In `updateZombies`, zombie-at-bottom detection: if `shield_active` → free zombie (`allocator.destroy`, slot = `null`) and mark `shield_absorbed_any = true`; continue iteration so additional same-frame crossings are also absorbed. After the loop, `shield_active = false` if `shield_absorbed_any`.
 - Shield does not block boss crossing the bottom (boss-crossing path is in `updateBoss`, which does not check `shield_active`).
-- HUD: when `shield_active` and `game_mode == .survival`, renders `"SHIELD: ACTIVE"` with `CRT_ACCENT` color.
+- HUD: when `shield_active` and `game_mode == .survival`, renders `"SHIELD ARMED"` with `CRT_WARN` color (on its own row when `freeze_timer > 0` so it does not overlap the FREEZE countdown).
 - On restart / quit-to-menu: `shield_active = false`.
 
 **Key source references.**

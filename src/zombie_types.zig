@@ -4,6 +4,8 @@
 // declarations without forming a cycle. Per constitution: sibling modules MUST NOT
 // import main.zig — shared symbols move to their own snake_case.zig.
 
+const std = @import("std");
+
 pub const ZombieType = enum {
     standard,
     runner,
@@ -68,8 +70,6 @@ pub fn getNameWeights(wave: u32) NameWeights {
     if (wave <= 12) return NAME_WEIGHT_TABLE[2];
     return NAME_WEIGHT_TABLE[3];
 }
-
-const std = @import("std");
 
 test "PowerUpType enum has 3 variants" {
     const fields = @typeInfo(PowerUpType).@"enum".fields;
