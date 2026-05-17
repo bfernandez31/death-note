@@ -12,6 +12,7 @@
   - [3.5 WaveConfig](#35-waveconfig)
   - [3.6 BossPhrases](#36-bossphrases)
   - [3.7 ScorePopup](#37-scorepopup)
+  - [3.8 HighScore](#38-highscore)
 - [4. Enums and Constants](#4-enums-and-constants)
 - [5. State Machines](#5-state-machines)
   - [5.1 Game State Machine](#51-game-state-machine)
@@ -23,11 +24,11 @@
 
 ## 1. Data Layer Overview
 
-**There is no database, no ORM, no schema file, and no persistence layer of any kind.**
+**There is no database or ORM.** The only persistence is a single high score record, written to disk at game-over time.
 
-All game state lives in module-level global variables declared at the top of `src/main.zig`. None of this state survives process exit; every session starts fresh.
+Most game state lives in module-level global variables declared at the top of `src/main.zig`. The high score is the sole piece of data that survives process exit.
 
-The three "data containers" in the project are:
+The data containers in the project are:
 
 | Container | Location | Nature |
 |---|---|---|
@@ -36,8 +37,9 @@ The three "data containers" in the project are:
 | `popups[MAX_POPUPS]` pool | `src/main.zig` (runtime) | Fixed stack-allocated array of 32 `ScorePopup` value-type entries; mutable at runtime |
 | `ZombieNames` | `src/zombie_names.zig` (compile-time) | Read-only, compile-time array of 49 null-terminated C string pointers |
 | `BossPhrases` | `src/boss_phrases.zig` (compile-time) | Read-only, compile-time array of 10 null-terminated multi-word phrase pointers |
+| `highscore.dat` / `localStorage` | Filesystem / browser storage (persistent) | Single `HighScore` record (17 bytes binary on native; JSON on web); read at startup, written on new record |
 
-There are no files read or written during gameplay. Asset files (`assets/zombie-hit.wav`, `assets/z_spritesheet.png`) are loaded at startup by raylib and held in GPU/audio memory as opaque handles — they are not parsed into application data structures.
+Asset files (`assets/zombie-hit.wav`, `assets/z_spritesheet.png`) are loaded at startup by raylib and held in GPU/audio memory as opaque handles — they are not parsed into application data structures.
 
 ---
 
@@ -69,6 +71,19 @@ erDiagram
         f32 elapsed_time
         f32 displayed_wpm
         f32 displayed_accuracy
+        u32 total_kills
+        bool game_over_transition_active
+        f32 game_over_transition_timer
+        ptr game_over_killer_zombie
+        u64 best_score
+        bool is_new_highscore
+    }
+
+    HIGHSCORE {
+        u64 score
+        u32 wave
+        u32 wpm
+        u8 accuracy
     }
 
     SCORE_POPUP {
@@ -125,6 +140,7 @@ erDiagram
     GAME_STATE ||--|| WAVE_CONFIG : "resolves per wave"
     GAME_STATE ||--o| ZOMBIE : "boss pointer (0 or 1)"
     GAME_STATE ||--|| POPUP_POOL : "governs lifecycle of"
+    GAME_STATE ||--|| HIGHSCORE : "best_score loaded from / saved to"
     ZOMBIE_POOL ||--o{ ZOMBIE : "holds up to 100"
     ZOMBIE }o--|| ZOMBIE_NAMES : "name points into (regular)"
     ZOMBIE }o--o| BOSS_PHRASES : "name points into (boss)"
@@ -259,6 +275,12 @@ These variables collectively represent the running state of the game session.
 | `elapsed_time` | `f32` | `0.0` | `0.0` | Accumulated game time in seconds, advanced by `raylib.GetFrameTime()` inside `updateMetrics()` each frame (gated by `!is_game_over`). Used as the timestamp for correct-character events and as the reference point for the sliding WPM window. Reset by `resetMetricsState`. |
 | `displayed_wpm` | `f32` | `0.0` | `0.0` | Smoothed WPM value shown in the HUD. Interpolates toward `calculateTargetWpm()` at rate `SMOOTHING_FACTOR = 0.2` per frame. Frozen on game-over. Reset to 0.0 by `resetMetricsState`. |
 | `displayed_accuracy` | `f32` | `100.0` | `100.0` | Smoothed accuracy percentage shown in the HUD. Interpolates toward `calculateTargetAccuracy()` at rate `SMOOTHING_FACTOR = 0.2` per frame. Frozen on game-over. Reset to 100.0 by `resetMetricsState`. |
+| `total_kills` | `u32` | `0` | `0` | Session-wide count of all enemies destroyed (regular zombies + boss). Incremented at each kill site. Not reset at wave transitions. Reset to 0 by the restart handler. |
+| `game_over_transition_active` | `bool` | `false` | `false` | `true` during the 1-second pre-game-over pause (F-26). Blocks input, spawning, and `updateMetrics`. Set to `false` when `game_over_transition_timer` expires. |
+| `game_over_transition_timer` | `f32` | `0.0` | `0.0` | Countdown in seconds for the game-over transition. Initialised to `GAME_OVER_TRANSITION_DURATION` (1.0) when a zombie or boss crosses `screen_height`. Decremented each frame while `game_over_transition_active`. |
+| `game_over_killer_zombie` | `?*Zombie` | `null` | `null` | Pointer to the zombie that triggered the transition, used by `drawZombies` to apply a `RED` tint to that sprite. `null` when the boss reached the floor (boss renders red by default). |
+| `best_score` | `u64` | loaded from `highscore.dat` / `localStorage` | not reset | All-time best session score. Loaded by `loadHighScore().score` in `main()` before the game loop. Updated to `score` when `score > best_score` at transition end. Not touched by `resetScoreState`. |
+| `is_new_highscore` | `bool` | `false` | `false` | `true` when the just-ended session's `score` exceeded `best_score`. Set at game-over transition end; cleared to `false` by the restart handler. Controls the stats screen "NEW HIGH SCORE!" line. |
 | `frames_counter` | `usize` | `0` (in `FrameContext`) | — | Counts frames while the mouse is over the text input box. Drives the blink via `(frames_counter / 20) % 2 == 0`; reset to `0` when the mouse leaves. |
 | `mouse_on_text` | `bool` | `false` (in `FrameContext`) | — | `true` when the mouse cursor is over `text_box`. Controls cursor icon and the blinking-underscore overlay. |
 
@@ -365,6 +387,44 @@ const ScorePopup = struct {
 
 ---
 
+### 3.8 HighScore
+
+**Source:** `src/main.zig`
+
+**Definition:**
+
+```zig
+const HighScore = struct {
+    score: u64,
+    wave: u32,
+    wpm: u32,
+    accuracy: u8,
+};
+```
+
+`HighScore` is a value type used exclusively by `loadHighScore()` and `saveHighScore()`. It is never heap-allocated and is not stored in the `zombies` pool or any module-level variable directly — its `.score` field is extracted into `best_score` at startup.
+
+| Field | Type | Meaning | Constraints |
+|---|---|---|---|
+| `score` | `u64` | Best session score achieved | Written as 8 bytes LE in native; as `"score":N` in web JSON |
+| `wave` | `u32` | Wave reached in the best session | Written as 4 bytes LE in native; as `"wave":N` in web JSON |
+| `wpm` | `u32` | Average WPM in the best session (from `calculateSessionWpm`) | Written as 4 bytes LE in native; as `"wpm":N` in web JSON |
+| `accuracy` | `u8` | Accuracy percentage in the best session (0–100) | Single byte in native; as `"accuracy":N` in web JSON |
+
+**Persistence formats:**
+
+| Platform | Format | Location | Size |
+|---|---|---|---|
+| Native | Binary little-endian | `highscore.dat` in working directory | 17 bytes |
+| Web (emscripten) | JSON string | `localStorage["death-note.highscore"]` | Variable |
+
+**Relationships:**
+- Loaded once in `main()` via `loadHighScore()`; `.score` stored in the `best_score` global.
+- Written by `saveHighScore` when `score > best_score` at game-over transition end.
+- `jsonGetU64` is a minimal flat-JSON key extractor used by `loadHighScore` on the web path.
+
+---
+
 ## 4. Enums and Constants
 
 There are no enums in this project. All constants are compile-time `const` values declared at module scope in `src/main.zig`.
@@ -408,6 +468,10 @@ There are no enums in this project. All constants are compile-time `const` value
 | `ACC_HUD_Y` | `30` | `c_int` | Y pixel position of the accuracy HUD label (below WPM) |
 | `METRICS_HUD_SIZE` | `18` | `c_int` | Font size for both WPM and accuracy HUD labels |
 | `SMOOTHING_FACTOR` | `0.2` | `f32` | Per-frame interpolation rate applied to both `displayed_wpm` and `displayed_accuracy`; at 60 FPS, display converges to within 1% of target in ~21 frames |
+| `GAME_OVER_TRANSITION_DURATION` | `1.0` | `f32` | Duration in seconds of the pre-game-over pause during which the killer zombie is tinted red before the stats screen appears |
+| `HIGHSCORE_FILE` | `"highscore.dat"` | `[*:0]const u8` | Null-terminated path to the native high score file; relative to the working directory |
+| `STATS_Y_START` | `80` | `c_int` | Y pixel position of the first line ("GAME OVER") on the stats screen |
+| `STATS_Y_STEP` | `35` | `c_int` | Vertical pixel spacing between consecutive lines on the stats screen |
 
 ### Raylib Constants in Use
 
@@ -437,21 +501,24 @@ These are C constants imported from `raylib.h` via `src/raylib.zig` and referenc
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Playing : startup (wave 1)
+    [*] --> Playing : startup (wave 1)\nloadHighScore() → best_score
 
     Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\n(is_transitioning = true,\ntransition_timer = 3.0)
 
     Transitioning --> Playing : transition_timer <= 0\n(current_wave += 1, wave counters reset,\nresetZombies called)
 
-    Playing --> GameOver : zombie.y >= screen_height\n(updateZombies sets is_game_over = true)
+    Playing --> GameOverTransition : zombie.y >= screen_height\n(game_over_transition_active = true,\ntimer = 1.0, killer tinted RED)
 
-    GameOver --> Playing : KEY_ENTER pressed\n(is_game_over = false, current_wave = 1,\nwave counters reset, resetZombies called)
+    GameOverTransition --> GameOver : timer <= 0\n(is_game_over = true,\nhigh score saved if score > best)
+
+    GameOver --> Playing : KEY_ENTER pressed\n(is_game_over = false, current_wave = 1,\ntotal_kills = 0, wave counters reset,\nresetZombies called)
 ```
 
 **Notes:**
 - While in the `Playing` state the update phase runs every frame: input is captured, `spawn_timer` accumulates, `spawnZombie` fires up to `pool_size` times, and `updateZombies` runs.
 - While in the `Transitioning` state the update phase is skipped (gated by `!is_transitioning`); only the transition countdown draw and the timer decrement run.
-- While in the `GameOver` state the update phase is entirely skipped (gated by `!is_game_over`); only the draw phase runs, showing the overlay.
+- While in the `GameOverTransition` state input is blocked (`!game_over_transition_active` guard) and `updateMetrics` is paused; zombies are drawn with the killer tinted red.
+- While in the `GameOver` state the update phase is entirely skipped (gated by `!is_game_over`); only the draw phase runs, showing the stats screen.
 - `resetZombies` frees all heap-allocated `Zombie` instances and sets every pool slot to `null` before re-entering `Playing`.
 
 ---

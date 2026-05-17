@@ -14,7 +14,7 @@
   - [F-08 Input Box Rendering](#f-08-input-box-rendering)
   - [F-09 Blinking Cursor](#f-09-blinking-cursor)
   - [F-10 Kill Mechanic](#f-10-kill-mechanic)
-  - [F-11 Game-Over Overlay](#f-11-game-over-overlay)
+  - [F-11 Stats Screen](#f-11-stats-screen)
   - [F-12 Wave HUD](#f-12-wave-hud)
   - [F-13 Wave Transition](#f-13-wave-transition)
   - [F-14 Endless Wave Scaling](#f-14-endless-wave-scaling)
@@ -26,9 +26,12 @@
   - [F-20 Combo Counter](#f-20-combo-counter)
   - [F-21 Score and Combo HUD](#f-21-score-and-combo-hud)
   - [F-22 Floating Score Popup](#f-22-floating-score-popup)
-  - [F-23 Score on Game-Over Screen](#f-23-score-on-game-over-screen)
+  - [F-23 Score on Stats Screen](#f-23-score-on-stats-screen)
   - [F-24 Live WPM HUD](#f-24-live-wpm-hud)
   - [F-25 Live Accuracy HUD](#f-25-live-accuracy-hud)
+  - [F-26 Game-Over Transition Animation](#f-26-game-over-transition-animation)
+  - [F-27 High Score Persistence](#f-27-high-score-persistence)
+  - [F-28 Session Kill Counter](#f-28-session-kill-counter)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -65,11 +68,12 @@ graph TB
     subgraph Presentation
         Animation["F-02 Spritesheet Animation"]
         NameLabel["F-03 Name Label"]
-        GameOverOverlay["F-11 Game-Over Overlay"]
+        GameOverOverlay["F-11 Stats Screen"]
         HUD["F-12 Wave HUD"]
         ScoreHUD["F-21 Score and Combo HUD"]
         ScorePopup["F-22 Score Popup"]
-        GameOverScore["F-23 Score on Game-Over Screen"]
+        GameOverScore["F-23 Score on Stats Screen"]
+        GameOverTransition["F-26 Transition Animation"]
     end
 
     subgraph Scoring
@@ -77,6 +81,11 @@ graph TB
         Combo["F-20 Combo Counter"]
         WpmHUD["F-24 Live WPM HUD"]
         AccHUD["F-25 Live Accuracy HUD"]
+    end
+
+    subgraph Persistence
+        HighScore["F-27 High Score Persistence"]
+        KillCounter["F-28 Kill Counter"]
     end
 
     subgraph Interaction
@@ -88,7 +97,13 @@ graph TB
     Spawning --> Falling
     Falling --> GameOver
     Keyboard --> Killing
-    GameOver --> GameOverOverlay
+    GameOver --> GameOverTransition
+    GameOverTransition --> GameOverOverlay
+    GameOverTransition --> HighScore
+    Killing --> KillCounter
+    BossTyping --> KillCounter
+    Restart --> KillCounter
+    GameOverOverlay --> HighScore
     Restart --> Spawning
     Restart --> WaveSystem
     Spawning --> Animation
@@ -224,31 +239,31 @@ graph TB
 
 ### F-05 Game Over Detection
 
-**Description.** During each frame's update pass, if any active zombie's `y` position meets or exceeds `screen_height` (450), `is_game_over` is set to `true` and `updateZombies` returns immediately. The same check runs for the boss zombie in `updateBoss`. This halts the entire update phase for the remainder of that frame and all subsequent frames until the player restarts.
+**Description.** During each frame's update pass, if any active zombie's `y` position meets or exceeds `screen_height` (450), the 1-second game-over transition begins (`game_over_transition_active = true`) and `updateZombies` returns immediately. The same check runs for the boss zombie in `updateBoss`. After the 1-second transition expires, `is_game_over` is set to `true`, which halts the entire update phase until the player restarts.
 
-**User-facing behavior.** When any zombie — including the boss — reaches the bottom of the screen the game freezes all zombie movement and displays the game-over screen.
+**User-facing behavior.** When any zombie — including the boss — reaches the bottom of the screen the game pauses for one second (F-26) then shows the stats screen (F-11).
 
 **System behavior.**
-- Inside `updateZombies`, after `zomb.y += zomb.speed`: `if (zomb.y >= screen_height)` → `is_game_over = true; return;` (`src/main.zig:175–177`).
-- Inside `updateBoss`, after `b.y += b.speed`: `if (b.y >= screen_height)` → `is_game_over = true; return;`.
+- Inside `updateZombies`, after `zomb.y += zomb.speed`: `if (zomb.y >= screen_height)` → `game_over_transition_active = true; game_over_transition_timer = GAME_OVER_TRANSITION_DURATION; game_over_killer_zombie = zomb; return;`.
+- Inside `updateBoss`, after `b.y += b.speed`: `if (b.y >= screen_height)` → `game_over_transition_active = true; game_over_transition_timer = GAME_OVER_TRANSITION_DURATION; game_over_killer_zombie = null; return;`.
 - The `return` means zombies later in the pool array are not updated this frame.
-- The main loop's `if (!is_game_over)` guard prevents any further update logic.
-- Draw phase still runs; `drawZombies` is skipped in favour of the overlay.
+- After the 1-second transition ends, `is_game_over = true` is set by F-26's timer logic.
+- The main loop's `if (!is_game_over)` guard then prevents any further update logic.
 
 **Key source references.**
-- `src/main.zig:24` — `is_game_over` declaration
-- `src/main.zig:44` — `screen_height = 450`
-- `src/main.zig:175–177` — detection and early return
+- `src/main.zig` — `is_game_over`, `game_over_transition_active` declarations
+- `src/main.zig` — `screen_height = 450`
+- `src/main.zig` — detection and transition trigger in `updateZombies` / `updateBoss`
 
-**Dependencies.** F-04 (falling populates `y`), F-11 (overlay rendered when true), F-06 (cleared on restart).
+**Dependencies.** F-04 (falling populates `y`), F-26 (transition fires on detection), F-11 (stats screen rendered when `is_game_over = true`), F-06 (cleared on restart).
 
 ---
 
 ### F-06 Restart
 
-**Description.** While the game-over screen is displayed, pressing `KEY_ENTER` resets all mutable game state: the input buffer is cleared, `spawn_timer` is zeroed, wave state is returned to wave 1, `is_game_over` is set to `false`, `resetZombies` frees and nulls every heap-allocated zombie in the pool, and `resetBoss` frees any live boss allocation and resets boss state.
+**Description.** While the stats screen is displayed, pressing `KEY_ENTER` resets all mutable game state: the input buffer is cleared, `spawn_timer` is zeroed, wave state is returned to wave 1, `is_game_over` is set to `false`, `total_kills` is zeroed, `is_new_highscore` is cleared, `resetZombies` frees and nulls every heap-allocated zombie in the pool, and `resetBoss` frees any live boss allocation and resets boss state. `best_score` is **not** reset.
 
-**User-facing behavior.** The player presses Enter on the game-over screen and the game immediately restarts from wave 1 with a clean state, no zombies on screen, and no active boss.
+**User-facing behavior.** The player presses Enter on the stats screen and the game immediately restarts from wave 1 with a clean state, no zombies on screen, and no active boss. The best score carries over to the new session.
 
 **System behavior.**
 - `raylib.IsKeyPressed(raylib.KEY_ENTER)` checked only when `is_game_over` is `true`.
@@ -256,6 +271,8 @@ graph TB
 - `letter_count = 0; name[letter_count] = '\x00'` clears the input buffer.
 - `spawn_timer = 0.0` resets the spawn countdown.
 - Wave state reset: `current_wave = 1`, `wave_kills = 0`, `wave_spawned = 0`, `is_transitioning = false`, `transition_timer = 0.0`.
+- `total_kills = 0` resets the session kill counter (F-28).
+- `is_new_highscore = false` clears the high-score flag.
 - `resetZombies(ctx.allocator)` iterates all slots: `allocator.destroy(z); zombie.* = null` for every non-null entry.
 - `resetBoss(ctx.allocator)` frees the boss allocation if non-null, sets `boss = null`, `boss_spawned_this_wave = false`, `boss_phrase_len = 0`.
 
@@ -354,25 +371,31 @@ graph TB
 
 ---
 
-### F-11 Game-Over Overlay
+### F-11 Stats Screen
 
-**Description.** When `is_game_over` is `true`, the normal zombie draw pass is replaced by four centred text strings: `"GAME OVER"` in `RED` at font size 40, `"Wave reached: N"` in `GRAY` at font size 20, `"Required WPM: N"` in `GRAY` at font size 20, and `"Press ENTER to Restart"` in `GRAY` at font size 20, stacked vertically in the middle of the screen.
+**Description.** When `is_game_over` is `true`, the normal zombie draw pass is replaced by a full-screen white stats panel rendered by `drawStatsScreen()`. The panel shows seven statistics stacked vertically with a uniform 35-pixel step starting at y=80, followed by a restart prompt fixed at the bottom. If the session achieved a new high score (F-27), the fourth line reads "NEW HIGH SCORE!" in gold instead of the stored best.
 
-**User-facing behavior.** After losing, the player sees a large red game-over message, the wave they reached and its typing speed requirement, and a grey instruction to press Enter.
+**User-facing behavior.** After losing, the player sees a clean white screen with their final stats: wave reached, score earned, best score or a gold new-high-score announcement, average session WPM, accuracy percentage, total kills, and a grey "Press ENTER to restart" prompt at the bottom.
 
 **System behavior.**
-- `drawZombies()` is called only in the `else` branch of the `if (is_game_over) … else if (is_transitioning) … else` chain (`src/main.zig:220–221`); it is not called when the game is over.
-- `"GAME OVER"` drawn at `(screen_width / 2 - 100, screen_height / 2 - 40)` in `RED` (`src/main.zig:187`).
-- `"Wave reached: N"` formatted with `std.fmt.bufPrintZ` and drawn centered via `drawCenteredText` at `y = screen_height / 2 + 5` in `GRAY` (`src/main.zig:190–191`).
-- `"Required WPM: N"` formatted and drawn centered at `y = screen_height / 2 + 30` in `GRAY` (`src/main.zig:194–195`).
-- `"Press ENTER to Restart"` drawn at `(screen_width / 2 - 130, screen_height / 2 + 60)` in `GRAY` (`src/main.zig:197`).
-- Input box and blinking cursor are still rendered (those draw calls are outside the conditional block).
+- `drawZombies()` is not called when `is_game_over` is `true`; it is replaced by `drawStatsScreen()`.
+- `drawStatsScreen()` first covers all previously rendered content with `DrawRectangle(0, 0, screen_width, screen_height, RAYWHITE)`.
+- Lines rendered (all horizontally centered via `drawCenteredText`):
+  1. `"GAME OVER"` — y=`STATS_Y_START` (80), font 48, `RED`.
+  2. `"Wave reached: {d}"` — y=115, font 24, `DARKGRAY`.
+  3. `"Score: {d}"` — y=150, font 24, `DARKGRAY`.
+  4. `"Best: {d}"` — y=185, font 24, `DARKGRAY`; **or** `"NEW HIGH SCORE!"` in `Color{255,203,0,255}` (gold) when `is_new_highscore`.
+  5. `"Average WPM: {d}"` — y=220, font 24, `DARKGRAY`. Calls `calculateSessionWpm()`.
+  6. `"Accuracy: {d}%"` — y=255, font 24, `DARKGRAY`. Calls `calculateTargetAccuracy()`.
+  7. `"Kills: {d}"` — y=290, font 24, `DARKGRAY`. Uses `total_kills`.
+- Footer: `"Press ENTER to restart"` — y=`screen_height - 40` (410), font 18, `GRAY`.
 
 **Key source references.**
-- `src/main.zig:186–211` — game-over conditional block
-- `src/main.zig:414–417` — `drawCenteredText` helper
+- `src/main.zig` — `STATS_Y_START = 80`, `STATS_Y_STEP = 35` constants
+- `src/main.zig` — `drawStatsScreen()` function
+- `src/main.zig` — `drawStatLine()` helper (wraps `drawCenteredText` at font 24, `DARKGRAY`)
 
-**Dependencies.** F-05 (sets `is_game_over = true`), F-06 (KEY_ENTER check lives inside this same block), F-14 (wave/WPM values from `getWaveConfig`).
+**Dependencies.** F-26 (sets `is_game_over = true` after the 1-second transition), F-06 (KEY_ENTER restart check in the same draw block), F-23 (score line), F-27 (`best_score` and `is_new_highscore`), F-28 (`total_kills`).
 
 ---
 
@@ -616,21 +639,21 @@ graph TB
 
 ---
 
-### F-23 Score on Game-Over Screen
+### F-23 Score on Stats Screen
 
-**Description.** When the game ends, the accumulated score is displayed on the game-over overlay alongside the wave-reached and required-WPM information. The score resets to 0 when the player presses Enter to restart.
+**Description.** The accumulated session score is the third line on the stats screen. It is formatted as `"Score: {d}"` in `DARKGRAY` at font size 24 and centered at y=150. The score resets to 0 when the player presses Enter to restart.
 
-**User-facing behavior.** After losing, the player sees their final score on the game-over screen. Starting a new game always begins at score 0.
+**User-facing behavior.** After losing, the player sees their final score prominently on the stats screen. Starting a new game always begins at score 0.
 
 **System behavior.**
-- In the `is_game_over` draw block (`src/main.zig:280–282`): `"Score: {d}"` formatted via `bufPrintZ`, drawn centered at `y = screen_height / 2 + 55` in `GRAY` font size 20 via `drawCenteredText`.
+- `drawStatLine(y=150, "Score: {d}", .{score})` renders the score line inside `drawStatsScreen()`.
 - Score reset is handled by `resetScoreState` called from the restart handler; sets `score = 0`, `combo_count = 0`, `popup_next = 0`, and deactivates all popup pool entries.
 
 **Key source references.**
-- `src/main.zig:280–282` — score line in game-over draw block
-- `src/main.zig:686–689` — `resetScoreState` function (called by restart handler)
+- `src/main.zig` — score line in `drawStatsScreen()`
+- `src/main.zig` — `resetScoreState` function (called by restart handler)
 
-**Dependencies.** F-19 (score value), F-05 (game over triggers display), F-06 (restart clears score).
+**Dependencies.** F-19 (score value), F-11 (stats screen renders this line), F-06 (restart clears score).
 
 ---
 
@@ -689,6 +712,79 @@ graph TB
 
 ---
 
+### F-26 Game-Over Transition Animation
+
+**Description.** When any zombie or the boss reaches the bottom of the screen, the game enters a 1-second freeze before transitioning to the stats screen. During this interval no input is accepted, no new spawns occur, and the zombie pool is not updated. The zombie that triggered the game over is highlighted with a `RED` tint; all others keep their normal `WHITE` tint.
+
+**User-facing behavior.** When a zombie touches the bottom the game pauses for one second, highlighting the killer zombie in red. After one second, the full stats screen appears.
+
+**System behavior.**
+- On `zomb.y >= screen_height` in `updateZombies`: `game_over_transition_active = true; game_over_transition_timer = GAME_OVER_TRANSITION_DURATION (1.0 s); game_over_killer_zombie = zomb; return;`.
+- On `b.y >= screen_height` in `updateBoss`: `game_over_transition_active = true; game_over_transition_timer = GAME_OVER_TRANSITION_DURATION; game_over_killer_zombie = null; return;` (the boss sprite already renders with a `RED` tint via `drawBoss`).
+- Each frame while `game_over_transition_active`: `game_over_transition_timer -= raylib.GetFrameTime()`.
+- Input guard includes `!game_over_transition_active` — keypresses are silently discarded during the transition.
+- `drawZombies` checks `game_over_transition_active and game_over_killer_zombie == zomb` for each zombie: tint is `RED` if true, `WHITE` otherwise.
+- When `game_over_transition_timer <= 0`: `game_over_transition_active = false; game_over_killer_zombie = null; is_game_over = true`. At this moment `calculateTargetAccuracy()` and `calculateSessionWpm()` are evaluated, `is_new_highscore = (score > best_score)` is determined, and `saveHighScore` is called if `is_new_highscore`.
+- During the transition the draw phase calls `drawZombies()` and `drawBoss()` so the screen remains visible.
+
+**Key source references.**
+- `src/main.zig` — `GAME_OVER_TRANSITION_DURATION = 1.0`
+- `src/main.zig` — `game_over_transition_active`, `game_over_transition_timer`, `game_over_killer_zombie` globals
+- `src/main.zig` — transition timer block and `is_game_over` flip inside `frame()`
+- `src/main.zig` — `is_killer` tint selection in `drawZombies`
+
+**Dependencies.** F-05 (ground-touch detection triggers transition), F-11 (stats screen shown after transition ends), F-27 (high score save happens at transition end).
+
+---
+
+### F-27 High Score Persistence
+
+**Description.** The player's all-time best score, wave, average WPM, and accuracy are persisted between sessions. On native builds the data is stored as a 17-byte binary file (`highscore.dat`) in the working directory. On the WebAssembly build the data is stored in `localStorage` under the key `death-note.highscore` as a flat JSON string. The best score is loaded once at startup and displayed on the stats screen; it is updated only when the current session's score strictly exceeds the stored best. `best_score` is never reset by in-session restarts.
+
+**User-facing behavior.** The stats screen always shows the all-time best score. Beating the record replaces the "Best:" line with "NEW HIGH SCORE!" in gold. On the next launch the new best appears immediately on the stats screen.
+
+**System behavior.**
+- `loadHighScore()` is called in `main()` before the game loop; the result's `.score` field initialises `best_score`.
+- At transition end (F-26): `is_new_highscore = (score > best_score)`. If `true`, `best_score = score` and `saveHighScore(HighScore{ .score=score, .wave=current_wave, .wpm=final_wpm, .accuracy=final_acc })` is called.
+- `final_wpm` comes from `calculateSessionWpm()` = `round((correct_chars / 5) / (elapsed_time / 60))`.
+- `final_acc` = `min(100, round(calculateTargetAccuracy()))` cast to `u8`.
+- `saveHighScore` / `loadHighScore` branch at compile time on `builtin.target.os.tag == .emscripten`:
+  - **Native**: reads/writes `highscore.dat` via `std.c.fopen`/`fread`/`fwrite`. Binary layout: bytes 0–7 `score: u64` LE, bytes 8–11 `wave: u32` LE, bytes 12–15 `wpm: u32` LE, byte 16 `accuracy: u8`. Total 17 bytes. Returns all-zero `HighScore` if the file is absent or truncated.
+  - **Web**: reads via `emscripten_run_script_string` (returns JSON or `{}`), writes via `emscripten_run_script` (serialises to `{"score":N,"wave":N,"wpm":N,"accuracy":N}`). `jsonGetU64` is a minimal key extractor that handles this flat format.
+- `best_score` is not touched by `resetScoreState` or `resetMetricsState`; only a new all-time record updates it.
+
+**Key source references.**
+- `src/main.zig` — `HIGHSCORE_FILE = "highscore.dat"` constant
+- `src/main.zig` — `best_score`, `is_new_highscore` globals
+- `src/main.zig` — `HighScore` struct, `loadHighScore`, `saveHighScore`, `jsonGetU64`, `calculateSessionWpm` functions
+
+**Dependencies.** F-26 (save triggered at transition end), F-11 (`best_score` and `is_new_highscore` displayed on stats screen).
+
+---
+
+### F-28 Session Kill Counter
+
+**Description.** A session-wide counter `total_kills` tracks every enemy destroyed — regular zombies and the boss alike — across all waves of a single game session. It increments by 1 at each kill site and is displayed as the "Kills:" line on the stats screen. It resets to 0 on game restart.
+
+**User-facing behavior.** The stats screen shows the total number of enemies the player eliminated during the session, giving a sense of throughput across all waves.
+
+**System behavior.**
+- `var total_kills: u32 = 0` at module scope.
+- Incremented by 1 in `updateZombies` at the zombie kill site (after `zomb.is_active = false`).
+- Incremented by 1 in `updateBoss` at the boss kill site (after `boss = null`).
+- Reset to 0 in the restart handler when `KEY_ENTER` is pressed on the stats screen.
+- Not reset at wave transitions — it accumulates across all waves.
+
+**Key source references.**
+- `src/main.zig` — `total_kills` global declaration
+- `src/main.zig` — `total_kills += 1` in `updateZombies` kill site
+- `src/main.zig` — `total_kills += 1` in `updateBoss` kill site
+- `src/main.zig` — `total_kills = 0` in restart handler
+
+**Dependencies.** F-10 (regular zombie kill increments counter), F-16 (boss kill increments counter), F-11 (counter displayed as "Kills:" line on stats screen), F-06 (reset on restart).
+
+---
+
 ## User Journeys
 
 ### Journey 1: Successful Kill
@@ -728,10 +824,15 @@ sequenceDiagram
 
     Zombie->>Game: y advances wave fall_speed px/frame via updateZombies
     Game->>Game: zomb.y >= screen_height (450)
-    Game->>Game: is_game_over=true, updateZombies returns
-    Game->>Player: Draw "GAME OVER" + wave reached + WPM + "Press ENTER"
+    Game->>Game: game_over_transition_active=true, timer=1.0s, killer_zombie=zomb, return
+    Game->>Player: Draw zombies; killer zombie tinted RED for 1 second
+    Note over Game: game_over_transition_timer decrements each frame
+    Game->>Game: timer <= 0 → compute final WPM + accuracy, check new high score
+    Game->>Game: is_new_highscore? → saveHighScore if true
+    Game->>Game: game_over_transition_active=false, is_game_over=true
+    Game->>Player: drawStatsScreen() — wave, score, best, WPM, accuracy, kills
     Player->>Game: IsKeyPressed(KEY_ENTER)
-    Game->>Game: is_game_over=false, current_wave=1
+    Game->>Game: is_game_over=false, current_wave=1, total_kills=0
     Game->>Game: wave_kills=0, wave_spawned=0, is_transitioning=false
     Game->>Game: letter_count=0, name[0]=0, spawn_timer=0
     Game->>Game: resetZombies → allocator.destroy each slot
@@ -828,11 +929,12 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Playing : main() initialises (wave 1)
-    Playing --> GameOver : zomb.y >= screen_height\nOR boss.y >= screen_height
-    Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\nAND boss_done\n(boss_done = true on non-boss waves\nor after boss killed on boss waves)
+    [*] --> Playing : main() initialises (wave 1)\nloadHighScore() → best_score
+    Playing --> GameOverTransition : zomb.y >= screen_height\nOR boss.y >= screen_height\n(game_over_transition_active=true,\nkiller_zombie highlighted RED)
+    GameOverTransition --> GameOver : transition_timer <= 0\nhigh score comparison + save\nis_game_over=true
+    Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\nAND boss_done
     Transitioning --> Playing : transition_timer <= 0\ncurrent_wave += 1\nresetZombies + resetBoss called
-    GameOver --> Playing : KEY_ENTER pressed\ncurrent_wave reset to 1\nresetZombies + resetBoss called
+    GameOver --> Playing : KEY_ENTER pressed\ncurrent_wave reset to 1\ntotal_kills=0, resetZombies + resetBoss called
 ```
 
 ### Zombie Lifecycle State
@@ -939,3 +1041,12 @@ When a keypress matches the prefix of several simultaneously active enemies, `ty
 
 **BR-25 — Accuracy persists across wave transitions; WPM window continues during transitions.**
 `correct_chars` and `wrong_chars` are session-wide and are never reset at wave boundaries. `elapsed_time` continues accumulating during the 3-second transition countdown (no new correct characters are typed during this period, so WPM naturally declines toward 0).
+
+**BR-26 — Game-over transition fires before the stats screen.**
+Neither `is_game_over` nor the stats screen is activated directly when a zombie or boss crosses `screen_height`. Instead `game_over_transition_active = true` is set first and the stats screen only appears after the 1-second timer expires. Input, spawning, and `updateMetrics` are all blocked during this interval.
+
+**BR-27 — `best_score` is never reset by in-session restarts.**
+`resetScoreState` and `resetMetricsState` do not touch `best_score`. Only a `saveHighScore` call at transition end can update it, and only when `score > best_score`. Restarting the game preserves the all-time best for display on subsequent stats screens.
+
+**BR-28 — `total_kills` counts regular zombies and bosses but not wave resets.**
+`total_kills` is incremented at both the regular zombie kill site (in `updateZombies`) and the boss kill site (in `updateBoss`). It is never reset at wave transitions — only by the restart handler. This gives the player an accurate count of all enemies they personally destroyed in a single session.
