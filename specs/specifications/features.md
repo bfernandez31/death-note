@@ -27,6 +27,8 @@
   - [F-21 Score and Combo HUD](#f-21-score-and-combo-hud)
   - [F-22 Floating Score Popup](#f-22-floating-score-popup)
   - [F-23 Score on Game-Over Screen](#f-23-score-on-game-over-screen)
+  - [F-24 Live WPM HUD](#f-24-live-wpm-hud)
+  - [F-25 Live Accuracy HUD](#f-25-live-accuracy-hud)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -73,6 +75,8 @@ graph TB
     subgraph Scoring
         Scoring["F-19 Per-Kill Scoring"]
         Combo["F-20 Combo Counter"]
+        WpmHUD["F-24 Live WPM HUD"]
+        AccHUD["F-25 Live Accuracy HUD"]
     end
 
     subgraph Interaction
@@ -112,6 +116,11 @@ graph TB
     WaveTransition --> Combo
     Restart --> Scoring
     GameOverOverlay --> GameOverScore
+    Keyboard --> WpmHUD
+    Keyboard --> AccHUD
+    Combo --> AccHUD
+    Restart --> WpmHUD
+    Restart --> AccHUD
 ```
 
 ---
@@ -546,9 +555,9 @@ graph TB
 **System behavior.**
 - `var combo_count: u32 = 0` (`src/main.zig:78`).
 - Incremented by 1 at each kill site (zombie: `src/main.zig:419`; boss: `src/main.zig:541`).
-- Mismatch check in `frame()` after the input loop (`src/main.zig:171–173`): a `typed_this_frame` flag is set when any non-backspace character is typed; if the flag is set and `!typedMatchesAnyEnemy()` the combo resets to 0. `typedMatchesAnyEnemy()` returns `true` if `letter_count == 0` or the typed text is a prefix of any active zombie name or the boss phrase.
-- Wave-transition reset at `src/main.zig:210`: `combo_count = 0` is set when `is_transitioning` becomes `true`.
-- Backspace does not set `typed_this_frame`; the combo is preserved.
+- Mismatch detection runs inside the `while (key > 0)` input loop — once per printable keypress. While the buffer has room, `typedMatchesAnyEnemy()` is called: if it returns `false`, `combo_count = 0` is set immediately and `wrong_chars` is incremented (F-25). If the buffer is already full (`letter_count >= getCurrentMaxInput()`), the additional keypress is also classified as wrong (`combo_count = 0`, `wrong_chars += 1`) per FR-001. `typedMatchesAnyEnemy()` returns `true` if `letter_count == 0` or the typed text is a prefix of any active zombie name or the boss phrase.
+- Wave-transition reset: `combo_count = 0` is set when `is_transitioning` becomes `true`.
+- Backspace does not trigger the mismatch check; the combo is preserved on backspace.
 - `getComboMultiplier(combo)` (`src/main.zig:671–677`): 0–4→x1, 5–9→x2, 10–14→x3, 15–19→x4, 20+→x5.
 - Reset to 0 in `resetScoreState` on game restart.
 
@@ -622,6 +631,61 @@ graph TB
 - `src/main.zig:686–689` — `resetScoreState` function (called by restart handler)
 
 **Dependencies.** F-19 (score value), F-05 (game over triggers display), F-06 (restart clears score).
+
+---
+
+### F-24 Live WPM HUD
+
+**Description.** The game displays the player's current typing speed in words per minute (WPM) in the top-right corner of the screen. WPM is computed from a 10-second sliding window of correct-character timestamps stored in a fixed 512-entry circular buffer. For the first 10 seconds of a session the calculation uses accumulated elapsed time instead of a fixed window. Both the raw computed WPM and the displayed value are tracked separately; the displayed value interpolates toward the target at 20% of the gap per frame, preventing frame-to-frame jitter.
+
+**User-facing behavior.** During active gameplay the top-right corner shows a `"WPM N"` label that updates smoothly in real time. The number climbs as the player types correctly and declines toward 0 if they stop typing for 10 or more seconds.
+
+**System behavior.**
+- Constants: `WPM_BUFFER_SIZE = 512`, `WPM_WINDOW_SECONDS = 10.0`, `SMOOTHING_FACTOR = 0.2`.
+- HUD position: `WPM_HUD_X = screen_width − 100`, `WPM_HUD_Y = 5`, font size `METRICS_HUD_SIZE = 18`, color `DARKGRAY`.
+- `wpm_buffer: [512]f32` holds timestamps; `wpm_buffer_head` and `wpm_buffer_count` manage the circular write cursor.
+- `recordCorrectTimestamp(elapsed_time)` is called for each correct keypress: pushes `elapsed_time` into `wpm_buffer[wpm_buffer_head]`, advances head with `% WPM_BUFFER_SIZE`, caps `wpm_buffer_count` at `WPM_BUFFER_SIZE`.
+- `countCharsInWindow(current_time)` scans `wpm_buffer[0..wpm_buffer_count]` and counts entries where `timestamp >= current_time − 10.0`.
+- `calculateTargetWpm()`: returns `0.0` when `elapsed_time == 0`; for the first 10 s uses `(correct_chars / 5) / (elapsed_time / 60)` (simplified to `correct_chars × 12 / elapsed_time`); after 10 s uses `countCharsInWindow(elapsed_time) × 1.2`.
+- `updateMetrics()` is called once per frame (gated by `!is_game_over`): advances `elapsed_time += raylib.GetFrameTime()`, computes `target_wpm = calculateTargetWpm()`, applies `displayed_wpm += 0.2 × (target_wpm − displayed_wpm)`.
+- HUD draw: `bufPrintZ("WPM {d}", @round(displayed_wpm))` → `DrawText` at `(WPM_HUD_X, WPM_HUD_Y)`.
+- On game-over: `updateMetrics` is not called; `displayed_wpm` freezes at its last value.
+- On restart: `resetMetricsState()` sets `wpm_buffer` to all-zero, `wpm_buffer_head = 0`, `wpm_buffer_count = 0`, `elapsed_time = 0.0`, `displayed_wpm = 0.0`.
+
+**Key source references.**
+- `src/main.zig:35–42` — WPM/accuracy constants block
+- `src/main.zig:94–101` — metrics state variables
+- `src/main.zig:766–814` — `recordCorrectTimestamp`, `countCharsInWindow`, `resetMetricsState`, `calculateTargetWpm`, `updateMetrics`
+- `src/main.zig:284–287` — WPM HUD draw call
+
+**Dependencies.** F-07 (correct keypresses trigger `recordCorrectTimestamp`), F-06 (restart calls `resetMetricsState`), F-25 (shares `updateMetrics` and smoothing infrastructure).
+
+---
+
+### F-25 Live Accuracy HUD
+
+**Description.** The game displays the player's session-wide accuracy percentage immediately below the WPM label in the top-right corner. Accuracy is the ratio of correct keypresses to total keypresses (correct + incorrect), expressed as a percentage rounded to the nearest integer. Backspace keypresses are ignored for accuracy purposes. When no characters have been typed the display shows 100%. The displayed value is smoothed per-frame with the same 20%-per-frame interpolation used by WPM.
+
+**User-facing behavior.** The top-right corner shows an `"Acc N%"` label below the WPM line. The percentage starts at 100% and decreases whenever the player types a character that does not prefix-match any active enemy. Accuracy is session-wide: it persists across wave transitions and is only reset when the player restarts after game-over.
+
+**System behavior.**
+- HUD position: `ACC_HUD_X = screen_width − 100`, `ACC_HUD_Y = 30`, font size `METRICS_HUD_SIZE = 18`, color `DARKGRAY`.
+- `correct_chars: u32` and `wrong_chars: u32` are session-wide counters incremented inside the input key loop (per keypress, not per frame).
+- Each printable keypress with buffer room calls `typedMatchesAnyEnemy()`: if `true`, `correct_chars += 1` and `recordCorrectTimestamp` is called; if `false`, `wrong_chars += 1` and `combo_count = 0`. A printable keypress with the buffer already full is treated as incorrect (`wrong_chars += 1`, `combo_count = 0`) per FR-001.
+- Backspace is not processed through the classification path; neither counter changes on backspace.
+- `calculateTargetAccuracy()`: returns `100.0` when `correct_chars + wrong_chars == 0`; otherwise `(@as(f32, correct_chars) / @as(f32, correct_chars + wrong_chars)) × 100.0`.
+- `updateMetrics()` computes `target_accuracy = calculateTargetAccuracy()`, applies `displayed_accuracy += 0.2 × (target_accuracy − displayed_accuracy)`.
+- HUD draw: `bufPrintZ("Acc {d}%", @round(displayed_accuracy))` → `DrawText` at `(ACC_HUD_X, ACC_HUD_Y)`.
+- On restart: `resetMetricsState()` sets `correct_chars = 0`, `wrong_chars = 0`, `displayed_accuracy = 100.0`.
+- Accuracy does not reset at wave transitions.
+
+**Key source references.**
+- `src/main.zig:97–101` — `correct_chars`, `wrong_chars`, `displayed_accuracy` state variables
+- `src/main.zig:181–190` — per-keypress classification inside the input loop (correct/incorrect branch)
+- `src/main.zig:803–814` — `calculateTargetAccuracy`, `updateMetrics`
+- `src/main.zig:289–292` — accuracy HUD draw call
+
+**Dependencies.** F-07 (keypresses drive counter updates), F-20 (incorrect keypress resets combo), F-06 (restart calls `resetMetricsState`), F-24 (shares `updateMetrics` and reset infrastructure).
 
 ---
 
@@ -860,3 +924,18 @@ The 32-slot popup pool uses a circular write index (`popup_next`). When all 32 s
 
 **BR-20 — Score accumulates across waves; resets only on restart.**
 `score` is never zeroed between waves. A wave transition does not reset the score — only the combo resets. Score is zeroed exclusively by `resetScoreState`, which is called from the game-restart handler (KEY_ENTER on the game-over screen).
+
+**BR-21 — WPM uses a 10-second sliding window after the first 10 seconds.**
+`calculateTargetWpm()` counts correct-character timestamps in `wpm_buffer` that fall within the last `WPM_WINDOW_SECONDS` (10.0 s) and computes `count × 1.2` (where 1 word = 5 chars). During the first 10 seconds of a session, elapsed time is used instead: `correct_chars × 12 / elapsed_time`. At `elapsed_time == 0`, WPM returns 0.0 to avoid a division-by-zero.
+
+**BR-22 — Backspace is ignored for WPM and accuracy calculations.**
+Backspace keypresses are not processed through the correct/incorrect keypress classification path. `correct_chars`, `wrong_chars`, and `wpm_buffer` are unchanged on backspace. Only printable ASCII characters (codepoints 32–125) trigger classification.
+
+**BR-23 — Multiple enemies accepting the same typed character count as one correct character.**
+When a keypress matches the prefix of several simultaneously active enemies, `typedMatchesAnyEnemy()` returns `true` once. `correct_chars` is incremented by exactly 1 and `recordCorrectTimestamp` is called exactly once, regardless of how many enemies the character matches.
+
+**BR-24 — WPM and accuracy freeze on game-over; reset fully on restart.**
+`updateMetrics()` is called only when `!is_game_over`. On game-over, `displayed_wpm` and `displayed_accuracy` hold their last computed values. On restart, `resetMetricsState()` zeroes `wpm_buffer`, `wpm_buffer_head`, `wpm_buffer_count`, `correct_chars`, `wrong_chars`, `elapsed_time`, `displayed_wpm`; and sets `displayed_accuracy = 100.0`.
+
+**BR-25 — Accuracy persists across wave transitions; WPM window continues during transitions.**
+`correct_chars` and `wrong_chars` are session-wide and are never reset at wave boundaries. `elapsed_time` continues accumulating during the 3-second transition countdown (no new correct characters are typed during this period, so WPM naturally declines toward 0).

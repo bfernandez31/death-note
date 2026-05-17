@@ -35,7 +35,7 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Eighteen `test "..." {}` blocks exist in `src/main.zig`:
+**Current state**: Twenty-six `test "..." {}` blocks exist in `src/main.zig`:
 - `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
 - `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
 - `test "getWaveConfig returns correct values for wave 1"` — verifies wave 1 difficulty parameters
@@ -54,8 +54,16 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 - `test "typedMatchesAnyEnemy mismatch detection"` — verifies the function returns `true` when `letter_count == 0` and `false` when the typed text does not prefix-match any active zombie name
 - `test "popup pool circular recycling"` — calls `spawnPopup` 33 times and verifies slot 0 is overwritten and `popup_next` wraps to 1
 - `test "resetScoreState clears score, combo, and popups"` — sets `score`, `combo_count`, and `popup_next` to non-zero values, activates a popup, runs `resetScoreState`, and verifies all values return to zero with all popups deactivated
+- `test "circular buffer wraps correctly"` — fills `wpm_buffer` with more than `WPM_BUFFER_SIZE` entries, verifies `wpm_buffer_head` wraps via modulo and `wpm_buffer_count` is capped at `WPM_BUFFER_SIZE`
+- `test "resetMetricsState clears all metrics"` — sets all metrics state to non-zero values, calls `resetMetricsState`, verifies `wpm_buffer` is all-zero, `wpm_buffer_head = 0`, `wpm_buffer_count = 0`, `correct_chars = 0`, `wrong_chars = 0`, `elapsed_time = 0.0`, `displayed_wpm = 0.0`, `displayed_accuracy = 100.0`
+- `test "WPM sliding window — 60 chars in 10 seconds"` — populates `wpm_buffer` with 60 timestamps all within a 10-second window, calls `calculateTargetWpm()`, asserts result equals `72.0` (60 × 1.2)
+- `test "WPM early game — 12 chars in 5 seconds"` — sets `correct_chars = 12`, `elapsed_time = 5.0`, calls `calculateTargetWpm()`, asserts result is approximately `28.8` (12 × 12 / 5)
+- `test "WPM zero input"` — with empty buffer and `elapsed_time = 0.0`, calls `calculateTargetWpm()`, asserts result equals `0.0`
+- `test "accuracy — 100 correct 4 incorrect"` — sets `correct_chars = 100`, `wrong_chars = 4`, calls `calculateTargetAccuracy()`, asserts result is approximately `96.15`
+- `test "accuracy zero input returns 100"` — with `correct_chars = 0` and `wrong_chars = 0`, calls `calculateTargetAccuracy()`, asserts result equals `100.0`
+- `test "smoothing convergence toward target WPM"` — sets `displayed_wpm = 0.0`, simulates multiple `updateMetrics`-style interpolation steps with a fixed target of `72.0`, verifies display value increases by 20% of the remaining gap each step
 
-All eighteen are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
+All twenty-six are pure-logic tests with no raylib dependencies. Running `zig build test` compiles and executes them successfully.
 
 ---
 
@@ -66,7 +74,7 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(18 blocks — name match, input bounds, wave config×4, frame wrap,\nboss wave detection, boss threshold, boss input limit,\nboss phrase validity, buffer capacity, wave completion gate,\ncalculateScore cases, combo multiplier tiers, mismatch detection,\npopup pool recycling, score/combo reset)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(26 blocks — name match, input bounds, wave config×4, frame wrap,\nboss wave detection, boss threshold, boss input limit,\nboss phrase validity, buffer capacity, wave completion gate,\ncalculateScore cases, combo multiplier tiers, mismatch detection,\npopup pool recycling, score/combo reset,\ncircular buffer wrap, resetMetricsState,\nWPM sliding window, WPM early game, WPM zero input,\naccuracy 100/4, accuracy zero input, smoothing convergence)"]
     UNIT_NAMES["Unit tests\nsrc/zombie_names.zig\n(0 blocks — reachable via @import)"]
     UNIT_PHRASES["Unit tests\nsrc/boss_phrases.zig\n(0 blocks — reachable via @import)"]
     RAYLIB_ZIG["src/raylib.zig\n(C interop wall — not unit-testable)"]
@@ -91,7 +99,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 18 | Pure-logic tests: name-match equality, input-buffer bounds, wave config (waves 1, 15, 16+), wave completion, frame wrap-around, boss wave detection, boss spawn threshold, boss input limit, boss phrase validity, buffer capacity, boss wave completion gate, score formula reference cases, combo multiplier tier boundaries, mismatch detection, popup pool circular recycling, score/combo state reset |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 26 | Pure-logic tests: name-match equality, input-buffer bounds, wave config (waves 1, 15, 16+), wave completion, frame wrap-around, boss wave detection, boss spawn threshold, boss input limit, boss phrase validity, buffer capacity, boss wave completion gate, score formula reference cases, combo multiplier tier boundaries, mismatch detection, popup pool circular recycling, score/combo state reset, circular buffer wrap, metrics state reset, WPM sliding window, WPM early game, WPM zero input, accuracy calculation, accuracy zero-input default, smoothing convergence |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 
@@ -170,7 +178,7 @@ This is not currently set up and is not required by the project constitution. Un
 
 | Command | Purpose |
 |---|---|
-| `zig build test` | Compile and run all 18 unit tests (uses `src/main.zig` as the root source file for test discovery) |
+| `zig build test` | Compile and run all 26 unit tests (uses `src/main.zig` as the root source file for test discovery) |
 | `zig build --summary all` | Type-check the entire codebase without running it; surfaces type errors and unreachable code |
 | `zig fmt --check .` | Formatting check across all `.zig` files; serves as a lint surrogate (no separate linter is configured) |
 | `zig build` | Full build; also type-checks as a side effect; the primary gate before merging |

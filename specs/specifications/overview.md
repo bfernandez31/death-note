@@ -14,7 +14,7 @@
 
 ## Project Summary
 
-death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×450 window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. On every fifth wave a boss zombie spawns at 50% kills: larger, red-tinted, and requiring the player to type a full multi-word phrase to defeat it. Waves escalate in speed and zombie count using a per-wave difficulty table. A missed zombie or boss triggers game over; pressing Enter restarts from wave 1.
+death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×450 window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. On every fifth wave a boss zombie spawns at 50% kills: larger, red-tinted, and requiring the player to type a full multi-word phrase to defeat it. Waves escalate in speed and zombie count using a per-wave difficulty table. A missed zombie or boss triggers game over; pressing Enter restarts from wave 1. A live HUD in the top-right corner displays the player's current WPM (10-second sliding window) and session-wide accuracy percentage, both smoothed per-frame.
 
 The game is a single-file-dominant desktop application aimed at anyone who wants a minimalist, fast-compilation typing challenge. There is no server, no persistence, and no network component: the entire experience runs locally from a single native executable (`death-note`) built with Zig's integrated build system.
 
@@ -72,7 +72,7 @@ graph TB
     RaylibLib --> Assets
 ```
 
-The game has three states: **Playing**, **Transitioning**, and **GameOver**. During `Playing`, the update phase runs: input is captured (limit dynamically 9 or 35 characters via `getCurrentMaxInput()`), `spawn_timer` accumulates, `spawnZombie` fires at the current wave's spawn rate, `updateBoss` advances the boss and checks for phrase completion, and `updateZombies` advances regular zombies and checks for name matches. On boss waves (multiples of 5), `spawnBoss` fires at 50% kills. When all pool zombies are spawned and killed — and the boss is defeated on boss waves — the game enters `Transitioning`: a 3-second countdown after which `current_wave` advances and the next wave begins. If any zombie or the boss crosses `screen_height`, the game enters `GameOver`; pressing Enter resets all state (including boss state) and restarts from wave 1.
+The game has three states: **Playing**, **Transitioning**, and **GameOver**. During `Playing`, the update phase runs: input is captured (limit dynamically 9 or 35 characters via `getCurrentMaxInput()`), each keypress is classified as correct or incorrect to drive WPM and accuracy tracking, `spawn_timer` accumulates, `spawnZombie` fires at the current wave's spawn rate, `updateBoss` advances the boss and checks for phrase completion, `updateZombies` advances regular zombies and checks for name matches, and `updateMetrics` advances `elapsed_time` and smooths the WPM and accuracy display values. On boss waves (multiples of 5), `spawnBoss` fires at 50% kills. When all pool zombies are spawned and killed — and the boss is defeated on boss waves — the game enters `Transitioning`: a 3-second countdown after which `current_wave` advances and the next wave begins. If any zombie or the boss crosses `screen_height`, the game enters `GameOver`; pressing Enter resets all state (including boss state and metrics) and restarts from wave 1.
 
 ---
 
