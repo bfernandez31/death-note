@@ -78,11 +78,11 @@
 ### Tests for User Story 4
 **NOTE**: Write these tests FIRST, ensure they FAIL before implementation.
 
-- [ ] T015 [US4] Extend existing `resetScoreState` test in `src/main.zig`: verify that after reset, `total_kills = 0`, `is_dying = false`, `dying_timer = 0.0`, `dying_zombie_index = null`, and `best_score` fields are preserved (not zeroed)
+- [X] T015 [US4] Extend existing `resetScoreState` test in `src/main.zig`: verify that after reset, `total_kills = 0`, `is_dying = false`, `dying_timer = 0.0`, `dying_zombie_index = null`, and `best_score` fields are preserved (not zeroed)
 
 ### Implementation for User Story 4
 
-- [ ] T016 [US4] Update restart handler in the ENTER-pressed block (~line 331) in `src/main.zig`: add resets for `total_kills = 0`, `is_dying = false`, `dying_timer = 0.0`, `dying_zombie_index = null`. Do NOT reset `best_score`
+- [X] T016 [US4] Update restart handler in the ENTER-pressed block (~line 331) in `src/main.zig`: add resets for `total_kills = 0`, `is_dying = false`, `dying_timer = 0.0`, `dying_zombie_index = null`. Do NOT reset `best_score`
 
 **Checkpoint**: User Stories 1 and 4 should both work — full game-over loop with correct restart behavior
 

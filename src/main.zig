@@ -402,6 +402,11 @@ fn frame(ctx: *FrameContext) void {
             wave_spawned = 0;
             is_transitioning = false;
             transition_timer = 0.0;
+            total_kills = 0;
+            is_dying = false;
+            dying_timer = 0.0;
+            dying_zombie_index = null;
+            is_new_high_score = false;
             resetScoreState();
             resetMetricsState();
             resetZombies(ctx.allocator);
@@ -1235,6 +1240,46 @@ test "resetScoreState clears score, combo, and popups" {
     try std.testing.expectEqual(@as(u32, 0), combo_count);
     try std.testing.expectEqual(@as(usize, 0), popup_next);
     try std.testing.expect(!popups[0].active);
+}
+
+test "restart resets session state but preserves best_score" {
+    const saved_kills = total_kills;
+    const saved_dying = is_dying;
+    const saved_timer = dying_timer;
+    const saved_index = dying_zombie_index;
+    const saved_best = best_score;
+    const saved_new_hs = is_new_high_score;
+    defer {
+        total_kills = saved_kills;
+        is_dying = saved_dying;
+        dying_timer = saved_timer;
+        dying_zombie_index = saved_index;
+        best_score = saved_best;
+        is_new_high_score = saved_new_hs;
+    }
+
+    best_score = HighScoreRecord{ .score = 500, .wave = 3, .wpm = 40, .accuracy = 90 };
+    total_kills = 15;
+    is_dying = true;
+    dying_timer = 0.5;
+    dying_zombie_index = 3;
+    is_new_high_score = true;
+
+    total_kills = 0;
+    is_dying = false;
+    dying_timer = 0.0;
+    dying_zombie_index = null;
+    is_new_high_score = false;
+
+    try std.testing.expectEqual(@as(u32, 0), total_kills);
+    try std.testing.expect(!is_dying);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), dying_timer, 0.001);
+    try std.testing.expect(dying_zombie_index == null);
+    try std.testing.expect(!is_new_high_score);
+    try std.testing.expectEqual(@as(u64, 500), best_score.score);
+    try std.testing.expectEqual(@as(u32, 3), best_score.wave);
+    try std.testing.expectEqual(@as(u32, 40), best_score.wpm);
+    try std.testing.expectEqual(@as(u8, 90), best_score.accuracy);
 }
 
 test "circular buffer wraps correctly" {
