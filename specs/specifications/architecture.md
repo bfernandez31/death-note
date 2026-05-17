@@ -158,13 +158,17 @@ None. There are no calls to `std.log`, `std.debug.print`, or any other logging f
 All tunables are compile-time constants declared at the top of `src/main.zig`:
 
 ```
-const MAX_ZOMBIES = 100;          // line 7
-const MAX_INPUT_CHARS = 9;        // line 8
-const ZOMBIE_FRAME_COUNT = 17;    // line 10
-const spawn_delay: f32 = 3.0;    // line 21
-const screen_width = 800;         // line 43
-const screen_height = 450;        // line 44
+const MAX_ZOMBIES = 100;
+const MAX_INPUT_CHARS = 20;
+const ZOMBIE_FRAME_COUNT = 17;
+const screen_width = 800;
+const screen_height = 1000;          // portrait-arcade aspect for falling-name gameplay
+const AVG_NAME_CHARS: f32 = 6.0;     // input to deriveWaveTiming()
+const FALL_GRACE_FACTOR: f32 = 2.0;  // input to deriveWaveTiming()
+const FRAMES_PER_SECOND: f32 = 60.0; // input to deriveWaveTiming()
 ```
+
+Wave-specific `spawn_delay` and `fall_speed` are **not** authored — they are derived per call from `target_wpm` (and `screen_height`) by `deriveWaveTiming()`, so changing the screen height or the average name length automatically re-tunes every wave.
 
 There is no runtime configuration file, no environment variable reading, and no command-line argument parsing.
 

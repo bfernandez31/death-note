@@ -14,7 +14,7 @@
 
 ## Project Summary
 
-death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×450 window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. On every fifth wave a boss zombie spawns at 50% kills: larger, red-tinted, and requiring the player to type a full multi-word phrase to defeat it. Waves escalate in speed and zombie count using a per-wave difficulty table. A missed zombie or boss triggers a 1-second dying pause, then a stats overlay showing wave reached, score, best score, average WPM, accuracy, and kill count; pressing Enter restarts from wave 1. The best score is persisted across sessions: as a binary file (`highscore.dat`) on native builds and as a JSON entry in `localStorage` on web builds. A live HUD in the top-right corner displays the player's current WPM (10-second sliding window) and session-wide accuracy percentage, both smoothed per-frame.
+death-note is a keyboard-driven typing game built with Zig and raylib. Zombies fall from the top of an 800×1000 portrait-arcade window in structured waves; the player destroys each zombie by typing its displayed name before it reaches the bottom of the screen. On every fifth wave a boss zombie spawns at 50% kills: larger, red-tinted, and requiring the player to type a full multi-word phrase to defeat it. While a boss is alive, regular zombie spawns pause so the boss phrase gets the player's full attention. Each wave's spawn cadence and fall speed are **derived from the wave's `target_wpm`** so the displayed challenge matches the real one: a player typing exactly at `target_wpm` keeps up with no slack. A missed zombie or boss triggers a 1-second dying pause, then an arcade-style game-over overlay (`GAME OVER` in glow + 3×2 stats grid: `SCORE` zero-padded to 6 digits, `WAVE REACHED`, `ENEMIES SLAIN`, `MAX COMBO`, `WPM`, `ACCURACY`); pressing Enter restarts from wave 1. The best score is persisted across sessions: as a binary file (`highscore.dat`) on native builds and as a JSON entry in `localStorage` on web builds. A live HUD displays the running WPM and accuracy; the WPM timer arms on the first keystroke of each wave and resets on wave transitions, so each wave reads as its own typing-test segment.
 
 The game is a single-file-dominant desktop application aimed at anyone who wants a minimalist, fast-compilation typing challenge. There is no server and no network component: the entire experience runs locally from a single native executable (`death-note`) built with Zig's integrated build system.
 
@@ -53,9 +53,9 @@ graph TB
     RaylibLib["raylib static library\n(rendering / audio / input)"]
     ZombiePool["Zombie pool\n[MAX_ZOMBIES]?*Zombie"]
     BossPtr["Boss pointer\n?*Zombie (0 or 1)"]
-    WaveTable["WAVE_TABLE\n[15]WaveConfig compile-time"]
+    WaveTable["WAVE_TABLE\n[15]WaveAuthoring compile-time\n(target_wpm + pool_size; timing derived)"]
     Assets["assets/\n(spritesheet, wav, fonts)"]
-    Window["OS window\n(800×450 @ 60 FPS)"]
+    Window["OS window\n(800×1000 @ 60 FPS)"]
     AudioDevice["OS audio device\n(WAV playback)"]
     InputBuf["Input buffer\nname[MAX_BOSS_INPUT_CHARS+1]"]
 
@@ -72,7 +72,7 @@ graph TB
     RaylibLib --> Assets
 ```
 
-The game has four states: **Playing**, **Transitioning**, **Dying**, and **GameOver**. During `Playing`, the update phase runs: input is captured (limit dynamically 9 or 35 characters via `getCurrentMaxInput()`), each keypress is classified as correct or incorrect to drive WPM and accuracy tracking, `spawn_timer` accumulates, `spawnZombie` fires at the current wave's spawn rate, `updateBoss` advances the boss and checks for phrase completion, `updateZombies` advances regular zombies and checks for name matches, and `updateMetrics` advances `elapsed_time` and smooths the WPM and accuracy display values. On boss waves (multiples of 5), `spawnBoss` fires at 50% kills. When all pool zombies are spawned and killed — and the boss is defeated on boss waves — the game enters `Transitioning`: a 3-second countdown after which `current_wave` advances and the next wave begins. If any zombie or the boss crosses `screen_height`, the game enters `Dying`: all updates pause for 1 second while the responsible regular zombie (if any) is tinted red. When the timer expires the high score comparison runs, the record is persisted if beaten, and the game moves to `GameOver` showing an 8-line stats overlay. Pressing Enter resets all session state (preserving the best score in memory) and restarts from wave 1.
+The game has four states: **Playing**, **Transitioning**, **Dying**, and **GameOver**. During `Playing`, the update phase runs: input is captured (limit dynamically 9 or 35 characters via `getCurrentMaxInput()`), the first printable keypress of the wave arms the WPM timer (`wpm_timer_started`), each keypress is classified as correct or incorrect, `spawn_timer` accumulates, `spawnZombie` fires at the wave's derived `spawn_delay` **only while no boss is alive**, `updateBoss` advances the boss and checks for phrase completion, `updateZombies` advances regular zombies and checks for name matches, and `updateMetrics` advances `elapsed_time` (only while `wpm_timer_started`) and smooths the WPM and accuracy display values. On boss waves (multiples of 5), `spawnBoss` fires at 50% kills. When all pool zombies are spawned and killed — and the boss is defeated on boss waves — the game enters `Transitioning`: a 3-second countdown after which `current_wave` advances, metrics are reset (`resetMetricsState`) for the new wave's typing-test segment, and the next wave begins. The combo (`combo_count`) is **not** reset between waves; it survives until the player mistypes or dies. `max_combo` records the session-wide peak for the game-over screen. If any zombie or the boss crosses `screen_height`, the game enters `Dying`: all updates pause for 1 second while the responsible regular zombie (if any) is tinted red. When the timer expires the high score comparison runs, the record is persisted if beaten, and the game moves to `GameOver` showing the 3×2 arcade stats grid. Pressing Enter resets all session state (preserving the best score in memory) and restarts from wave 1.
 
 ---
 
@@ -184,7 +184,7 @@ C4Context
 
     System_Ext(raylib, "raylib (static library)", "Cross-platform C library pinned to commit 52f2a10. Provides window creation, 2-D rendering, spritesheet animation, keyboard/mouse input, and WAV audio playback.")
 
-    System_Ext(osWindow, "OS Windowing System", "Native window manager (X11 / Wayland / Win32 / Cocoa). Hosts the 800×450 game window at 60 FPS.")
+    System_Ext(osWindow, "OS Windowing System", "Native window manager (X11 / Wayland / Win32 / Cocoa). Hosts the 800×1000 game window at 60 FPS.")
 
     System_Ext(osAudio, "OS Audio Device", "System audio driver. Receives PCM output from raylib for zombie-kill sound effects.")
 

@@ -369,29 +369,32 @@ graph TB
 
 ### F-11 Game-Over Stats Screen
 
-**Description.** When `is_game_over` is `true`, the normal zombie draw pass is replaced by a full-screen stats overlay showing eight lines of text. The overlay is displayed after the 1-second dying transition (F-26) completes. It gives the player a detailed summary of their session performance and shows whether they set a new high score.
+**Description.** When `is_game_over` is `true`, the normal zombie draw pass is replaced by an arcade-style stats overlay: a large glow-shadowed `GAME OVER` title, an optional `NEW HIGH SCORE` badge, a 3×2 stats grid (label + large value per cell), and a centered retry prompt. The overlay is displayed after the 1-second dying transition (F-26) completes.
 
-**User-facing behavior.** After the dying pause, the player sees a rose-red "GAME OVER" title followed by six stat lines (wave, score, best/new high score, average WPM, accuracy, kills) and a dimmed restart prompt at the bottom.
+**User-facing behavior.** After the dying pause, the player sees a large pink-red "GAME OVER" with a soft drop-shadow, a "NEW HIGH SCORE" badge if applicable, then a clean 3×2 grid of stats — top row `SCORE` (zero-padded to 6 digits) / `WAVE REACHED` / `ENEMIES SLAIN`, bottom row `MAX COMBO` (prefixed `x`) / `WPM` / `ACCURACY` (suffixed `%`) — and a `> PRESS [ENTER] TO RETRY <` prompt near the bottom.
 
 **System behavior.**
 - `drawZombies()` is not called when `is_game_over` is `true`; the stats overlay replaces the normal draw pass.
-- `"GAME OVER"` drawn centered at `y = STATS_TITLE_Y` (30), font size 48, color `CRT_ERR`.
-- Starting at `y = STATS_LINE_START_Y` (80) with `STATS_LINE_SPACING` (35) px vertical spacing, six stat lines in font size `STATS_FONT_SIZE` (24), color `CRT_FG`, via the `drawCenteredStat` helper:
-  - `"Wave reached: N"` — current wave number.
-  - `"Score: N"` — final accumulated session score.
-  - `"NEW HIGH SCORE!"` in `CRT_WARN` (if `is_new_high_score`) **or** `"Best: N"` (`CRT_FG`) showing `best_score.score`.
-  - `"Average WPM: N"` — result of `calculateAverageWpm()`: `(correct_chars / 5) / (elapsed_time / 60)`, returns 0 when `elapsed_time < 1 s`.
-  - `"Accuracy: N%"` — result of `calculateStatsAccuracy()`: `(correct_chars * 100) / (correct_chars + wrong_chars)`, returns 0 when total is 0.
-  - `"Kills: N"` — total session kill count (`total_kills`, counting both regular zombies and boss).
-- `"Press ENTER to restart"` drawn centered at fixed `y = 405`, font size 18, color `CRT_DIM`.
+- `"GAME OVER"` drawn via `drawCenteredTextShadow` (a cheap drop-shadow glow) at `y = STATS_TITLE_Y` (80), font size `STATS_TITLE_SIZE` (56), color `CRT_ERR`.
+- If `is_new_high_score`: `"- NEW HIGH SCORE -"` drawn centered at `y = STATS_BADGE_Y` (165), font size `STATS_BADGE_SIZE` (22), color `CRT_WARN`.
+- Three columns centered at `STATS_COL1_CX` (135), `STATS_COL2_CX` (400), `STATS_COL3_CX` (665). For each cell the label is drawn in `STATS_GRID_LABEL_SIZE` (14) `CRT_ACCENT` and the value in `STATS_GRID_VALUE_SIZE` (32) `CRT_FG`, via `drawStatCell(label, value, cx, label_y, value_y)`.
+  - **Row 1** (`STATS_GRID_ROW1_LABEL_Y` 280 / `STATS_GRID_ROW1_VALUE_Y` 310):
+    - `SCORE` → `score` formatted as `{d:0>6}` (zero-padded to 6 digits, grows naturally beyond).
+    - `WAVE REACHED` → `current_wave`.
+    - `ENEMIES SLAIN` → `total_kills` (regular + boss).
+  - **Row 2** (`STATS_GRID_ROW2_LABEL_Y` 420 / `STATS_GRID_ROW2_VALUE_Y` 450):
+    - `MAX COMBO` → `"x{d}"` formatted from `max_combo`.
+    - `WPM` → `calculateAverageWpm()` (per-wave WPM, since metrics reset on every wave transition).
+    - `ACCURACY` → `"{d}%"` formatted from `calculateStatsAccuracy()`.
+- `"> PRESS [ENTER] TO RETRY <"` drawn centered at `y = STATS_RESTART_HINT_Y` (880), font size `STATS_RESTART_HINT_SIZE` (18), color `CRT_FG`.
 
 **Key source references.**
-- `src/main.zig` — game-over draw block
-- `src/main.zig` — `drawCenteredStat` helper (wraps `drawCenteredText` + `y` advance)
-- `src/main.zig` — `calculateAverageWpm`, `calculateStatsAccuracy` functions
-- `src/main.zig` — `STATS_TITLE_Y`, `STATS_LINE_START_Y`, `STATS_LINE_SPACING`, `STATS_FONT_SIZE` constants
+- `src/main.zig` — game-over draw block (3×2 grid construction).
+- `src/main.zig` — `drawCenteredTextShadow`, `drawColumnCenteredText`, `drawStatCell` helpers.
+- `src/main.zig` — `calculateAverageWpm`, `calculateStatsAccuracy` functions.
+- `src/main.zig` — `STATS_TITLE_Y`, `STATS_BADGE_Y`, `STATS_GRID_*`, `STATS_COL*_CX`, `STATS_RESTART_HINT_Y` constants.
 
-**Dependencies.** F-05 (sets `is_game_over = true` after dying timer), F-06 (KEY_ENTER check inside this block), F-26 (dying transition feeds into this state), F-27 (best score loaded and shown here).
+**Dependencies.** F-05 (sets `is_game_over = true` after dying timer), F-06 (KEY_ENTER check inside this block), F-20 (`max_combo` populated by combo tracking), F-26 (dying transition feeds into this state), F-27 (best score loaded and shown here).
 
 ---
 
@@ -430,7 +433,7 @@ graph TB
   ```
 - On completion: `is_transitioning = true`, `transition_timer = WAVE_TRANSITION_DURATION` (3.0 s).
 - Each frame while `is_transitioning`: `transition_timer -= raylib.GetFrameTime()`.
-- When `transition_timer <= 0`: `current_wave += 1`, `wave_kills = 0`, `wave_spawned = 0`, `spawn_timer = 0.0`, `is_transitioning = false`, `resetZombies` called, `resetBoss` called.
+- When `transition_timer <= 0`: `current_wave += 1`, `wave_kills = 0`, `wave_spawned = 0`, `spawn_timer = 0.0`, `is_transitioning = false`, `resetMetricsState()` called (per-wave WPM segment — see F-?? WPM tracking), `resetZombies` called, `resetBoss` called. `combo_count` is **not** reset — combos persist across waves.
 - Transition screen text: `"WAVE {next} — {wpm} WPM challenge — {ceil(timer)}..."` drawn centered at `y = screen_height / 2 - 15`, font size 30, `CRT_FG`.
 - Input guard `!is_transitioning` prevents keystroke processing during the countdown.
 
@@ -443,36 +446,47 @@ graph TB
 
 ---
 
-### F-14 Endless Wave Scaling
+### F-14 WPM-Driven Wave Scaling
 
-**Description.** Waves 1–15 use explicit difficulty parameters from the `WAVE_TABLE` compile-time array. Waves 16 and beyond use a formula: `target_wpm = 110`, `spawn_delay = 0.66 s`, `fall_speed = 2.0`, and `pool_size = 33 + 2 * (wave - 15)`. This means the game has no hard end — it continues indefinitely with growing zombie pools at maximum speed.
+**Description.** Each wave is authored with only two knobs in `WAVE_TABLE`: `target_wpm` and `pool_size`. The `spawn_delay` and `fall_speed` are **derived** from `target_wpm` (and `screen_height`) so the displayed challenge always matches reality — a player typing exactly at `target_wpm` keeps up with no slack. Waves 16+ use a scaling formula (`target_wpm = 110`, growing `pool_size`) and the same derivation. The game has no hard end — it continues indefinitely with growing zombie pools at the same maxed-out target WPM.
 
-**User-facing behavior.** After wave 15, difficulty stops increasing in speed and spawn rate but the number of zombies per wave grows by two every wave, creating an endurance test.
+**User-facing behavior.** Wave 1 (`target_wpm = 15`) is approachable for novice typists; later waves demand sustained typing at the displayed WPM. After wave 15 the WPM target plateaus at 110 and only the pool size keeps growing, creating an endurance test.
 
 **System behavior.**
-- `getWaveConfig(wave: u32) WaveConfig` returns `WAVE_TABLE[wave - 1]` for waves 1–15 (`src/main.zig:420`).
-- For `wave > 15` (i.e., `wave > WAVE_TABLE.len`): returns `WaveConfig{ .target_wpm = 110, .spawn_delay = 0.66, .fall_speed = 2.0, .pool_size = 33 + 2 * (wave - 15) }` (`src/main.zig:423–428`).
-- `WAVE_TABLE` is a compile-time `[15]WaveConfig` constant (`src/main.zig:14–30`).
+- `deriveWaveTiming(target_wpm) -> { spawn_delay, fall_speed }` computes:
+  - `chars_per_sec = target_wpm × CHARS_PER_WORD / SECONDS_PER_MINUTE`
+  - `time_to_type = AVG_NAME_CHARS (6.0) / chars_per_sec`
+  - `spawn_delay = time_to_type` — one zombie per type-cycle.
+  - `fall_speed = screen_height / (time_to_type × FALL_GRACE_FACTOR (2.0) × FRAMES_PER_SECOND (60.0))` — a zombie on screen for twice the type-time.
+- `getWaveConfig(wave: u32) WaveConfig`:
+  - For waves 1–15: looks up `WAVE_TABLE[wave - 1]` (a `WaveAuthoring{ target_wpm, pool_size }`).
+  - For waves 16+: builds `WaveAuthoring{ target_wpm = 110, pool_size = min(33 + 2 × (wave - 15), MAX_ZOMBIES) }`.
+  - Then runs `deriveWaveTiming` and returns a full `WaveConfig`.
+- `WAVE_TABLE` is a compile-time `[15]WaveAuthoring` constant — only `target_wpm` and `pool_size` are authored.
+- Per-type multipliers (`runner ×1.8`, `tank ×0.5`) and per-type name-length filters (runners ≤5 chars, tanks ≥8 chars) layer on top of the derived `fall_speed`, so runners are tighter than baseline and tanks are looser.
 
 **Key source references.**
-- `src/main.zig:14–30` — `WAVE_TABLE` compile-time array (waves 1–15)
-- `src/main.zig:419–429` — `getWaveConfig` function with scaling formula
+- `src/main.zig` — `WAVE_TABLE` compile-time array (`WaveAuthoring` entries for waves 1–15).
+- `src/main.zig` — `deriveWaveTiming` and `getWaveConfig` functions.
+- `src/main.zig` — `AVG_NAME_CHARS`, `FALL_GRACE_FACTOR`, `FRAMES_PER_SECOND` constants.
 
-**Dependencies.** F-01 (spawn uses `wave_cfg.spawn_delay` and `pool_size`), F-04 (fall speed from `wave_cfg.fall_speed`), F-12 (HUD reads `target_wpm`), F-13 (transition shows next wave WPM).
+**Dependencies.** F-01 (spawn uses derived `spawn_delay` and authored `pool_size`), F-04 (fall speed from derived `fall_speed`), F-12 (HUD reads `target_wpm`), F-13 (transition shows next wave WPM).
 
 ---
 
 ### F-15 Boss Zombie Spawn
 
-**Description.** On every wave that is a multiple of 5 (waves 5, 10, 15, 20, …), a single boss zombie is spawned when the number of pool kills reaches `ceil(pool_size / 2)` — implemented as `(pool_size + 1) / 2`. The boss occupies a dedicated `?*Zombie` pointer (`boss`) outside the regular zombie pool. Only one boss can be active at a time per wave.
+**Description.** On every wave that is a multiple of 5 (waves 5, 10, 15, 20, …), a single boss zombie is spawned when the number of pool kills reaches `ceil(pool_size / 2)` — implemented as `(pool_size + 1) / 2`. The boss occupies a dedicated `?*Zombie` pointer (`boss`) outside the regular zombie pool. Only one boss can be active at a time per wave. **While a boss is alive, regular zombie spawns are paused** so the boss phrase gets the player's undivided attention.
 
-**User-facing behavior.** After killing roughly half the zombies on a 5th-multiple wave, a visually distinct boss appears at the top-center of the screen and begins falling. It displays a multi-word phrase the player must type.
+**User-facing behavior.** After killing roughly half the zombies on a 5th-multiple wave, a visually distinct boss appears at the top-center of the screen and begins falling. It displays a multi-word phrase the player must type. No new regular zombies appear until the boss is defeated.
 
 **System behavior.**
 - Each frame, after `updateZombies` and before the wave-completion check, if `current_wave % 5 == 0 and !boss_spawned_this_wave and boss == null`:
   - Compute `threshold = (wave_cfg.pool_size + 1) / 2`.
   - If `wave_kills >= threshold`, call `spawnBoss(ctx.allocator) catch {}`.
+- The regular spawn gate adds `and boss == null` — `spawn_timer` continues to accumulate but no spawn happens while the boss is alive.
 - `spawnBoss` allocates a `Zombie` via `allocator.create(Zombie)` with `errdefer allocator.destroy`, sets `x = screen_width / 2.0 - 30.0`, `y = 0.0`, `speed = getWaveConfig(current_wave).fall_speed * BOSS_SPEED_MULTIPLIER` (0.5×), and selects a random phrase from `BossPhrases`.
+- On boss kill (`updateBoss` phrase-match branch), `spawn_timer = 0.0` so the player gets a full `spawn_delay` of breathing room before regular zombies resume.
 - `boss_spawned_this_wave = true`; `boss_phrase_len` is precomputed by scanning to null terminator.
 - `resetBoss(allocator)` frees the boss pointer if non-null and resets `boss_spawned_this_wave` and `boss_phrase_len` — called on wave transition and game restart.
 
@@ -567,27 +581,25 @@ graph TB
 
 ### F-20 Combo Counter
 
-**Description.** The combo counter tracks consecutive successful kills. It increments by 1 on every kill (standard or boss). It resets to 0 when the player types a character that does not match the beginning of any active enemy's name or phrase. It also resets to 0 at the start of each wave transition. Pressing Backspace does not reset the combo.
+**Description.** The combo counter tracks consecutive successful kills across the whole session. It increments by 1 on every kill (standard or boss). It resets to 0 **only** when the player types a character that does not match the beginning of any active enemy's name or phrase (or fills the buffer with a wrong key per FR-001). Combos **persist across wave transitions** — a clean session keeps growing the multiplier. A parallel `max_combo` global records the session peak for the game-over screen.
 
-**User-facing behavior.** Players who chain kills without typing mismatched characters accumulate a multiplier (x1–x5) that amplifies their score. Typing a wrong character instantly breaks the chain. Starting a new wave also breaks the chain.
+**User-facing behavior.** Players who chain kills without typing mismatched characters accumulate a multiplier (x1–x5) that amplifies their score. Typing a wrong character instantly breaks the chain. Surviving wave transitions does **not** break the chain — only mistakes do.
 
 **System behavior.**
-- `var combo_count: u32 = 0` (`src/main.zig:78`).
-- Incremented by 1 at each kill site (zombie: `src/main.zig:419`; boss: `src/main.zig:541`).
+- `var combo_count: u32 = 0` and `var max_combo: u32 = 0` (top of `src/main.zig`).
+- `combo_count` is incremented by 1 at each kill site (regular zombie and boss). Immediately after, `if (combo_count > max_combo) max_combo = combo_count` updates the session peak.
 - Mismatch detection runs inside the `while (key > 0)` input loop — once per printable keypress. While the buffer has room, `typedMatchesAnyEnemy()` is called: if it returns `false`, `combo_count = 0` is set immediately and `wrong_chars` is incremented (F-25). If the buffer is already full (`letter_count >= getCurrentMaxInput()`), the additional keypress is also classified as wrong (`combo_count = 0`, `wrong_chars += 1`) per FR-001. `typedMatchesAnyEnemy()` returns `true` if `letter_count == 0` or the typed text is a prefix of any active zombie name or the boss phrase.
-- Wave-transition reset: `combo_count = 0` is set when `is_transitioning` becomes `true`.
+- **No wave-transition reset** — the legacy `combo_count = 0` at the transition-start branch has been removed; combos accumulate freely across waves until a mistake.
 - Backspace does not trigger the mismatch check; the combo is preserved on backspace.
-- `getComboMultiplier(combo)` (`src/main.zig:671–677`): 0–4→x1, 5–9→x2, 10–14→x3, 15–19→x4, 20+→x5.
-- Reset to 0 in `resetScoreState` on game restart.
+- `getComboMultiplier(combo)`: 0–4→x1, 5–9→x2, 10–14→x3, 15–19→x4, 20+→x5.
+- Both `combo_count` and `max_combo` are reset to 0 in `resetScoreState` on game restart.
 
 **Key source references.**
-- `src/main.zig:78` — `var combo_count: u32 = 0`
-- `src/main.zig:171–173` — mismatch detection and reset
-- `src/main.zig:210` — wave-transition reset
-- `src/main.zig:671–677` — `getComboMultiplier` function
-- `src/main.zig:704–720` — `typedMatchesAnyEnemy` function
+- `src/main.zig` — `combo_count`, `max_combo` globals.
+- `src/main.zig` — mismatch detection in the input loop and `max_combo` updates at the two kill sites.
+- `src/main.zig` — `getComboMultiplier`, `typedMatchesAnyEnemy` functions.
 
-**Dependencies.** F-10 (kill increments combo), F-13 (wave transition resets combo), F-19 (combo feeds score formula), F-21 (combo displayed in HUD).
+**Dependencies.** F-10 (kill increments combo), F-19 (combo feeds score formula), F-21 (combo displayed in HUD), F-11 (`max_combo` displayed on game-over screen).
 
 ---
 
@@ -595,12 +607,12 @@ graph TB
 
 **Description.** Two persistent text lines appear at the top-left of the screen throughout active gameplay. The first shows the running score; the second shows the combo count and active multiplier. The combo line's color changes based on the current combo tier.
 
-**User-facing behavior.** The player always sees their current score and combo tier at a glance. The combo line changes from deep violet (`CRT_DIM`) to amber (`CRT_WARN`) at combo 5, and from amber to rose-red (`CRT_ERR`) at combo 15.
+**User-facing behavior.** The player always sees their current score (arcade-style, zero-padded to 6 digits like `"Score: 000042"`) and combo tier at a glance. The combo line starts in bright violet (`CRT_FG`) and shifts to amber (`CRT_WARN`) at combo 5, then rose-red (`CRT_ERR`) at combo 15.
 
 **System behavior.**
-- Score line rendered at `(SCORE_HUD_X=10, SCORE_HUD_Y=5)`, font size `SCORE_HUD_SIZE=24`, color `CRT_FG`, formatted as `"Score: {d}"` via `std.fmt.bufPrintZ` (`src/main.zig:248–250`).
-- Combo line rendered at `(COMBO_HUD_X=10, COMBO_HUD_Y=35)`, font size `COMBO_HUD_SIZE=18`, formatted as `"Combo: {d} x{d}"` (`src/main.zig:252–254`).
-- `getComboColor(combo)` (`src/main.zig:679–684`): combo ≥ 15 → `CRT_ERR`, combo ≥ 5 → `CRT_WARN`, otherwise `CRT_DIM`.
+- Score line rendered at `(SCORE_HUD_X=10, SCORE_HUD_Y=5)`, font size `SCORE_HUD_SIZE=24`, color `CRT_FG`, formatted as `"Score: {d:0>6}"` via `std.fmt.bufPrintZ` — the `0>6` width spec zero-pads to 6 digits and grows naturally beyond.
+- Combo line rendered at `(COMBO_HUD_X=10, COMBO_HUD_Y=35)`, font size `COMBO_HUD_SIZE=18`, formatted as `"Combo: {d} x{d}"`, color from `getComboColor(combo_count)`.
+- `getComboColor(combo)`: combo ≥ 15 → `CRT_ERR`, combo ≥ 5 → `CRT_WARN`, otherwise `CRT_FG` (bright — the previous baseline was the unreadable `CRT_DIM`).
 - Both lines rendered inside the `!is_game_over` draw block, after the wave HUD.
 
 **Key source references.**
@@ -655,21 +667,22 @@ graph TB
 
 ### F-24 Live WPM HUD
 
-**Description.** The game displays the player's current typing speed in words per minute (WPM) in the top-right corner of the screen. WPM is computed from a 10-second sliding window of correct-character timestamps stored in a fixed 512-entry circular buffer. For the first 10 seconds of a session the calculation uses accumulated elapsed time instead of a fixed window. Both the raw computed WPM and the displayed value are tracked separately; the displayed value interpolates toward the target at 20% of the gap per frame, preventing frame-to-frame jitter.
+**Description.** The game displays the player's current typing speed in words per minute (WPM) in the top-right corner of the screen. The WPM timer is **per-wave** and **arms only on the first keystroke** of each wave, so idle time before typing doesn't drag the reading down and each wave reads as its own typing-test segment. WPM is computed from a 10-second sliding window of correct-character timestamps stored in a fixed 512-entry circular buffer. For the first 10 seconds of a wave the calculation uses accumulated elapsed time instead of a fixed window. The displayed value interpolates toward the target at 20% of the gap per frame, preventing frame-to-frame jitter.
 
-**User-facing behavior.** During active gameplay the top-right corner shows a `"WPM N"` label that updates smoothly in real time. The number climbs as the player types correctly and declines toward 0 if they stop typing for 10 or more seconds.
+**User-facing behavior.** At the start of each wave the WPM reads `0` and stays at `0` until the player presses a printable key. From that moment on, the top-right corner shows a `"WPM N"` label that updates smoothly in real time. The number climbs as the player types correctly and declines toward 0 if they stop typing for 10 or more seconds. On wave transitions the WPM resets to 0 again, awaiting the first keystroke of the next wave.
 
 **System behavior.**
 - Constants: `WPM_BUFFER_SIZE = 512`, `WPM_WINDOW_SECONDS = 10.0`, `SMOOTHING_FACTOR = 0.2`.
-- HUD position: `WPM_HUD_X = screen_width − 100`, `WPM_HUD_Y = 5`, font size `METRICS_HUD_SIZE = 18`, color `DARKGRAY`.
+- HUD position: `WPM_HUD_X = screen_width − 100`, `WPM_HUD_Y = 5`, font size `METRICS_HUD_SIZE = 18`, color `CRT_FG`.
 - `wpm_buffer: [512]f32` holds timestamps; `wpm_buffer_head` and `wpm_buffer_count` manage the circular write cursor.
+- `wpm_timer_started: bool` gates `elapsed_time` ticking. The input loop sets it to `true` on the first printable keypress (`key >= 32 and key <= 125`). It is reset to `false` by `resetMetricsState`, which is called at the end of every wave transition and on game restart.
 - `recordCorrectTimestamp(elapsed_time)` is called for each correct keypress: pushes `elapsed_time` into `wpm_buffer[wpm_buffer_head]`, advances head with `% WPM_BUFFER_SIZE`, caps `wpm_buffer_count` at `WPM_BUFFER_SIZE`.
 - `countCharsInWindow(current_time)` scans `wpm_buffer[0..wpm_buffer_count]` and counts entries where `timestamp >= current_time − 10.0`.
 - `calculateTargetWpm()`: returns `0.0` when `elapsed_time == 0`; for the first 10 s uses `(correct_chars / 5) / (elapsed_time / 60)` (simplified to `correct_chars × 12 / elapsed_time`); after 10 s uses `countCharsInWindow(elapsed_time) × 1.2`.
-- `updateMetrics()` is called once per frame (gated by `!is_game_over`): advances `elapsed_time += raylib.GetFrameTime()`, computes `target_wpm = calculateTargetWpm()`, applies `displayed_wpm += 0.2 × (target_wpm − displayed_wpm)`.
+- `updateMetrics()` is called once per frame (gated by `!is_game_over`): advances `elapsed_time += raylib.GetFrameTime()` **only if `wpm_timer_started`**, computes `target_wpm = calculateTargetWpm()`, applies `displayed_wpm += 0.2 × (target_wpm − displayed_wpm)`.
 - HUD draw: `bufPrintZ("WPM {d}", @round(displayed_wpm))` → `DrawText` at `(WPM_HUD_X, WPM_HUD_Y)`.
 - On game-over: `updateMetrics` is not called; `displayed_wpm` freezes at its last value.
-- On restart: `resetMetricsState()` sets `wpm_buffer` to all-zero, `wpm_buffer_head = 0`, `wpm_buffer_count = 0`, `elapsed_time = 0.0`, `displayed_wpm = 0.0`.
+- On wave transition end and restart: `resetMetricsState()` sets `wpm_buffer` to all-zero, `wpm_buffer_head = 0`, `wpm_buffer_count = 0`, `correct_chars = 0`, `wrong_chars = 0`, `elapsed_time = 0.0`, `wpm_timer_started = false`, `displayed_wpm = 0.0`, `displayed_accuracy = 100.0`.
 
 **Key source references.**
 - `src/main.zig:35–42` — WPM/accuracy constants block

@@ -79,13 +79,28 @@ const SMOOTHING_FACTOR: f32 = 0.2;
 const CHARS_PER_WORD: f32 = 5.0;
 const SECONDS_PER_MINUTE: f32 = 60.0;
 
+// Wave timing is derived from target_wpm so the displayed challenge matches reality:
+// spawn cadence forces sustained typing at target_wpm, and on-screen time gives a
+// player at target_wpm one full type-cycle of grace before a zombie lands.
+const AVG_NAME_CHARS: f32 = 6.0;
+const FALL_GRACE_FACTOR: f32 = 2.0;
+const FRAMES_PER_SECOND: f32 = 60.0;
+
 const DYING_DURATION: f32 = 1.0;
-const STATS_TITLE_Y: c_int = 30;
-const STATS_TITLE_SIZE: c_int = 48;
-const STATS_LINE_START_Y: c_int = 80;
-const STATS_LINE_SPACING: c_int = 35;
-const STATS_FONT_SIZE: c_int = 24;
-const STATS_RESTART_HINT_Y: c_int = 405;
+const STATS_TITLE_Y: c_int = 80;
+const STATS_TITLE_SIZE: c_int = 56;
+const STATS_BADGE_Y: c_int = 165;
+const STATS_BADGE_SIZE: c_int = 22;
+const STATS_GRID_LABEL_SIZE: c_int = 14;
+const STATS_GRID_VALUE_SIZE: c_int = 32;
+const STATS_GRID_ROW1_LABEL_Y: c_int = 280;
+const STATS_GRID_ROW1_VALUE_Y: c_int = 310;
+const STATS_GRID_ROW2_LABEL_Y: c_int = 420;
+const STATS_GRID_ROW2_VALUE_Y: c_int = 450;
+const STATS_COL1_CX: c_int = 135;
+const STATS_COL2_CX: c_int = 400;
+const STATS_COL3_CX: c_int = 665;
+const STATS_RESTART_HINT_Y: c_int = 880;
 const STATS_RESTART_HINT_SIZE: c_int = 18;
 const WaveConfig = struct {
     target_wpm: u32,
@@ -94,22 +109,30 @@ const WaveConfig = struct {
     pool_size: u32,
 };
 
-const WAVE_TABLE = [_]WaveConfig{
-    .{ .target_wpm = 15, .spawn_delay = 4.80, .fall_speed = 0.5, .pool_size = 5 },
-    .{ .target_wpm = 18, .spawn_delay = 4.00, .fall_speed = 0.6, .pool_size = 7 },
-    .{ .target_wpm = 22, .spawn_delay = 3.27, .fall_speed = 0.7, .pool_size = 9 },
-    .{ .target_wpm = 26, .spawn_delay = 2.77, .fall_speed = 0.8, .pool_size = 11 },
-    .{ .target_wpm = 30, .spawn_delay = 2.40, .fall_speed = 0.9, .pool_size = 13 },
-    .{ .target_wpm = 35, .spawn_delay = 2.06, .fall_speed = 1.0, .pool_size = 15 },
-    .{ .target_wpm = 40, .spawn_delay = 1.80, .fall_speed = 1.1, .pool_size = 17 },
-    .{ .target_wpm = 45, .spawn_delay = 1.60, .fall_speed = 1.2, .pool_size = 19 },
-    .{ .target_wpm = 50, .spawn_delay = 1.44, .fall_speed = 1.3, .pool_size = 21 },
-    .{ .target_wpm = 55, .spawn_delay = 1.31, .fall_speed = 1.4, .pool_size = 23 },
-    .{ .target_wpm = 60, .spawn_delay = 1.20, .fall_speed = 1.5, .pool_size = 25 },
-    .{ .target_wpm = 70, .spawn_delay = 1.03, .fall_speed = 1.6, .pool_size = 27 },
-    .{ .target_wpm = 80, .spawn_delay = 0.90, .fall_speed = 1.7, .pool_size = 29 },
-    .{ .target_wpm = 90, .spawn_delay = 0.80, .fall_speed = 1.8, .pool_size = 31 },
-    .{ .target_wpm = 100, .spawn_delay = 0.72, .fall_speed = 1.9, .pool_size = 33 },
+const WaveAuthoring = struct {
+    target_wpm: u32,
+    pool_size: u32,
+};
+
+// Only target_wpm and pool_size are authored; spawn_delay and fall_speed are derived
+// from target_wpm via deriveWaveTiming() at runtime so the gameplay rhythm always
+// matches the displayed challenge.
+const WAVE_TABLE = [_]WaveAuthoring{
+    .{ .target_wpm = 15, .pool_size = 5 },
+    .{ .target_wpm = 18, .pool_size = 7 },
+    .{ .target_wpm = 22, .pool_size = 9 },
+    .{ .target_wpm = 26, .pool_size = 11 },
+    .{ .target_wpm = 30, .pool_size = 13 },
+    .{ .target_wpm = 35, .pool_size = 15 },
+    .{ .target_wpm = 40, .pool_size = 17 },
+    .{ .target_wpm = 45, .pool_size = 19 },
+    .{ .target_wpm = 50, .pool_size = 21 },
+    .{ .target_wpm = 55, .pool_size = 23 },
+    .{ .target_wpm = 60, .pool_size = 25 },
+    .{ .target_wpm = 70, .pool_size = 27 },
+    .{ .target_wpm = 80, .pool_size = 29 },
+    .{ .target_wpm = 90, .pool_size = 31 },
+    .{ .target_wpm = 100, .pool_size = 33 },
 };
 
 // Input buffer for characters
@@ -131,6 +154,7 @@ var boss_phrase_len: usize = 0;
 
 var score: u64 = 0;
 var combo_count: u32 = 0;
+var max_combo: u32 = 0;
 var popups = [_]ScorePopup{.{ .x = 0, .y = 0, .points = 0, .timer = 0, .active = false }} ** MAX_POPUPS;
 var popup_next: usize = 0;
 
@@ -140,6 +164,12 @@ var wpm_buffer_count: usize = 0;
 var correct_chars: u32 = 0;
 var wrong_chars: u32 = 0;
 var elapsed_time: f32 = 0.0;
+// `elapsed_time` only ticks once the player has actually started typing in the
+// current wave. This keeps the displayed WPM honest (pre-typing idle doesn't
+// drag the number down) and matches the user expectation that each wave is its
+// own typing-test segment. The flag is cleared on wave transition end so the
+// next wave reads the player's pace, not a session-wide average.
+var wpm_timer_started: bool = false;
 var displayed_wpm: f32 = 0.0;
 var displayed_accuracy: f32 = 100.0;
 
@@ -184,7 +214,7 @@ var zombie_texture: raylib.Texture2D = undefined;
 var zombie_kill_sound: raylib.Sound = undefined;
 
 const screen_width = 800;
-const screen_height = 450;
+const screen_height = 1000;
 
 // Spawn X bounds: left margin + right margin sized for the rendered sprite
 // (≈ 313 px frame × 0.2 scale ≈ 63 px) so zombies stay fully on-screen.
@@ -261,6 +291,7 @@ fn frame(ctx: *FrameContext) void {
         var key = raylib.GetCharPressed();
         while (key > 0) {
             if ((key >= 32) and (key <= 125)) {
+                wpm_timer_started = true;
                 if (letter_count < getCurrentMaxInput()) {
                     name[letter_count] = @intCast(key);
                     name[letter_count + 1] = '\x00';
@@ -293,9 +324,10 @@ fn frame(ctx: *FrameContext) void {
 
         // Spawn gate: pool_size cap stops new spawns for the rest of the wave once the
         // quota is hit (timer then accumulates harmlessly until the wave transitions and
-        // resets it). When the gate is open but spawnZombie returns false (pool full),
-        // spawn_timer is left untouched so the engine retries every frame.
-        if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size) {
+        // resets it). Regular spawns also pause while a boss is alive so the boss phrase
+        // gets the player's undivided attention; the spawn_timer is reset on boss kill
+        // (see updateBoss) to grant a full spawn_delay breather afterward.
+        if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size and boss == null) {
             const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
             if (spawned) {
                 spawn_timer = 0.0;
@@ -326,7 +358,6 @@ fn frame(ctx: *FrameContext) void {
         if (!is_game_over and !is_dying and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
             is_transitioning = true;
             transition_timer = WAVE_TRANSITION_DURATION;
-            combo_count = 0;
         }
     }
 
@@ -339,6 +370,8 @@ fn frame(ctx: *FrameContext) void {
             wave_spawned = 0;
             spawn_timer = 0.0;
             is_transitioning = false;
+            // New wave = fresh WPM segment; the timer re-arms on the first keystroke.
+            resetMetricsState();
             resetZombies(ctx.allocator);
             resetBoss(ctx.allocator);
         }
@@ -397,10 +430,10 @@ fn frame(ctx: *FrameContext) void {
         const hud_cfg = getWaveConfig(current_wave);
         var hud_buf: [64]u8 = undefined;
         const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
-        drawCenteredText(hud_text.ptr, 10, 20, CRT_DIM);
+        drawCenteredText(hud_text.ptr, 10, 20, CRT_FG);
 
         var score_buf: [32]u8 = undefined;
-        const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d}", .{score}) catch "Score: ?";
+        const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d:0>6}", .{score}) catch "Score: ?";
         raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, CRT_FG);
 
         var combo_buf: [32]u8 = undefined;
@@ -410,12 +443,12 @@ fn frame(ctx: *FrameContext) void {
         const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
         var wpm_buf: [32]u8 = undefined;
         const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
-        raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_DIM);
+        raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
 
         const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
         var acc_buf: [32]u8 = undefined;
         const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
-        raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_DIM);
+        raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
     }
 
     raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
@@ -431,24 +464,38 @@ fn frame(ctx: *FrameContext) void {
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
 
     if (is_game_over) {
-        drawCenteredText("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, CRT_ERR);
-
-        var line_y: c_int = STATS_LINE_START_Y;
-        drawCenteredStat("Wave reached: {d}", .{current_wave}, &line_y);
-        drawCenteredStat("Score: {d}", .{score}, &line_y);
+        // Drop-shadow under the title for a subtle CRT glow.
+        drawCenteredTextShadow("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, CRT_ERR);
 
         if (is_new_high_score) {
-            drawCenteredText("NEW HIGH SCORE!", line_y, STATS_FONT_SIZE, CRT_WARN);
-            line_y += STATS_LINE_SPACING;
-        } else {
-            drawCenteredStat("Best: {d}", .{best_score.score}, &line_y);
+            drawCenteredText("- NEW HIGH SCORE -", STATS_BADGE_Y, STATS_BADGE_SIZE, CRT_WARN);
         }
 
-        drawCenteredStat("Average WPM: {d}", .{calculateAverageWpm()}, &line_y);
-        drawCenteredStat("Accuracy: {d}%", .{calculateStatsAccuracy()}, &line_y);
-        drawCenteredStat("Kills: {d}", .{total_kills}, &line_y);
+        var score_cell_buf: [16]u8 = undefined;
+        const score_cell = std.fmt.bufPrintZ(&score_cell_buf, "{d:0>6}", .{score}) catch "??????";
+        drawStatCell("SCORE", score_cell.ptr, STATS_COL1_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
 
-        drawCenteredText("Press ENTER to restart", STATS_RESTART_HINT_Y, STATS_RESTART_HINT_SIZE, CRT_DIM);
+        var wave_cell_buf: [16]u8 = undefined;
+        const wave_cell = std.fmt.bufPrintZ(&wave_cell_buf, "{d}", .{current_wave}) catch "?";
+        drawStatCell("WAVE REACHED", wave_cell.ptr, STATS_COL2_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
+
+        var slain_cell_buf: [16]u8 = undefined;
+        const slain_cell = std.fmt.bufPrintZ(&slain_cell_buf, "{d}", .{total_kills}) catch "?";
+        drawStatCell("ENEMIES SLAIN", slain_cell.ptr, STATS_COL3_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
+
+        var combo_cell_buf: [16]u8 = undefined;
+        const combo_cell = std.fmt.bufPrintZ(&combo_cell_buf, "x{d}", .{max_combo}) catch "x?";
+        drawStatCell("MAX COMBO", combo_cell.ptr, STATS_COL1_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
+
+        var wpm_cell_buf: [16]u8 = undefined;
+        const wpm_cell = std.fmt.bufPrintZ(&wpm_cell_buf, "{d}", .{calculateAverageWpm()}) catch "?";
+        drawStatCell("WPM", wpm_cell.ptr, STATS_COL2_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
+
+        var acc_cell_buf: [16]u8 = undefined;
+        const acc_cell = std.fmt.bufPrintZ(&acc_cell_buf, "{d}%", .{calculateStatsAccuracy()}) catch "?%";
+        drawStatCell("ACCURACY", acc_cell.ptr, STATS_COL3_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
+
+        drawCenteredText("> PRESS [ENTER] TO RETRY <", STATS_RESTART_HINT_Y, STATS_RESTART_HINT_SIZE, CRT_FG);
 
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
             is_game_over = false;
@@ -484,7 +531,7 @@ fn frame(ctx: *FrameContext) void {
     }
 
     if (ctx.mouse_on_text and letter_count >= getCurrentMaxInput()) {
-        raylib.DrawText("Press BACKSPACE to delete chars...", 230, 300, 20, CRT_DIM);
+        drawCenteredText("Press BACKSPACE to delete chars...", 905, 18, CRT_DIM);
     }
 
     drawCrtOverlay();
@@ -547,7 +594,7 @@ pub fn main() !void {
 
     var ctx = FrameContext{
         .allocator = &allocator,
-        .text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 250.0, .y = 400.0, .width = 500.0, .height = 50.0 },
+        .text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 250.0, .y = 930.0, .width = 500.0, .height = 50.0 },
         .mouse_on_text = false,
         .frames_counter = 0,
     };
@@ -599,6 +646,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                 const points = calculateScore(zomb_name_length, zomb.y, false, combo_count);
                 score += points;
                 combo_count += 1;
+                if (combo_count > max_combo) max_combo = combo_count;
                 spawnPopup(zomb.x, zomb.y, points);
                 allocator.destroy(zomb);
                 slot.* = null;
@@ -743,25 +791,55 @@ fn drawCenteredText(text: [*:0]const u8, y: c_int, size: c_int, color: raylib.Co
     raylib.DrawText(text, @divTrunc(screen_width - width, 2), y, size, color);
 }
 
-fn drawCenteredStat(comptime fmt: []const u8, args: anytype, y: *c_int) void {
-    var buf: [32]u8 = undefined;
-    const text = std.fmt.bufPrintZ(&buf, fmt, args) catch "?";
-    drawCenteredText(text.ptr, y.*, STATS_FONT_SIZE, CRT_FG);
-    y.* += STATS_LINE_SPACING;
+// Cheap CRT-style glow: a soft dim copy offset by a couple of pixels behind
+// the main text. Avoids per-frame blur passes while still selling the look.
+fn drawCenteredTextShadow(text: [*:0]const u8, y: c_int, size: c_int, color: raylib.Color) void {
+    const width = raylib.MeasureText(text, size);
+    const x = @divTrunc(screen_width - width, 2);
+    const shadow = raylib.Color{ .r = color.r / 3, .g = color.g / 3, .b = color.b / 3, .a = color.a };
+    raylib.DrawText(text, x + 2, y + 3, size, shadow);
+    raylib.DrawText(text, x, y, size, color);
+}
+
+fn drawColumnCenteredText(text: [*:0]const u8, cx: c_int, y: c_int, size: c_int, color: raylib.Color) void {
+    const width = raylib.MeasureText(text, size);
+    raylib.DrawText(text, cx - @divTrunc(width, 2), y, size, color);
+}
+
+fn drawStatCell(label: [*:0]const u8, value: [*:0]const u8, cx: c_int, label_y: c_int, value_y: c_int) void {
+    drawColumnCenteredText(label, cx, label_y, STATS_GRID_LABEL_SIZE, CRT_ACCENT);
+    drawColumnCenteredText(value, cx, value_y, STATS_GRID_VALUE_SIZE, CRT_FG);
+}
+
+fn deriveWaveTiming(target_wpm: u32) struct { spawn_delay: f32, fall_speed: f32 } {
+    const chars_per_sec = @as(f32, @floatFromInt(target_wpm)) * CHARS_PER_WORD / SECONDS_PER_MINUTE;
+    const time_to_type = AVG_NAME_CHARS / chars_per_sec;
+    const time_on_screen = time_to_type * FALL_GRACE_FACTOR;
+    const sh: f32 = @floatFromInt(screen_height);
+    return .{
+        .spawn_delay = time_to_type,
+        .fall_speed = sh / (time_on_screen * FRAMES_PER_SECOND),
+    };
 }
 
 fn getWaveConfig(wave: u32) WaveConfig {
-    if (wave >= 1 and wave <= WAVE_TABLE.len) {
-        return WAVE_TABLE[wave - 1];
-    }
-    // Cap at MAX_ZOMBIES — past wave ~49 the formula exceeds the pool capacity, at which
-    // point wave_spawned can never reach pool_size and the wave never completes (soft-lock).
-    const calculated: u32 = 33 + 2 * (wave - 15);
+    const authoring = if (wave >= 1 and wave <= WAVE_TABLE.len) blk: {
+        break :blk WAVE_TABLE[wave - 1];
+    } else blk: {
+        // Cap at MAX_ZOMBIES — past wave ~49 the formula exceeds the pool capacity, at which
+        // point wave_spawned can never reach pool_size and the wave never completes (soft-lock).
+        const calculated: u32 = 33 + 2 * (wave - 15);
+        break :blk WaveAuthoring{
+            .target_wpm = 110,
+            .pool_size = if (calculated > MAX_ZOMBIES) MAX_ZOMBIES else calculated,
+        };
+    };
+    const timing = deriveWaveTiming(authoring.target_wpm);
     return WaveConfig{
-        .target_wpm = 110,
-        .spawn_delay = 0.66,
-        .fall_speed = 2.0,
-        .pool_size = if (calculated > MAX_ZOMBIES) MAX_ZOMBIES else calculated,
+        .target_wpm = authoring.target_wpm,
+        .spawn_delay = timing.spawn_delay,
+        .fall_speed = timing.fall_speed,
+        .pool_size = authoring.pool_size,
     };
 }
 
@@ -780,12 +858,16 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
             const points = calculateScore(boss_phrase_len, b.y, true, combo_count);
             score += points;
             combo_count += 1;
+            if (combo_count > max_combo) max_combo = combo_count;
             spawnPopup(b.x, b.y, points);
             allocator.destroy(b);
             boss = null;
             letter_count = 0;
             name[0] = '\x00';
             total_kills += 1;
+            // Give the player a full spawn_delay of breathing room before regular
+            // zombies resume — typing the boss phrase is enough work for one beat.
+            spawn_timer = 0.0;
             raylib.PlaySound(zombie_kill_sound);
         }
     }
@@ -929,12 +1011,13 @@ fn getComboMultiplier(combo: u32) u64 {
 fn getComboColor(combo: u32) raylib.Color {
     if (combo >= 15) return CRT_ERR;
     if (combo >= 5) return CRT_WARN;
-    return CRT_DIM;
+    return CRT_FG;
 }
 
 fn resetScoreState() void {
     score = 0;
     combo_count = 0;
+    max_combo = 0;
     popup_next = 0;
     for (&popups) |*p| p.active = false;
 }
@@ -998,6 +1081,7 @@ fn resetMetricsState() void {
     correct_chars = 0;
     wrong_chars = 0;
     elapsed_time = 0.0;
+    wpm_timer_started = false;
     displayed_wpm = 0.0;
     displayed_accuracy = 100.0;
 }
@@ -1034,7 +1118,7 @@ fn calculateStatsAccuracy() u32 {
 }
 
 fn updateMetrics() void {
-    elapsed_time += raylib.GetFrameTime();
+    if (wpm_timer_started) elapsed_time += raylib.GetFrameTime();
     const target_wpm = calculateTargetWpm();
     displayed_wpm += SMOOTHING_FACTOR * (target_wpm - displayed_wpm);
     const target_accuracy = calculateTargetAccuracy();
@@ -1164,19 +1248,31 @@ test "input buffer bounds" {
     try std.testing.expectEqual(@as(u8, '\x00'), buf[count]);
 }
 
-test "getWaveConfig returns correct values for wave 1" {
+// Expected timing per the WPM-driven formula:
+//   spawn_delay  = AVG_NAME_CHARS / (target_wpm * CHARS_PER_WORD / SECONDS_PER_MINUTE)
+//   fall_speed   = screen_height / (spawn_delay * FALL_GRACE_FACTOR * FRAMES_PER_SECOND)
+fn expectedSpawnDelay(target_wpm: u32) f32 {
+    const chars_per_sec = @as(f32, @floatFromInt(target_wpm)) * CHARS_PER_WORD / SECONDS_PER_MINUTE;
+    return AVG_NAME_CHARS / chars_per_sec;
+}
+fn expectedFallSpeed(target_wpm: u32) f32 {
+    const sh: f32 = @floatFromInt(screen_height);
+    return sh / (expectedSpawnDelay(target_wpm) * FALL_GRACE_FACTOR * FRAMES_PER_SECOND);
+}
+
+test "getWaveConfig wave 1 follows WPM-driven formula" {
     const cfg = getWaveConfig(1);
     try std.testing.expectEqual(@as(u32, 15), cfg.target_wpm);
-    try std.testing.expectApproxEqAbs(@as(f32, 4.80), cfg.spawn_delay, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.5), cfg.fall_speed, 0.01);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(15), cfg.spawn_delay, 0.01);
+    try std.testing.expectApproxEqAbs(expectedFallSpeed(15), cfg.fall_speed, 0.01);
     try std.testing.expectEqual(@as(u32, 5), cfg.pool_size);
 }
 
-test "getWaveConfig returns correct values for wave 15" {
+test "getWaveConfig wave 15 follows WPM-driven formula" {
     const cfg = getWaveConfig(15);
     try std.testing.expectEqual(@as(u32, 100), cfg.target_wpm);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.72), cfg.spawn_delay, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 1.9), cfg.fall_speed, 0.01);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(100), cfg.spawn_delay, 0.01);
+    try std.testing.expectApproxEqAbs(expectedFallSpeed(100), cfg.fall_speed, 0.01);
     try std.testing.expectEqual(@as(u32, 33), cfg.pool_size);
 }
 
@@ -1193,8 +1289,8 @@ test "wave completes when kills equals pool size" {
 test "getWaveConfig scales correctly for wave 16+" {
     const cfg16 = getWaveConfig(16);
     try std.testing.expectEqual(@as(u32, 110), cfg16.target_wpm);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.66), cfg16.spawn_delay, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 2.0), cfg16.fall_speed, 0.01);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(110), cfg16.spawn_delay, 0.01);
+    try std.testing.expectApproxEqAbs(expectedFallSpeed(110), cfg16.fall_speed, 0.01);
     try std.testing.expectEqual(@as(u32, 35), cfg16.pool_size);
 
     const cfg20 = getWaveConfig(20);
@@ -1320,10 +1416,13 @@ test "wave completion requires boss kill on boss waves" {
 }
 
 test "calculateScore reference cases" {
+    // y positions are expressed as fractions of screen_height so the test stays
+    // valid if the play-field size changes (e.g. portrait-arcade rework).
+    const h: f32 = @floatFromInt(screen_height);
     try std.testing.expectEqual(@as(u64, 40), calculateScore(4, 0, false, 0));
     try std.testing.expectEqual(@as(u64, 200), calculateScore(4, 0, false, 20));
-    try std.testing.expectEqual(@as(u64, 138), calculateScore(4, 440, false, 0));
-    try std.testing.expectEqual(@as(u64, 2313), calculateScore(19, 300, true, 10));
+    try std.testing.expectEqual(@as(u64, 138), calculateScore(4, h * 440.0 / 450.0, false, 0));
+    try std.testing.expectEqual(@as(u64, 2313), calculateScore(19, h * 300.0 / 450.0, true, 10));
 }
 
 test "getComboMultiplier tier boundaries" {
@@ -1392,17 +1491,20 @@ test "popup pool circular recycling" {
 test "resetScoreState clears score, combo, and popups" {
     const saved_score = score;
     const saved_combo = combo_count;
+    const saved_max_combo = max_combo;
     const saved_next = popup_next;
     const saved_popups = popups;
     defer {
         score = saved_score;
         combo_count = saved_combo;
+        max_combo = saved_max_combo;
         popup_next = saved_next;
         popups = saved_popups;
     }
 
     score = 999;
     combo_count = 10;
+    max_combo = 25;
     popup_next = 5;
     popups[0].active = true;
 
@@ -1410,6 +1512,7 @@ test "resetScoreState clears score, combo, and popups" {
 
     try std.testing.expectEqual(@as(u64, 0), score);
     try std.testing.expectEqual(@as(u32, 0), combo_count);
+    try std.testing.expectEqual(@as(u32, 0), max_combo);
     try std.testing.expectEqual(@as(usize, 0), popup_next);
     try std.testing.expect(!popups[0].active);
 }

@@ -320,7 +320,8 @@ These variables collectively represent the running state of the game session.
 | `boss_spawned_this_wave` | `bool` | `false` | `false` | `true` once `spawnBoss` has been called for the current wave. Used in the wave-completion gate to distinguish "boss not yet spawned" from "boss already killed". |
 | `boss_phrase_len` | `usize` | `0` | `0` | Length of the active boss phrase (number of characters before the null terminator), precomputed at spawn. Used by `updateBoss` and `drawBoss` to compute health bar fill and detect full-phrase match. |
 | `score` | `u64` | `0` | `0` | Accumulated points earned across all kills in the current game session. Incremented by `calculateScore` result on each kill. Reset to 0 by `resetScoreState` on game restart. |
-| `combo_count` | `u32` | `0` | `0` | Consecutive kill count without a mismatch. Determines the active combo multiplier tier (x1–x5 via `getComboMultiplier`). Reset to 0 on mismatch or wave transition; also reset by `resetScoreState` on restart. |
+| `combo_count` | `u32` | `0` | `0` | Consecutive kill count without a mismatch. Determines the active combo multiplier tier (x1–x5 via `getComboMultiplier`). Reset to 0 on mismatch only — **persists across wave transitions** so a clean session keeps growing the multiplier. Also reset by `resetScoreState` on restart. |
+| `max_combo` | `u32` | `0` | `0` | Session-wide peak `combo_count`. Updated inline whenever `combo_count` grows after a regular or boss kill. Displayed in the `MAX COMBO` cell of the game-over grid. Reset by `resetScoreState` on restart. |
 | `total_kills` | `u32` | `0` | `0` | Session-wide count of all enemies destroyed (regular zombies and boss). Incremented in `updateZombies` and `updateBoss` on each successful kill. Displayed on the stats screen as "Kills". Reset to 0 by `resetSessionState` on restart. |
 | `best_score` | `HighScoreRecord` | zeroed | preserved | Best session record loaded at startup. Updated in memory (and persisted to `highscore.dat` / localStorage) at the `is_dying → is_game_over` transition if the current session score exceeds `best_score.score`. Not reset on restart — survives across sessions in memory for the lifetime of the process. |
 | `is_new_high_score` | `bool` | `false` | `false` | Set to `true` at the `is_dying → is_game_over` transition when `score > best_score.score`. Controls whether the stats screen shows "NEW HIGH SCORE!" (gold) or "Best: N" (dark gray). Reset to `false` by `resetSessionState` on restart. |
@@ -333,7 +334,8 @@ These variables collectively represent the running state of the game session.
 | `wpm_buffer_count` | `usize` | `0` | `0` | Number of valid entries in `wpm_buffer`; capped at `WPM_BUFFER_SIZE` (512). Reset to 0 by `resetMetricsState`. |
 | `correct_chars` | `u32` | `0` | `0` | Session-wide count of keypresses classified as correct (matches next expected character of at least one active enemy). Incremented per keypress in the input loop. Reset by `resetMetricsState`. |
 | `wrong_chars` | `u32` | `0` | `0` | Session-wide count of keypresses classified as incorrect (matches no active enemy prefix). Incremented per keypress in the input loop; also resets `combo_count` to 0. Reset by `resetMetricsState`. |
-| `elapsed_time` | `f32` | `0.0` | `0.0` | Accumulated game time in seconds, advanced by `raylib.GetFrameTime()` inside `updateMetrics()` each frame (gated by `!is_game_over`). Used as the timestamp for correct-character events and as the reference point for the sliding WPM window. Reset by `resetMetricsState`. |
+| `elapsed_time` | `f32` | `0.0` | `0.0` | Accumulated *typing* time in seconds, advanced by `raylib.GetFrameTime()` inside `updateMetrics()` only while `wpm_timer_started` is true. The timer arms on the first printable keypress of each wave and is reset (along with the rest of the metrics) at the end of every wave transition, so each wave reads as its own typing-test segment. Used as the timestamp for correct-character events and as the reference point for the sliding WPM window. Reset by `resetMetricsState`. |
+| `wpm_timer_started` | `bool` | `false` | `false` | Gate flag for the `elapsed_time` increment. Set to `true` by the input loop on the first printable keypress; cleared by `resetMetricsState` at the end of each wave transition and on game restart. Ensures the displayed WPM doesn't drift down during pre-typing idle. |
 | `displayed_wpm` | `f32` | `0.0` | `0.0` | Smoothed WPM value shown in the HUD. Interpolates toward `calculateTargetWpm()` at rate `SMOOTHING_FACTOR = 0.2` per frame. Frozen on game-over. Reset to 0.0 by `resetMetricsState`. |
 | `displayed_accuracy` | `f32` | `100.0` | `100.0` | Smoothed accuracy percentage shown in the HUD. Interpolates toward `calculateTargetAccuracy()` at rate `SMOOTHING_FACTOR = 0.2` per frame. Frozen on game-over. Reset to 100.0 by `resetMetricsState`. |
 | `frames_counter` | `usize` | `0` (in `FrameContext`) | — | Counts frames while the mouse is over the text input box. Drives the blink via `(frames_counter / 20) % 2 == 0`; reset to `0` when the mouse leaves. |
@@ -350,13 +352,20 @@ These variables collectively represent the running state of the game session.
 
 ---
 
-### 3.5 WaveConfig
+### 3.5 WaveAuthoring / WaveConfig
 
-**Source:** `src/main.zig`, lines 56–61 (struct), lines 14–30 (compile-time table), lines 419–429 (lookup function)
+**Source:** `src/main.zig` — struct definitions at the top of the file, `WAVE_TABLE` compile-time array, `deriveWaveTiming`/`getWaveConfig` lookup functions.
 
-**Definition:**
+**Definitions:**
 
 ```zig
+// Authored per-wave knobs — the only values edited by hand.
+const WaveAuthoring = struct {
+    target_wpm: u32,
+    pool_size: u32,
+};
+
+// Full runtime config — spawn_delay and fall_speed are derived from target_wpm.
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
@@ -365,18 +374,34 @@ const WaveConfig = struct {
 };
 ```
 
-`WaveConfig` is a value type — it is never heap-allocated. Instances are returned by value from `getWaveConfig(wave: u32)`.
+Both types are value types — never heap-allocated. `WaveConfig` is returned by value from `getWaveConfig(wave: u32)`.
 
 | Field | Type | Meaning | Range |
 |---|---|---|---|
 | `target_wpm` | `u32` | Target typing speed for the wave in words per minute | 15 (wave 1) – 110 (wave 16+) |
-| `spawn_delay` | `f32` | Seconds between zombie spawns | 0.66 (wave 16+) – 4.80 (wave 1) |
-| `fall_speed` | `f32` | Pixels per frame each zombie descends | 0.5 (wave 1) – 2.0 (wave 16+) |
-| `pool_size` | `u32` | Total zombies to spawn in the wave | 5 (wave 1) – 33+2*(wave-15) (wave 16+) |
+| `spawn_delay` | `f32` | Seconds between zombie spawns — **derived** from `target_wpm` | ≈ 4.80s (wave 1, target 15) – ≈ 0.66s (wave 16+, target 110) |
+| `fall_speed` | `f32` | Pixels per frame each zombie descends — **derived** from `target_wpm` and `screen_height` | ≈ 1.74 (wave 1) – ≈ 11.6 (wave 16+) at `screen_height = 1000` |
+| `pool_size` | `u32` | Total zombies to spawn in the wave | 5 (wave 1) – 33+2*(wave-15) (wave 16+), capped at `MAX_ZOMBIES` |
 
-**Lookup:** `fn getWaveConfig(wave: u32) WaveConfig` returns `WAVE_TABLE[wave - 1]` for waves 1–15 and computes the scaling formula for waves 16+.
+**Derivation formula (`deriveWaveTiming`):**
 
-**Storage:** `WAVE_TABLE` is a `[15]WaveConfig` compile-time constant array. No runtime allocation occurs.
+```
+chars_per_sec = target_wpm × CHARS_PER_WORD / SECONDS_PER_MINUTE
+time_to_type  = AVG_NAME_CHARS / chars_per_sec       // seconds to type an average name at target WPM
+spawn_delay   = time_to_type                          // one zombie per type-cycle → sustained WPM pressure
+fall_speed    = screen_height / (time_to_type × FALL_GRACE_FACTOR × FRAMES_PER_SECOND)
+```
+
+Constants (compile-time):
+- `AVG_NAME_CHARS = 6.0` — average name length across all zombie types.
+- `FALL_GRACE_FACTOR = 2.0` — a player typing exactly at `target_wpm` reaches each zombie with one full type-cycle of grace before it lands.
+- `FRAMES_PER_SECOND = 60.0`.
+
+The per-type speed multipliers (`runner ×1.8`, `tank ×0.5`) and per-type name-length filters (runners ≤5 chars, tanks ≥8 chars) layer **on top** of the derived `fall_speed`, so runners are tighter than baseline and tanks are looser.
+
+**Lookup:** `fn getWaveConfig(wave: u32) WaveConfig` reads the authoring tuple — `WAVE_TABLE[wave - 1]` for waves 1–15, or a scaling formula clamped to `MAX_ZOMBIES` for waves 16+ — and runs `deriveWaveTiming` to produce the full config.
+
+**Storage:** `WAVE_TABLE` is a `[15]WaveAuthoring` compile-time constant array (`target_wpm` + `pool_size` only). No runtime allocation occurs.
 
 ---
 
@@ -535,7 +560,10 @@ All other constants are compile-time `const` values declared at module scope in 
 | `ZOMBIE_FRAME_COUNT` | `17` | `comptime_int` | Number of horizontal animation frames in `z_spritesheet.png`; used to compute `frame_width` and to wrap the animation counter |
 | `ZOMBIE_ANIMATION_FRAME_DURATION` | `0.1` | `f32` | Seconds between animation frame advances in `drawZombies` |
 | `WAVE_TRANSITION_DURATION` | `3.0` | `f32` | Seconds the inter-wave countdown lasts before the next wave begins |
-| `WAVE_TABLE` | `[15]WaveConfig` | compile-time array | Explicit difficulty parameters for waves 1–15 |
+| `WAVE_TABLE` | `[15]WaveAuthoring` | compile-time array | Authored `target_wpm` + `pool_size` for waves 1–15; `spawn_delay`/`fall_speed` are derived from `target_wpm` |
+| `AVG_NAME_CHARS` | `6.0` | `f32` | Average name length used in the WPM-driven timing formula |
+| `FALL_GRACE_FACTOR` | `2.0` | `f32` | On-screen time = `time_to_type × FALL_GRACE_FACTOR`; at 2.0 a player at target WPM has one full type-cycle of grace before a zombie lands |
+| `FRAMES_PER_SECOND` | `60.0` | `f32` | Frame-rate reference used to convert seconds into the per-frame `fall_speed` |
 | `ZOMBIE_SPAWN_X_MIN` | `10` | `c_int` | Left boundary for random zombie spawn x position (pixels from left edge) |
 | `ZOMBIE_SPAWN_X_MAX` | `749` | `c_int` | Right boundary for random zombie spawn x position (screen_width - 51) |
 | `screen_width` | `800` | `comptime_int` | Window width in pixels; passed to `raylib.InitWindow` and used for centering UI |
