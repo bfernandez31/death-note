@@ -39,6 +39,11 @@ const CRT_ERR = raylib.Color{ .r = 255, .g = 90, .b = 138, .a = 255 };
 const CRT_BEZEL_OUTER = raylib.Color{ .r = 20, .g = 5, .b = 25, .a = 255 };
 const CRT_BEZEL_INNER = raylib.Color{ .r = 35, .g = 10, .b = 45, .a = 255 };
 const CRT_SCANLINE = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
+const CRT_VIGNETTE_OUTER = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 60 };
+const CRT_VIGNETTE_INNER = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
+const CRT_SCANLINE_STEP: c_int = 3;
+const CRT_VIGNETTE_OUTER_PX: c_int = 20;
+const CRT_VIGNETTE_INNER_PX: c_int = 10;
 const BOSS_WAVE_INTERVAL: u32 = 5;
 
 const ZOMBIE_FRAME_COUNT = 17;
@@ -1019,25 +1024,23 @@ fn updateMetrics() void {
 }
 
 fn drawCrtOverlay() void {
-    // Scanlines: semi-transparent dark horizontal lines every 3 pixels
     var y: c_int = 0;
-    while (y < screen_height) : (y += 3) {
+    while (y < screen_height) : (y += CRT_SCANLINE_STEP) {
         raylib.DrawRectangle(0, y, screen_width, 1, CRT_SCANLINE);
     }
 
-    // Vignette: darken the edges with layered semi-transparent rectangles
-    const vignette_color = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 60 };
-    const vignette_inner = raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 30 };
-    raylib.DrawRectangle(0, 0, screen_width, 20, vignette_color);
-    raylib.DrawRectangle(0, screen_height - 20, screen_width, 20, vignette_color);
-    raylib.DrawRectangle(0, 0, 20, screen_height, vignette_color);
-    raylib.DrawRectangle(screen_width - 20, 0, 20, screen_height, vignette_color);
-    raylib.DrawRectangle(0, 0, screen_width, 10, vignette_inner);
-    raylib.DrawRectangle(0, screen_height - 10, screen_width, 10, vignette_inner);
-    raylib.DrawRectangle(0, 0, 10, screen_height, vignette_inner);
-    raylib.DrawRectangle(screen_width - 10, 0, 10, screen_height, vignette_inner);
+    const outer = CRT_VIGNETTE_OUTER_PX;
+    raylib.DrawRectangle(0, 0, screen_width, outer, CRT_VIGNETTE_OUTER);
+    raylib.DrawRectangle(0, screen_height - outer, screen_width, outer, CRT_VIGNETTE_OUTER);
+    raylib.DrawRectangle(0, 0, outer, screen_height, CRT_VIGNETTE_OUTER);
+    raylib.DrawRectangle(screen_width - outer, 0, outer, screen_height, CRT_VIGNETTE_OUTER);
 
-    // Bezel: double border
+    const inner = CRT_VIGNETTE_INNER_PX;
+    raylib.DrawRectangle(0, 0, screen_width, inner, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(0, screen_height - inner, screen_width, inner, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(0, 0, inner, screen_height, CRT_VIGNETTE_INNER);
+    raylib.DrawRectangle(screen_width - inner, 0, inner, screen_height, CRT_VIGNETTE_INNER);
+
     raylib.DrawRectangleLines(0, 0, screen_width, screen_height, CRT_BEZEL_OUTER);
     raylib.DrawRectangleLines(1, 1, screen_width - 2, screen_height - 2, CRT_BEZEL_OUTER);
     raylib.DrawRectangleLines(2, 2, screen_width - 4, screen_height - 4, CRT_BEZEL_INNER);
@@ -1050,7 +1053,8 @@ fn drawPopups() void {
         const progress = 1.0 - (p.timer / POPUP_DURATION);
         const draw_y = p.y - (POPUP_RISE_PX * progress);
         const alpha: u8 = @intFromFloat((p.timer / POPUP_DURATION) * 255.0);
-        const color = raylib.Color{ .r = CRT_WARN.r, .g = CRT_WARN.g, .b = CRT_WARN.b, .a = alpha };
+        var color = CRT_WARN;
+        color.a = alpha;
         var buf: [32]u8 = undefined;
         const text = std.fmt.bufPrintZ(&buf, "+{d}", .{p.points}) catch "+?";
         raylib.DrawText(text.ptr, @intFromFloat(p.x), @intFromFloat(draw_y), POPUP_FONT_SIZE, color);
@@ -1743,20 +1747,20 @@ test "selectZombieType distribution" {
 }
 
 test "zombie tint colors" {
-    const fg = getZombieTint(.standard);
-    try std.testing.expectEqual(CRT_FG.r, fg.r);
-    try std.testing.expectEqual(CRT_FG.g, fg.g);
-    try std.testing.expectEqual(CRT_FG.b, fg.b);
+    const standard = getZombieTint(.standard);
+    try std.testing.expectEqual(CRT_FG.r, standard.r);
+    try std.testing.expectEqual(CRT_FG.g, standard.g);
+    try std.testing.expectEqual(CRT_FG.b, standard.b);
 
-    const warn = getZombieTint(.runner);
-    try std.testing.expectEqual(CRT_WARN.r, warn.r);
-    try std.testing.expectEqual(CRT_WARN.g, warn.g);
-    try std.testing.expectEqual(CRT_WARN.b, warn.b);
+    const runner = getZombieTint(.runner);
+    try std.testing.expectEqual(CRT_WARN.r, runner.r);
+    try std.testing.expectEqual(CRT_WARN.g, runner.g);
+    try std.testing.expectEqual(CRT_WARN.b, runner.b);
 
-    const dim = getZombieTint(.tank);
-    try std.testing.expectEqual(CRT_DIM.r, dim.r);
-    try std.testing.expectEqual(CRT_DIM.g, dim.g);
-    try std.testing.expectEqual(CRT_DIM.b, dim.b);
+    const tank = getZombieTint(.tank);
+    try std.testing.expectEqual(CRT_DIM.r, tank.r);
+    try std.testing.expectEqual(CRT_DIM.g, tank.g);
+    try std.testing.expectEqual(CRT_DIM.b, tank.b);
 }
 
 test "hyphen accepted in input" {
