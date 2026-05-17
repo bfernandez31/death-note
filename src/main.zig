@@ -5,6 +5,7 @@ const raylib = @import("raylib.zig").c;
 const BossPhrases = @import("boss_phrases.zig").BossPhrases;
 const name_lists = @import("name_lists.zig");
 const zt = @import("zombie_types.zig");
+const highscore = @import("highscore.zig");
 
 // Aliases for the moved shared declarations (see src/zombie_types.zig). Kept at file
 // scope so the rest of main.zig and its tests keep their original identifiers.
@@ -67,11 +68,6 @@ const STATS_LINE_SPACING: c_int = 35;
 const STATS_FONT_SIZE: c_int = 24;
 const STATS_RESTART_HINT_Y: c_int = 405;
 const STATS_RESTART_HINT_SIZE: c_int = 18;
-const HIGHSCORE_FILENAME = "highscore.dat";
-// Native on-disk format for HighScoreRecord (see data-model.md §3.8). Field-by-field
-// serialization keeps the file size stable at 17 bytes regardless of in-memory padding.
-const HIGHSCORE_DISK_SIZE: usize = @sizeOf(u64) + @sizeOf(u32) + @sizeOf(u32) + @sizeOf(u8);
-
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
@@ -137,7 +133,7 @@ var total_kills: u32 = 0;
 var is_dying: bool = false;
 var dying_timer: f32 = 0.0;
 var dying_zombie_index: ?usize = null;
-var best_score: HighScoreRecord = .{};
+var best_score: highscore.Record = .{};
 var is_new_high_score: bool = false;
 
 // Define the Zombie structure
@@ -158,13 +154,6 @@ const ScorePopup = struct {
     points: u64,
     timer: f32,
     active: bool,
-};
-
-const HighScoreRecord = struct {
-    score: u64 = 0,
-    wave: u32 = 0,
-    wpm: u32 = 0,
-    accuracy: u8 = 0,
 };
 
 // Array to hold zombie pointers. Initialized explicitly to null per constitution rule;
@@ -342,17 +331,13 @@ fn frame(ctx: *FrameContext) void {
             const acc: u8 = @intCast(calculateStatsAccuracy());
             if (score > best_score.score) {
                 is_new_high_score = true;
-                best_score = HighScoreRecord{
+                best_score = highscore.Record{
                     .score = score,
                     .wave = current_wave,
                     .wpm = avg_wpm,
                     .accuracy = acc,
                 };
-                if (comptime is_web) {
-                    saveHighScoreWeb(best_score);
-                } else {
-                    saveHighScore(best_score) catch {};
-                }
+                highscore.save(best_score);
             }
         }
     }
@@ -515,11 +500,7 @@ pub fn main() !void {
     const seed: u64 = @intCast(@max(0, ts.sec *% 1000 + @divTrunc(ts.nsec, 1_000_000)));
     prng = std.Random.DefaultPrng.init(seed);
 
-    if (comptime is_web) {
-        best_score = loadHighScoreWeb();
-    } else {
-        best_score = loadHighScore() catch HighScoreRecord{};
-    }
+    best_score = highscore.load();
 
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
@@ -1017,72 +998,6 @@ fn calculateStatsAccuracy() u32 {
     return (correct_chars * 100) / total;
 }
 
-fn loadHighScore() !HighScoreRecord {
-    const fp = std.c.fopen(HIGHSCORE_FILENAME, "rb") orelse return error.FileNotFound;
-    defer _ = std.c.fclose(fp);
-    var buf: [HIGHSCORE_DISK_SIZE]u8 = undefined;
-    const n = std.c.fread(&buf, 1, HIGHSCORE_DISK_SIZE, fp);
-    if (n != HIGHSCORE_DISK_SIZE) return error.InvalidSize;
-    return HighScoreRecord{
-        .score = std.mem.readInt(u64, buf[0..8], .little),
-        .wave = std.mem.readInt(u32, buf[8..12], .little),
-        .wpm = std.mem.readInt(u32, buf[12..16], .little),
-        .accuracy = buf[16],
-    };
-}
-
-fn saveHighScore(record: HighScoreRecord) !void {
-    const fp = std.c.fopen(HIGHSCORE_FILENAME, "wb") orelse return error.AccessDenied;
-    defer _ = std.c.fclose(fp);
-    var buf: [HIGHSCORE_DISK_SIZE]u8 = undefined;
-    std.mem.writeInt(u64, buf[0..8], record.score, .little);
-    std.mem.writeInt(u32, buf[8..12], record.wave, .little);
-    std.mem.writeInt(u32, buf[12..16], record.wpm, .little);
-    buf[16] = record.accuracy;
-    const n = std.c.fwrite(&buf, 1, HIGHSCORE_DISK_SIZE, fp);
-    if (n != HIGHSCORE_DISK_SIZE) return error.InputOutput;
-}
-
-// Reads a numeric field from localStorage. Returns u64 (not c_int) by going through
-// emscripten_run_script_string so scores above 2^31-1 are preserved instead of being
-// truncated to a negative c_int and clamped to 0.
-fn readHighScoreField(field: []const u8) u64 {
-    var buf: [256]u8 = undefined;
-    const js = std.fmt.bufPrintZ(
-        &buf,
-        "(function(){{try{{var d=JSON.parse(localStorage.getItem('death-note.highscore'));return d&&typeof d.{s}==='number'&&isFinite(d.{s})?String(Math.max(0,Math.floor(d.{s}))):'0'}}catch(e){{return '0'}}}})()",
-        .{ field, field, field },
-    ) catch return 0;
-    const cstr = raylib.emscripten_run_script_string(js.ptr) orelse return 0;
-    var len: usize = 0;
-    while (cstr[len] != 0) : (len += 1) {}
-    return std.fmt.parseInt(u64, cstr[0..len], 10) catch 0;
-}
-
-fn loadHighScoreWeb() HighScoreRecord {
-    // Clamp untrusted localStorage values before downcasting; raw @intCast traps on
-    // out-of-range inputs and would crash the web build on corrupt/tampered storage.
-    const wave_v = readHighScoreField("wave");
-    const wpm_v = readHighScoreField("wpm");
-    const acc_v = readHighScoreField("accuracy");
-    return HighScoreRecord{
-        .score = readHighScoreField("score"),
-        .wave = if (wave_v > std.math.maxInt(u32)) 0 else @intCast(wave_v),
-        .wpm = if (wpm_v > std.math.maxInt(u32)) 0 else @intCast(wpm_v),
-        .accuracy = if (acc_v > 100) 0 else @intCast(acc_v),
-    };
-}
-
-fn saveHighScoreWeb(record: HighScoreRecord) void {
-    var js_buf: [256]u8 = undefined;
-    const js = std.fmt.bufPrintZ(
-        &js_buf,
-        "localStorage.setItem('death-note.highscore',JSON.stringify({{score:{d},wave:{d},wpm:{d},accuracy:{d}}}));",
-        .{ record.score, record.wave, record.wpm, record.accuracy },
-    ) catch return;
-    raylib.emscripten_run_script(js.ptr);
-}
-
 fn updateMetrics() void {
     elapsed_time += raylib.GetFrameTime();
     const target_wpm = calculateTargetWpm();
@@ -1443,7 +1358,7 @@ test "restart resets session state but preserves best_score" {
         is_new_high_score = saved_new_hs;
     }
 
-    best_score = HighScoreRecord{ .score = 500, .wave = 3, .wpm = 40, .accuracy = 90 };
+    best_score = highscore.Record{ .score = 500, .wave = 3, .wpm = 40, .accuracy = 90 };
     total_kills = 15;
     is_dying = true;
     dying_timer = 0.5;
@@ -1709,21 +1624,11 @@ test "accuracy edge case zero input stats" {
     try std.testing.expectEqual(@as(u32, 0), calculateStatsAccuracy());
 }
 
-test "HighScoreRecord disk size" {
-    // FR-011 / ARD-2 mandate a fixed 17-byte on-disk format for highscore.dat.
-    try std.testing.expectEqual(@as(usize, 17), HIGHSCORE_DISK_SIZE);
-}
-
-test "emscripten persistence branch compiles" {
-    try std.testing.expect(@typeInfo(@TypeOf(loadHighScoreWeb)).@"fn".return_type == HighScoreRecord);
-    try std.testing.expect(@typeInfo(@TypeOf(saveHighScoreWeb)).@"fn".params.len == 1);
-}
-
 test "high score comparison logic" {
     const saved = best_score;
     defer best_score = saved;
 
-    best_score = HighScoreRecord{ .score = 100, .wave = 2, .wpm = 30, .accuracy = 85 };
+    best_score = highscore.Record{ .score = 100, .wave = 2, .wpm = 30, .accuracy = 85 };
 
     try std.testing.expect(200 > best_score.score);
     try std.testing.expect(!(100 > best_score.score));
