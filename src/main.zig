@@ -1,9 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const raylib = @import("raylib.zig").c;
 
 // Importing the list of zombie names
 const ZombieNames = @import("zombie_names.zig").ZombieNames;
 const BossPhrases = @import("boss_phrases.zig").BossPhrases;
+
+const is_web = builtin.target.os.tag == .emscripten;
 
 const MAX_ZOMBIES = 100;
 const MAX_INPUT_CHARS = 9;
@@ -111,7 +114,7 @@ var total_kills: u32 = 0;
 var is_dying: bool = false;
 var dying_timer: f32 = 0.0;
 var dying_zombie_index: ?usize = null;
-var best_score: HighScoreRecord = .{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 };
+var best_score: HighScoreRecord = .{};
 var is_new_high_score: bool = false;
 
 // Define the Zombie structure
@@ -134,10 +137,10 @@ const ScorePopup = struct {
 };
 
 const HighScoreRecord = struct {
-    score: u64,
-    wave: u32,
-    wpm: u32,
-    accuracy: u8,
+    score: u64 = 0,
+    wave: u32 = 0,
+    wpm: u32 = 0,
+    accuracy: u8 = 0,
 };
 
 // Array to hold zombie pointers
@@ -291,7 +294,7 @@ fn frame(ctx: *FrameContext) void {
                     .wpm = avg_wpm,
                     .accuracy = acc,
                 };
-                if (comptime @import("builtin").target.os.tag == .emscripten) {
+                if (comptime is_web) {
                     saveHighScoreWeb(best_score);
                 } else {
                     saveHighScore(best_score) catch {};
@@ -359,41 +362,19 @@ fn frame(ctx: *FrameContext) void {
         drawCenteredText("GAME OVER", STATS_TITLE_Y, 48, raylib.RED);
 
         var line_y: c_int = STATS_LINE_START_Y;
-
-        var go_wave_buf: [32]u8 = undefined;
-        const go_wave_text = std.fmt.bufPrintZ(&go_wave_buf, "Wave reached: {d}", .{current_wave}) catch "Wave reached: ?";
-        drawCenteredText(go_wave_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
-        line_y += STATS_LINE_SPACING;
-
-        var go_score_buf: [32]u8 = undefined;
-        const go_score_text = std.fmt.bufPrintZ(&go_score_buf, "Score: {d}", .{score}) catch "Score: ?";
-        drawCenteredText(go_score_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
-        line_y += STATS_LINE_SPACING;
+        drawCenteredStat("Wave reached: {d}", .{current_wave}, &line_y);
+        drawCenteredStat("Score: {d}", .{score}, &line_y);
 
         if (is_new_high_score) {
             drawCenteredText("NEW HIGH SCORE!", line_y, STATS_FONT_SIZE, raylib.GOLD);
+            line_y += STATS_LINE_SPACING;
         } else {
-            var go_best_buf: [32]u8 = undefined;
-            const go_best_text = std.fmt.bufPrintZ(&go_best_buf, "Best: {d}", .{best_score.score}) catch "Best: ?";
-            drawCenteredText(go_best_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
+            drawCenteredStat("Best: {d}", .{best_score.score}, &line_y);
         }
-        line_y += STATS_LINE_SPACING;
 
-        const avg_wpm = calculateAverageWpm();
-        var go_wpm_buf: [32]u8 = undefined;
-        const go_wpm_text = std.fmt.bufPrintZ(&go_wpm_buf, "Average WPM: {d}", .{avg_wpm}) catch "Average WPM: ?";
-        drawCenteredText(go_wpm_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
-        line_y += STATS_LINE_SPACING;
-
-        const acc = calculateStatsAccuracy();
-        var go_acc_buf: [32]u8 = undefined;
-        const go_acc_text = std.fmt.bufPrintZ(&go_acc_buf, "Accuracy: {d}%", .{acc}) catch "Accuracy: ?";
-        drawCenteredText(go_acc_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
-        line_y += STATS_LINE_SPACING;
-
-        var go_kills_buf: [32]u8 = undefined;
-        const go_kills_text = std.fmt.bufPrintZ(&go_kills_buf, "Kills: {d}", .{total_kills}) catch "Kills: ?";
-        drawCenteredText(go_kills_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
+        drawCenteredStat("Average WPM: {d}", .{calculateAverageWpm()}, &line_y);
+        drawCenteredStat("Accuracy: {d}%", .{calculateStatsAccuracy()}, &line_y);
+        drawCenteredStat("Kills: {d}", .{total_kills}, &line_y);
 
         drawCenteredText("Press ENTER to restart", 405, 18, raylib.GRAY);
 
@@ -407,11 +388,7 @@ fn frame(ctx: *FrameContext) void {
             wave_spawned = 0;
             is_transitioning = false;
             transition_timer = 0.0;
-            total_kills = 0;
-            is_dying = false;
-            dying_timer = 0.0;
-            dying_zombie_index = null;
-            is_new_high_score = false;
+            resetSessionState();
             resetScoreState();
             resetMetricsState();
             resetZombies(ctx.allocator);
@@ -479,16 +456,16 @@ pub fn main() !void {
 
     raylib.SetTargetFPS(60); // Set target frames per second
 
-    if (comptime @import("builtin").target.os.tag == .emscripten) {
+    if (comptime is_web) {
         best_score = loadHighScoreWeb();
     } else {
-        best_score = loadHighScore() catch HighScoreRecord{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 };
+        best_score = loadHighScore() catch HighScoreRecord{};
     }
 
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
     // c_allocator forwards to libc malloc/free, which emcc provides.
-    var allocator: std.mem.Allocator = if (@import("builtin").target.os.tag == .emscripten)
+    var allocator: std.mem.Allocator = if (is_web)
         std.heap.c_allocator
     else
         std.heap.page_allocator;
@@ -500,7 +477,7 @@ pub fn main() !void {
         .frames_counter = 0,
     };
 
-    if (comptime @import("builtin").target.os.tag == .emscripten) {
+    if (comptime is_web) {
         // The emscripten loop never returns, so the defers above do not fire in the web
         // build. Register cleanup_on_exit() as a best-effort mitigation; see its doc
         // comment for the limitations on browser tab close.
@@ -651,6 +628,13 @@ fn spawnZombie(allocator: *std.mem.Allocator) !bool {
 fn drawCenteredText(text: [*:0]const u8, y: c_int, size: c_int, color: raylib.Color) void {
     const width = raylib.MeasureText(text, size);
     raylib.DrawText(text, @divTrunc(screen_width - width, 2), y, size, color);
+}
+
+fn drawCenteredStat(comptime fmt: []const u8, args: anytype, y: *c_int) void {
+    var buf: [32]u8 = undefined;
+    const text = std.fmt.bufPrintZ(&buf, fmt, args) catch "?";
+    drawCenteredText(text.ptr, y.*, STATS_FONT_SIZE, raylib.DARKGRAY);
+    y.* += STATS_LINE_SPACING;
 }
 
 fn getWaveConfig(wave: u32) WaveConfig {
@@ -834,6 +818,14 @@ fn resetScoreState() void {
     for (&popups) |*p| p.active = false;
 }
 
+fn resetSessionState() void {
+    total_kills = 0;
+    is_dying = false;
+    dying_timer = 0.0;
+    dying_zombie_index = null;
+    is_new_high_score = false;
+}
+
 fn calculateScore(name_len: usize, y_pos: f32, is_boss: bool, combo: u32) u64 {
     const type_mult: f32 = if (is_boss) BOSS_TYPE_MULTIPLIER else STANDARD_TYPE_MULTIPLIER;
     const height_score = @round(100.0 * (y_pos / @as(f32, @floatFromInt(screen_height))));
@@ -937,24 +929,23 @@ fn saveHighScore(record: HighScoreRecord) !void {
     if (n != @sizeOf(HighScoreRecord)) return error.InputOutput;
 }
 
+fn readHighScoreField(field: []const u8) u64 {
+    var buf: [256]u8 = undefined;
+    const js = std.fmt.bufPrintZ(
+        &buf,
+        "try{{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.{s}?d.{s}:0}}catch(e){{0}}",
+        .{ field, field },
+    ) catch return 0;
+    const v = raylib.emscripten_run_script_int(js.ptr);
+    return if (v >= 0) @intCast(v) else 0;
+}
+
 fn loadHighScoreWeb() HighScoreRecord {
-    const s = raylib.emscripten_run_script_int(
-        "try{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.score?d.score:0}catch(e){0}",
-    );
-    const w = raylib.emscripten_run_script_int(
-        "try{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.wave?d.wave:0}catch(e){0}",
-    );
-    const wpm = raylib.emscripten_run_script_int(
-        "try{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.wpm?d.wpm:0}catch(e){0}",
-    );
-    const acc = raylib.emscripten_run_script_int(
-        "try{var d=JSON.parse(localStorage.getItem('death-note.highscore'));d&&d.accuracy?d.accuracy:0}catch(e){0}",
-    );
     return HighScoreRecord{
-        .score = if (s >= 0) @intCast(s) else 0,
-        .wave = if (w >= 0) @intCast(w) else 0,
-        .wpm = if (wpm >= 0) @intCast(wpm) else 0,
-        .accuracy = if (acc >= 0) @intCast(acc) else 0,
+        .score = readHighScoreField("score"),
+        .wave = @intCast(readHighScoreField("wave")),
+        .wpm = @intCast(readHighScoreField("wpm")),
+        .accuracy = @intCast(readHighScoreField("accuracy")),
     };
 }
 
