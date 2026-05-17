@@ -40,7 +40,7 @@ const ACC_HUD_X: c_int = screen_width - 100;
 const ACC_HUD_Y: c_int = 30;
 const METRICS_HUD_SIZE: c_int = 18;
 const SMOOTHING_FACTOR: f32 = 0.2;
-// WPM convention: 1 word = 5 chars, so wpm = (chars / time_seconds) * 60 / 5.
+// Standard typing-test convention so displayed WPM is comparable to mainstream benchmarks.
 const CHARS_PER_WORD: f32 = 5.0;
 const SECONDS_PER_MINUTE: f32 = 60.0;
 
@@ -176,14 +176,20 @@ fn frame(ctx: *FrameContext) void {
         // text box hit-test rectangle).
         var key = raylib.GetCharPressed();
         while (key > 0) {
-            if ((key >= 32) and (key <= 125) and (letter_count < getCurrentMaxInput())) {
-                name[letter_count] = @intCast(key);
-                name[letter_count + 1] = '\x00';
-                letter_count += 1;
-                if (typedMatchesAnyEnemy()) {
-                    recordCorrectTimestamp(elapsed_time);
-                    correct_chars += 1;
+            if ((key >= 32) and (key <= 125)) {
+                if (letter_count < getCurrentMaxInput()) {
+                    name[letter_count] = @intCast(key);
+                    name[letter_count + 1] = '\x00';
+                    letter_count += 1;
+                    if (typedMatchesAnyEnemy()) {
+                        recordCorrectTimestamp(elapsed_time);
+                        correct_chars += 1;
+                    } else {
+                        wrong_chars += 1;
+                        combo_count = 0;
+                    }
                 } else {
+                    // FR-001: every printable keypress is tracked; a full buffer must not be a free pass.
                     wrong_chars += 1;
                     combo_count = 0;
                 }
@@ -794,7 +800,7 @@ fn charsToWpm(chars: u32, time_seconds: f32) f32 {
 }
 
 fn calculateTargetWpm() f32 {
-    if (elapsed_time == 0) return 0.0;
+    if (elapsed_time <= 0.0) return 0.0;
     // Before the window fills, scale by elapsed time so early bursts aren't under-reported.
     if (elapsed_time < WPM_WINDOW_SECONDS) return charsToWpm(correct_chars, elapsed_time);
     return charsToWpm(countCharsInWindow(elapsed_time), WPM_WINDOW_SECONDS);
