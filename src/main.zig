@@ -10,6 +10,8 @@ const highscore = @import("highscore.zig");
 // Aliases for the moved shared declarations (see src/zombie_types.zig). Kept at file
 // scope so the rest of main.zig and its tests keep their original identifiers.
 const ZombieType = zt.ZombieType;
+const GameMode = zt.GameMode;
+const PowerUpType = zt.PowerUpType;
 const SpawnWeights = zt.SpawnWeights;
 const NameWeights = zt.NameWeights;
 const SPAWN_WEIGHT_TABLE = zt.SPAWN_WEIGHT_TABLE;
@@ -141,7 +143,6 @@ var letter_count: usize = 0;
 
 var spawn_timer: f32 = 0.0;
 
-var is_game_over: bool = false;
 var current_wave: u32 = 1;
 var wave_kills: u32 = 0;
 var wave_spawned: u32 = 0;
@@ -184,6 +185,19 @@ var dying_timer: f32 = 0.0;
 var dying_zombie_index: ?usize = null;
 var best_score: highscore.Record = .{};
 var is_new_high_score: bool = false;
+
+const GameScreen = enum {
+    main_menu,
+    wpm_select,
+    playing,
+    paused,
+    game_over,
+};
+
+var current_screen: GameScreen = .main_menu;
+var game_mode: GameMode = .survival;
+var menu_selection: u8 = 0;
+var pause_selection: u8 = 0;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -256,165 +270,166 @@ fn getZombieTint(zombie_type: ZombieType) raylib.Color {
 }
 
 fn frame(ctx: *FrameContext) void {
-    // Resize input box for boss mode: the 9-char box is too narrow for the 35-char
-    // boss buffer at font size 40, so typing overflows visually. Widen and recenter
-    // while a boss is active; restore the standard layout otherwise.
-    if (boss != null) {
-        ctx.text_box.width = 700.0;
-        ctx.text_box.x = (screen_width - 700.0) / 2.0;
-    } else {
-        ctx.text_box.width = 500.0;
-        ctx.text_box.x = screen_width / 2.0 - 250.0;
-    }
+    // --- UPDATE PHASE ---
+    switch (current_screen) {
+        .main_menu => {
+            updateMenu();
+        },
+        .wpm_select => {
+            updateWpmSelect();
+        },
+        .playing => {
+            // Resize input box for boss mode
+            if (boss != null) {
+                ctx.text_box.width = 700.0;
+                ctx.text_box.x = (screen_width - 700.0) / 2.0;
+            } else {
+                ctx.text_box.width = 500.0;
+                ctx.text_box.x = screen_width / 2.0 - 250.0;
+            }
 
-    // Mouse-over and cursor state are updated every frame (not gated by is_game_over),
-    // so the blinking cursor on the game-over screen stays animated and matches the
-    // current mouse position instead of freezing at its last in-game value.
-    if (raylib.CheckCollisionPointRec(raylib.GetMousePosition(), ctx.text_box)) {
-        ctx.mouse_on_text = true;
-        raylib.SetMouseCursor(raylib.MOUSE_CURSOR_IBEAM);
-    } else {
-        ctx.mouse_on_text = false;
-        raylib.SetMouseCursor(raylib.MOUSE_CURSOR_DEFAULT);
-    }
+            if (raylib.CheckCollisionPointRec(raylib.GetMousePosition(), ctx.text_box)) {
+                ctx.mouse_on_text = true;
+                raylib.SetMouseCursor(raylib.MOUSE_CURSOR_IBEAM);
+            } else {
+                ctx.mouse_on_text = false;
+                raylib.SetMouseCursor(raylib.MOUSE_CURSOR_DEFAULT);
+            }
 
-    if (ctx.mouse_on_text) {
-        ctx.frames_counter += 1;
-    } else {
-        ctx.frames_counter = 0;
-    }
+            if (ctx.mouse_on_text) {
+                ctx.frames_counter += 1;
+            } else {
+                ctx.frames_counter = 0;
+            }
 
-    if (!is_game_over and !is_transitioning and !is_dying) {
-        // Accept keystrokes regardless of mouse position so players can start typing
-        // immediately on load (especially on web, where focus is on the canvas, not the
-        // text box hit-test rectangle).
-        var key = raylib.GetCharPressed();
-        while (key > 0) {
-            if ((key >= 32) and (key <= 125)) {
-                wpm_timer_started = true;
-                if (letter_count < getCurrentMaxInput()) {
-                    name[letter_count] = @intCast(key);
-                    name[letter_count + 1] = '\x00';
-                    letter_count += 1;
-                    if (typedMatchesAnyEnemy()) {
-                        recordCorrectTimestamp(elapsed_time);
-                        correct_chars += 1;
-                    } else {
-                        wrong_chars += 1;
-                        combo_count = 0;
-                    }
+            if (!is_transitioning and !is_dying) {
+                if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
+                    current_screen = .paused;
+                    pause_selection = 0;
                 } else {
-                    // FR-001: every printable keypress is tracked; a full buffer must not be a free pass.
-                    wrong_chars += 1;
-                    combo_count = 0;
+                    var key = raylib.GetCharPressed();
+                    while (key > 0) {
+                        if ((key >= 32) and (key <= 125)) {
+                            wpm_timer_started = true;
+                            if (letter_count < getCurrentMaxInput()) {
+                                name[letter_count] = @intCast(key);
+                                name[letter_count + 1] = '\x00';
+                                letter_count += 1;
+                                if (typedMatchesAnyEnemy()) {
+                                    recordCorrectTimestamp(elapsed_time);
+                                    correct_chars += 1;
+                                } else {
+                                    wrong_chars += 1;
+                                    combo_count = 0;
+                                }
+                            } else {
+                                wrong_chars += 1;
+                                combo_count = 0;
+                            }
+                        }
+                        key = raylib.GetCharPressed();
+                    }
+
+                    if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
+                        letter_count -= 1;
+                        name[letter_count] = '\x00';
+                    }
+
+                    const wave_cfg = getWaveConfig(current_wave);
+
+                    spawn_timer += raylib.GetFrameTime();
+
+                    if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size and boss == null) {
+                        const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
+                        if (spawned) {
+                            spawn_timer = 0.0;
+                            wave_spawned += 1;
+                        }
+                    }
+
+                    updateZombies(ctx.allocator);
+
+                    if (!is_dying) {
+                        if (game_mode == .survival and isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
+                            const threshold = (wave_cfg.pool_size + 1) / 2;
+                            if (wave_kills >= threshold) {
+                                spawnBoss(ctx.allocator) catch {};
+                            }
+                        }
+
+                        updateBoss(ctx.allocator);
+                    }
+
+                    const boss_done = !isBossWave(current_wave) or (boss == null and boss_spawned_this_wave);
+                    if (!is_dying and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
+                        is_transitioning = true;
+                        transition_timer = WAVE_TRANSITION_DURATION;
+                    }
                 }
             }
-            key = raylib.GetCharPressed();
-        }
 
-        if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
-            letter_count -= 1;
-            name[letter_count] = '\x00';
-        }
-
-        const wave_cfg = getWaveConfig(current_wave);
-
-        // Update spawn timer
-        spawn_timer += raylib.GetFrameTime(); // Increment timer by the time elapsed since last frame
-
-        // Spawn gate: pool_size cap stops new spawns for the rest of the wave once the
-        // quota is hit (timer then accumulates harmlessly until the wave transitions and
-        // resets it). Regular spawns also pause while a boss is alive so the boss phrase
-        // gets the player's undivided attention; the spawn_timer is reset on boss kill
-        // (see updateBoss) to grant a full spawn_delay breather afterward.
-        if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size and boss == null) {
-            const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
-            if (spawned) {
-                spawn_timer = 0.0;
-                wave_spawned += 1;
-            }
-        }
-
-        // Update zombies (may set is_dying if a zombie reaches the bottom). When that
-        // happens we must short-circuit the rest of the update phase so boss spawn,
-        // boss movement, and wave-completion detection do not run in the same frame
-        // the dying transition started.
-        updateZombies(ctx.allocator);
-
-        if (!is_dying) {
-            if (isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
-                const threshold = (wave_cfg.pool_size + 1) / 2;
-                if (wave_kills >= threshold) {
-                    spawnBoss(ctx.allocator) catch {};
+            if (is_transitioning) {
+                transition_timer -= raylib.GetFrameTime();
+                if (transition_timer <= 0) {
+                    current_wave += 1;
+                    wave_kills = 0;
+                    wave_spawned = 0;
+                    spawn_timer = 0.0;
+                    is_transitioning = false;
+                    resetMetricsState();
+                    resetZombies(ctx.allocator);
+                    resetBoss(ctx.allocator);
                 }
             }
 
-            updateBoss(ctx.allocator);
-        }
-
-        // Wave completion detection — guarded against is_game_over/is_dying so a kill+death
-        // in the same frame does not silently start a wave transition behind the game-over screen.
-        const boss_done = !isBossWave(current_wave) or (boss == null and boss_spawned_this_wave);
-        if (!is_game_over and !is_dying and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
-            is_transitioning = true;
-            transition_timer = WAVE_TRANSITION_DURATION;
-        }
-    }
-
-    // Wave transition countdown — also gated by !is_game_over for the same reason.
-    if (is_transitioning and !is_game_over) {
-        transition_timer -= raylib.GetFrameTime();
-        if (transition_timer <= 0) {
-            current_wave += 1;
-            wave_kills = 0;
-            wave_spawned = 0;
-            spawn_timer = 0.0;
-            is_transitioning = false;
-            // New wave = fresh WPM segment; the timer re-arms on the first keystroke.
-            resetMetricsState();
-            resetZombies(ctx.allocator);
-            resetBoss(ctx.allocator);
-        }
-    }
-
-    if (is_dying) {
-        dying_timer -= raylib.GetFrameTime();
-        if (dying_timer <= 0) {
-            is_game_over = true;
-            is_dying = false;
-            const avg_wpm = calculateAverageWpm();
-            const acc: u8 = @intCast(calculateStatsAccuracy());
-            if (score > best_score.score) {
-                is_new_high_score = true;
-                best_score = highscore.Record{
-                    .score = score,
-                    .wave = current_wave,
-                    .wpm = avg_wpm,
-                    .accuracy = acc,
-                };
-                highscore.save(best_score);
+            if (is_dying) {
+                dying_timer -= raylib.GetFrameTime();
+                if (dying_timer <= 0) {
+                    current_screen = .game_over;
+                    is_dying = false;
+                    const avg_wpm = calculateAverageWpm();
+                    const acc: u8 = @intCast(calculateStatsAccuracy());
+                    if (score > best_score.score) {
+                        is_new_high_score = true;
+                        best_score = highscore.Record{
+                            .score = score,
+                            .wave = current_wave,
+                            .wpm = avg_wpm,
+                            .accuracy = acc,
+                        };
+                        highscore.save(best_score);
+                    }
+                }
             }
-        }
+
+            if (!is_dying) {
+                updateMetrics();
+            }
+
+            for (&popups) |*p| {
+                if (p.active) {
+                    p.timer -= raylib.GetFrameTime();
+                    if (p.timer <= 0) p.active = false;
+                }
+            }
+        },
+        .paused => {
+            updatePause();
+        },
+        .game_over => {
+            if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
+                startGame(.survival, ctx.allocator);
+            } else if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
+                current_screen = .main_menu;
+            }
+        },
     }
 
-    if (!is_game_over and !is_dying) {
-        updateMetrics();
-    }
-
-    for (&popups) |*p| {
-        if (p.active) {
-            p.timer -= raylib.GetFrameTime();
-            if (p.timer <= 0) p.active = false;
-        }
-    }
-
-    // Draw
+    // --- DRAW PHASE ---
     raylib.BeginDrawing();
     defer raylib.EndDrawing();
 
     raylib.ClearBackground(CRT_BG);
-    // Radial-gradient approximation (DEATHN-25 spec): a faint violet pool at the screen
-    // center fading to CRT_BG matches the web shell's CSS radial-gradient on native too.
     raylib.DrawCircleGradient(
         raylib.Vector2{
             .x = @as(f32, @floatFromInt(screen_width)) / 2.0,
@@ -425,122 +440,238 @@ fn frame(ctx: *FrameContext) void {
         CRT_BG,
     );
 
-    raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
-    const border_color = if (ctx.mouse_on_text) CRT_WARN else CRT_FG;
-    raylib.DrawRectangleLines(
-        @intFromFloat(ctx.text_box.x),
-        @intFromFloat(ctx.text_box.y),
-        @intFromFloat(ctx.text_box.width),
-        @intFromFloat(ctx.text_box.height),
-        border_color,
-    );
+    switch (current_screen) {
+        .main_menu => {
+            drawMenu();
+        },
+        .wpm_select => {
+            drawWpmSelect();
+        },
+        .playing => {
+            raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
+            const border_color = if (ctx.mouse_on_text) CRT_WARN else CRT_FG;
+            raylib.DrawRectangleLines(
+                @intFromFloat(ctx.text_box.x),
+                @intFromFloat(ctx.text_box.y),
+                @intFromFloat(ctx.text_box.width),
+                @intFromFloat(ctx.text_box.height),
+                border_color,
+            );
+            raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
 
-    raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
+            if (is_transitioning) {
+                const next_wave = current_wave + 1;
+                const next_cfg = getWaveConfig(next_wave);
+                const countdown = @as(u32, @intFromFloat(@ceil(transition_timer)));
 
-    if (is_game_over) {
-        // Drop-shadow under the title for a subtle CRT glow.
-        drawCenteredTextShadow("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, CRT_ERR);
+                var wave_buf: [64]u8 = undefined;
+                const wave_text = std.fmt.bufPrintZ(&wave_buf, "WAVE {d} - {d} WPM challenge - {d}...", .{ next_wave, next_cfg.target_wpm, countdown }) catch "NEXT WAVE";
+                drawCenteredText(wave_text.ptr, screen_height / 2 - 15, 30, CRT_FG);
+            } else {
+                drawZombies();
+                drawBoss();
+            }
 
-        if (is_new_high_score) {
-            drawCenteredText("- NEW HIGH SCORE -", STATS_BADGE_Y, STATS_BADGE_SIZE, CRT_WARN);
-        }
+            if (ctx.mouse_on_text and letter_count < getCurrentMaxInput() and ((ctx.frames_counter / 20) % 2) == 0) {
+                raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, CRT_ACCENT);
+            }
+            if (ctx.mouse_on_text and letter_count >= getCurrentMaxInput()) {
+                drawCenteredText("Press BACKSPACE to delete chars...", 905, 18, CRT_DIM);
+            }
+        },
+        .paused => {
+            // Draw frozen gameplay behind the pause overlay
+            raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
+            raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
+            drawZombies();
+            drawBoss();
+            drawPauseOverlay();
+        },
+        .game_over => {
+            raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
+            raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
 
-        var score_cell_buf: [16]u8 = undefined;
-        const score_cell = std.fmt.bufPrintZ(&score_cell_buf, "{d:0>6}", .{score}) catch "??????";
-        drawStatCell("SCORE", score_cell.ptr, STATS_COL1_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
+            drawCenteredTextShadow("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, CRT_ERR);
 
-        var wave_cell_buf: [16]u8 = undefined;
-        const wave_cell = std.fmt.bufPrintZ(&wave_cell_buf, "{d}", .{current_wave}) catch "?";
-        drawStatCell("WAVE REACHED", wave_cell.ptr, STATS_COL2_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
+            if (is_new_high_score) {
+                drawCenteredText("- NEW HIGH SCORE -", STATS_BADGE_Y, STATS_BADGE_SIZE, CRT_WARN);
+            }
 
-        var slain_cell_buf: [16]u8 = undefined;
-        const slain_cell = std.fmt.bufPrintZ(&slain_cell_buf, "{d}", .{total_kills}) catch "?";
-        drawStatCell("ENEMIES SLAIN", slain_cell.ptr, STATS_COL3_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
+            var score_cell_buf: [16]u8 = undefined;
+            const score_cell = std.fmt.bufPrintZ(&score_cell_buf, "{d:0>6}", .{score}) catch "??????";
+            drawStatCell("SCORE", score_cell.ptr, STATS_COL1_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
 
-        var combo_cell_buf: [16]u8 = undefined;
-        const combo_cell = std.fmt.bufPrintZ(&combo_cell_buf, "x{d}", .{max_combo}) catch "x?";
-        drawStatCell("MAX COMBO", combo_cell.ptr, STATS_COL1_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
+            var wave_cell_buf: [16]u8 = undefined;
+            const wave_cell = std.fmt.bufPrintZ(&wave_cell_buf, "{d}", .{current_wave}) catch "?";
+            drawStatCell("WAVE REACHED", wave_cell.ptr, STATS_COL2_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
 
-        var wpm_cell_buf: [16]u8 = undefined;
-        const wpm_cell = std.fmt.bufPrintZ(&wpm_cell_buf, "{d}", .{calculateAverageWpm()}) catch "?";
-        drawStatCell("WPM", wpm_cell.ptr, STATS_COL2_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
+            var slain_cell_buf: [16]u8 = undefined;
+            const slain_cell = std.fmt.bufPrintZ(&slain_cell_buf, "{d}", .{total_kills}) catch "?";
+            drawStatCell("ENEMIES SLAIN", slain_cell.ptr, STATS_COL3_CX, STATS_GRID_ROW1_LABEL_Y, STATS_GRID_ROW1_VALUE_Y);
 
-        var acc_cell_buf: [16]u8 = undefined;
-        const acc_cell = std.fmt.bufPrintZ(&acc_cell_buf, "{d}%", .{calculateStatsAccuracy()}) catch "?%";
-        drawStatCell("ACCURACY", acc_cell.ptr, STATS_COL3_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
+            var combo_cell_buf: [16]u8 = undefined;
+            const combo_cell = std.fmt.bufPrintZ(&combo_cell_buf, "x{d}", .{max_combo}) catch "x?";
+            drawStatCell("MAX COMBO", combo_cell.ptr, STATS_COL1_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
 
-        drawCenteredText("> PRESS [ENTER] TO RETRY <", STATS_RESTART_HINT_Y, STATS_RESTART_HINT_SIZE, CRT_FG);
+            var wpm_cell_buf: [16]u8 = undefined;
+            const wpm_cell = std.fmt.bufPrintZ(&wpm_cell_buf, "{d}", .{calculateAverageWpm()}) catch "?";
+            drawStatCell("WPM", wpm_cell.ptr, STATS_COL2_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
 
-        if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
-            is_game_over = false;
-            letter_count = 0;
-            name[letter_count] = '\x00';
-            spawn_timer = 0.0;
-            current_wave = 1;
-            wave_kills = 0;
-            wave_spawned = 0;
-            is_transitioning = false;
-            transition_timer = 0.0;
-            resetSessionState();
-            resetScoreState();
-            resetMetricsState();
-            resetZombies(ctx.allocator);
-            resetBoss(ctx.allocator);
-        }
-    } else if (is_transitioning) {
-        const next_wave = current_wave + 1;
-        const next_cfg = getWaveConfig(next_wave);
-        const countdown = @as(u32, @intFromFloat(@ceil(transition_timer)));
+            var acc_cell_buf: [16]u8 = undefined;
+            const acc_cell = std.fmt.bufPrintZ(&acc_cell_buf, "{d}%", .{calculateStatsAccuracy()}) catch "?%";
+            drawStatCell("ACCURACY", acc_cell.ptr, STATS_COL3_CX, STATS_GRID_ROW2_LABEL_Y, STATS_GRID_ROW2_VALUE_Y);
 
-        var wave_buf: [64]u8 = undefined;
-        const wave_text = std.fmt.bufPrintZ(&wave_buf, "WAVE {d} - {d} WPM challenge - {d}...", .{ next_wave, next_cfg.target_wpm, countdown }) catch "NEXT WAVE";
-        drawCenteredText(wave_text.ptr, screen_height / 2 - 15, 30, CRT_FG);
-    } else {
-        drawZombies();
-        drawBoss();
-    }
-    // Draw blinking underscore char
-    if (ctx.mouse_on_text and letter_count < getCurrentMaxInput() and ((ctx.frames_counter / 20) % 2) == 0) {
-        raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, CRT_ACCENT);
-    }
-
-    if (ctx.mouse_on_text and letter_count >= getCurrentMaxInput()) {
-        drawCenteredText("Press BACKSPACE to delete chars...", 905, 18, CRT_DIM);
+            drawCenteredText("> PRESS [ENTER] TO RETRY | [ESC] MENU <", STATS_RESTART_HINT_Y, STATS_RESTART_HINT_SIZE, CRT_FG);
+        },
     }
 
     drawCrtOverlay();
 
-    // HUD draws AFTER the overlay so the vignette (alpha 60-90 black at the screen
-    // edges) doesn't dim the corner-anchored text into illegibility.
-    if (!is_game_over) {
-        const hud_cfg = getWaveConfig(current_wave);
-        var hud_buf: [64]u8 = undefined;
-        const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
-        drawCenteredText(hud_text.ptr, 10, 20, CRT_FG);
-
-        var score_buf: [32]u8 = undefined;
-        const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d:0>6}", .{score}) catch "Score: ?";
-        raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, CRT_FG);
-
-        var combo_buf: [32]u8 = undefined;
-        const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
-        raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
-
-        const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
-        var wpm_buf: [32]u8 = undefined;
-        const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
-        raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
-
-        const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
-        var acc_buf: [32]u8 = undefined;
-        const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
-        raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+    // HUD draws AFTER the overlay so the vignette doesn't dim corner-anchored text.
+    if (current_screen == .playing) {
+        drawPlayingHud();
     }
 
-    // Popups draw last so the vignette/scanlines don't dim the kill-feedback text.
-    // Layers on top of every game state — the wave-ending kill and the floor-cross
-    // game-over both need their popup to be visible.
     drawPopups();
+}
+
+const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "QUIT" };
+const MENU_ITEM_COUNT: u8 = 3;
+const PAUSE_ITEMS = [_][]const u8{ "RESUME", "QUIT TO MENU" };
+const PAUSE_ITEM_COUNT: u8 = 2;
+
+fn updateMenu() void {
+    if (raylib.IsKeyPressed(raylib.KEY_UP)) {
+        menu_selection = (menu_selection +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT;
+    }
+    if (raylib.IsKeyPressed(raylib.KEY_DOWN)) {
+        menu_selection = (menu_selection +% 1) % MENU_ITEM_COUNT;
+    }
+    if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
+        switch (menu_selection) {
+            0 => {
+                startGame(.survival, null);
+            },
+            1 => {
+                current_screen = .wpm_select;
+            },
+            2 => {
+                raylib.CloseWindow();
+            },
+            else => {},
+        }
+    }
+}
+
+fn drawMenu() void {
+    drawCenteredTextShadow("DEATH NOTE", 200, 60, CRT_FG);
+    drawCenteredText("- TYPING GAME -", 270, 22, CRT_DIM);
+
+    const menu_start_y: c_int = 400;
+    const menu_spacing: c_int = 60;
+
+    for (MENU_ITEMS, 0..) |item, i| {
+        const y = menu_start_y + @as(c_int, @intCast(i)) * menu_spacing;
+        const color = if (i == menu_selection) CRT_ACCENT else CRT_DIM;
+        var buf: [32]u8 = undefined;
+        const prefix: []const u8 = if (i == menu_selection) "> " else "  ";
+        const text = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ prefix, item }) catch "???";
+        drawCenteredText(text.ptr, y, 30, color);
+    }
+
+    var hs_buf: [64]u8 = undefined;
+    const hs_text = std.fmt.bufPrintZ(&hs_buf, "BEST: {d:0>6} - WAVE {d}", .{ best_score.score, best_score.wave }) catch "BEST: ---";
+    drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM);
+}
+
+fn updateWpmSelect() void {
+    _ = .{};
+}
+
+fn drawWpmSelect() void {
+    _ = .{};
+}
+
+fn updatePause() void {
+    if (raylib.IsKeyPressed(raylib.KEY_UP)) {
+        pause_selection = (pause_selection +% PAUSE_ITEM_COUNT -% 1) % PAUSE_ITEM_COUNT;
+    }
+    if (raylib.IsKeyPressed(raylib.KEY_DOWN)) {
+        pause_selection = (pause_selection +% 1) % PAUSE_ITEM_COUNT;
+    }
+    if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
+        switch (pause_selection) {
+            0 => {
+                current_screen = .playing;
+            },
+            1 => {
+                current_screen = .main_menu;
+            },
+            else => {},
+        }
+    }
+}
+
+fn drawPauseOverlay() void {
+    raylib.DrawRectangle(0, 0, screen_width, screen_height, raylib.Color{ .r = 0, .g = 0, .b = 0, .a = 150 });
+    drawCenteredTextShadow("PAUSED", screen_height / 2 - 100, 50, CRT_FG);
+
+    const pause_start_y: c_int = screen_height / 2;
+    const pause_spacing: c_int = 50;
+
+    for (PAUSE_ITEMS, 0..) |item, i| {
+        const y = pause_start_y + @as(c_int, @intCast(i)) * pause_spacing;
+        const color = if (i == pause_selection) CRT_ACCENT else CRT_DIM;
+        var buf: [32]u8 = undefined;
+        const prefix: []const u8 = if (i == pause_selection) "> " else "  ";
+        const text = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ prefix, item }) catch "???";
+        drawCenteredText(text.ptr, y, 26, color);
+    }
+}
+
+fn drawPlayingHud() void {
+    const hud_cfg = getWaveConfig(current_wave);
+    var hud_buf: [64]u8 = undefined;
+    const hud_text = std.fmt.bufPrintZ(&hud_buf, "WAVE {d} - {d} WPM - {d} / {d}", .{ current_wave, hud_cfg.target_wpm, wave_kills, hud_cfg.pool_size }) catch "WAVE ?";
+    drawCenteredText(hud_text.ptr, 10, 20, CRT_FG);
+
+    var score_buf: [32]u8 = undefined;
+    const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d:0>6}", .{score}) catch "Score: ?";
+    raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, CRT_FG);
+
+    var combo_buf: [32]u8 = undefined;
+    const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
+    raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
+
+    const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
+    var wpm_buf: [32]u8 = undefined;
+    const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
+    raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+
+    const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
+    var acc_buf: [32]u8 = undefined;
+    const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
+    raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+}
+
+fn startGame(mode: GameMode, allocator_opt: ?*std.mem.Allocator) void {
+    game_mode = mode;
+    current_screen = .playing;
+    letter_count = 0;
+    name[0] = '\x00';
+    spawn_timer = 0.0;
+    current_wave = 1;
+    wave_kills = 0;
+    wave_spawned = 0;
+    is_transitioning = false;
+    transition_timer = 0.0;
+    resetSessionState();
+    resetScoreState();
+    resetMetricsState();
+    if (allocator_opt) |alloc| {
+        resetZombies(alloc);
+        resetBoss(alloc);
+    }
 }
 
 // Emscripten C-callback trampoline; arg carries the FrameContext pointer
@@ -1752,32 +1883,32 @@ test "smoothing convergence toward target WPM" {
 test "dying state transition" {
     const saved_dying = is_dying;
     const saved_timer = dying_timer;
-    const saved_game_over = is_game_over;
+    const saved_screen = current_screen;
     const saved_index = dying_zombie_index;
     defer {
         is_dying = saved_dying;
         dying_timer = saved_timer;
-        is_game_over = saved_game_over;
+        current_screen = saved_screen;
         dying_zombie_index = saved_index;
     }
 
     is_dying = true;
     dying_timer = DYING_DURATION;
     dying_zombie_index = 5;
-    is_game_over = false;
+    current_screen = .playing;
 
     try std.testing.expect(is_dying);
-    try std.testing.expect(!is_game_over);
+    try std.testing.expect(current_screen != .game_over);
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), dying_timer, 0.001);
 
     dying_timer = 0.0;
     if (dying_timer <= 0) {
-        is_game_over = true;
+        current_screen = .game_over;
         is_dying = false;
     }
 
     try std.testing.expect(!is_dying);
-    try std.testing.expect(is_game_over);
+    try std.testing.expect(current_screen == .game_over);
 }
 
 test "average WPM calculation" {
@@ -1965,4 +2096,29 @@ test "anti-doublon retries exhaust gracefully" {
 
     const result = name_lists.selectName(1, .standard, empty, null, rng);
     try std.testing.expect(result != null);
+}
+
+test "GameScreen enum has exactly 5 variants" {
+    const fields = @typeInfo(GameScreen).@"enum".fields;
+    try std.testing.expectEqual(@as(usize, 5), fields.len);
+}
+
+test "startGame sets current_screen to playing" {
+    const saved_screen = current_screen;
+    const saved_mode = game_mode;
+    const saved_wave = current_wave;
+    const saved_score = score;
+    defer {
+        current_screen = saved_screen;
+        game_mode = saved_mode;
+        current_wave = saved_wave;
+        score = saved_score;
+    }
+
+    current_screen = .main_menu;
+    startGame(.survival, null);
+    try std.testing.expect(current_screen == .playing);
+    try std.testing.expect(game_mode == .survival);
+    try std.testing.expectEqual(@as(u32, 1), current_wave);
+    try std.testing.expectEqual(@as(u64, 0), score);
 }

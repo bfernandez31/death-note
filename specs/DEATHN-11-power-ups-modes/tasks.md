@@ -31,10 +31,10 @@
 
 **Goal**: Replace `is_game_over` boolean with `GameScreen` enum to enable multi-screen routing. Blocking for all user stories.
 
-- [ ] T004 Add `GameScreen` enum (`main_menu`, `wpm_select`, `playing`, `paused`, `game_over`) and module-level state variables (`current_screen: GameScreen = .main_menu`, `game_mode: zt.GameMode = .survival`, `menu_selection: u8 = 0`, `pause_selection: u8 = 0`) to `src/main.zig` (~line 188, before `Zombie` struct)
-- [ ] T005 Replace all `is_game_over` references with `current_screen` equivalents throughout `src/main.zig`: `is_game_over = true` → `current_screen = .game_over`, `if (is_game_over)` → `if (current_screen == .game_over)`, `if (!is_game_over)` → `if (current_screen == .playing)`. Remove `is_game_over` declaration. Key locations: ~lines 287, 358, 365, 400, 440, 515. Update existing test blocks that reference `is_game_over`
-- [ ] T006 Refactor `frame()` in `src/main.zig` to dispatch update and draw logic via `switch (current_screen)` — `.playing` runs existing gameplay update/draw, `.game_over` runs existing game-over draw, `.main_menu`/`.wpm_select`/`.paused` are initially stub blocks (filled in Phases 3-5). Ensure `drawCrtOverlay()` still runs unconditionally after the switch
-- [ ] T007 Extend tests in `src/main.zig`: add test blocks for `GameScreen` enum having exactly 5 variants, and game state reset setting `current_screen = .playing`
+- [X] T004 Add `GameScreen` enum (`main_menu`, `wpm_select`, `playing`, `paused`, `game_over`) and module-level state variables (`current_screen: GameScreen = .main_menu`, `game_mode: zt.GameMode = .survival`, `menu_selection: u8 = 0`, `pause_selection: u8 = 0`) to `src/main.zig` (~line 188, before `Zombie` struct)
+- [X] T005 Replace all `is_game_over` references with `current_screen` equivalents throughout `src/main.zig`: `is_game_over = true` → `current_screen = .game_over`, `if (is_game_over)` → `if (current_screen == .game_over)`, `if (!is_game_over)` → `if (current_screen == .playing)`. Remove `is_game_over` declaration. Key locations: ~lines 287, 358, 365, 400, 440, 515. Update existing test blocks that reference `is_game_over`
+- [X] T006 Refactor `frame()` in `src/main.zig` to dispatch update and draw logic via `switch (current_screen)` — `.playing` runs existing gameplay update/draw, `.game_over` runs existing game-over draw, `.main_menu`/`.wpm_select`/`.paused` are initially stub blocks (filled in Phases 3-5). Ensure `drawCrtOverlay()` still runs unconditionally after the switch
+- [X] T007 Extend tests in `src/main.zig`: add test blocks for `GameScreen` enum having exactly 5 variants, and game state reset setting `current_screen = .playing`
 
 ---
 
