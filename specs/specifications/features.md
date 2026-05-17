@@ -32,6 +32,7 @@
   - [F-26 Dying Transition](#f-26-dying-transition)
   - [F-27 High Score Persistence](#f-27-high-score-persistence)
   - [F-28 Zombie Type Differentiation](#f-28-zombie-type-differentiation)
+  - [F-29 CRT Overlay](#f-29-crt-overlay)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -74,6 +75,7 @@ graph TB
         ScoreHUD["F-21 Score and Combo HUD"]
         ScorePopup["F-22 Score Popup"]
         GameOverScore["F-23 Score on Game-Over Screen"]
+        CRTOverlay["F-29 CRT Overlay"]
     end
 
     subgraph Scoring
@@ -188,14 +190,14 @@ graph TB
 
 ### F-03 Name Label Rendering
 
-**Description.** Each active zombie has its `name` field — a `[*:0]const u8` pointer into `name_lists.zig` arrays — drawn as text 20 pixels above the sprite's origin position, in `DARKGREEN` at font size 20. Names may be simple first names (e.g. `"Kai"`), compound hyphenated names (e.g. `"Jean-Pierre"`), or trap-group names that closely resemble others on screen.
+**Description.** Each active zombie has its `name` field — a `[*:0]const u8` pointer into `name_lists.zig` arrays — drawn as text 20 pixels above the sprite's origin position, in `CRT_ACCENT` (#f0c8ff, lavender near-white) at font size 20. Names may be simple first names (e.g. `"Kai"`), compound hyphenated names (e.g. `"Jean-Pierre"`), or trap-group names that closely resemble others on screen.
 
 **User-facing behavior.** The player sees a name floating above each zombie — first names in early waves, with compound hyphenated names appearing from wave 4 onward. Trap-group names in later waves look visually similar to each other, requiring careful reading.
 
 **System behavior.**
 - Executed inside `drawZombies()` for every active zombie.
 - `text_pos.y = pos.y - 20.0`.
-- `raylib.DrawText(zomb.name, …, 20, raylib.DARKGREEN)`.
+- `raylib.DrawText(zomb.name, …, 20, CRT_ACCENT)`.
 - The name pointer is passed directly; no copy is made because `[*:0]const u8` is compatible with raylib's C string parameter.
 - The hyphen character in compound names is rendered natively by raylib's `DrawText`.
 
@@ -306,14 +308,14 @@ graph TB
 
 **Description.** A rectangle centered near the bottom of the screen (width 500, x = `screen_width/2 - 250`, y = 400, height 50) is filled with `LIGHTGRAY` and outlined in `RED` when focused or `DARKGRAY` when not. The currently typed text is drawn inside the box at font size 40 in `MAROON`. While a boss is active the box widens to 700 pixels and recenters to accommodate the 35-character boss phrase limit.
 
-**User-facing behavior.** The player sees a rectangular input area centered near the bottom of the screen. The border turns red to indicate focus and the typed characters are displayed inside, with enough width for compound names up to 20 characters. During boss encounters the box expands further.
+**User-facing behavior.** The player sees a rectangular input area centered near the bottom of the screen. The border turns amber (`CRT_WARN`) to indicate focus and violet (`CRT_FG`) when unfocused. The typed characters are displayed inside in lavender (`CRT_ACCENT`), with enough width for compound names up to 20 characters. During boss encounters the box expands further.
 
 **System behavior.**
 - Default: `text_box.width = 500.0`, `text_box.x = screen_width / 2.0 - 250.0` (i.e. `x = 150`).
 - Boss mode: `text_box.width = 700.0`, `text_box.x = (screen_width - 700.0) / 2.0` (i.e. `x = 50`). Switched each frame based on `boss != null`.
-- `raylib.DrawRectangleRec(text_box, raylib.LIGHTGRAY)` fills the box.
-- Conditional border: `RED` when `mouse_on_text`, `DARKGRAY` otherwise.
-- `raylib.DrawText(&name, text_box.x + 5, text_box.y + 8, 40, raylib.MAROON)` renders typed text.
+- `raylib.DrawRectangleRec(text_box, CRT_DIM)` fills the box.
+- Conditional border: `CRT_WARN` when `mouse_on_text`, `CRT_FG` otherwise.
+- `raylib.DrawText(&name, text_box.x + 5, text_box.y + 8, 40, CRT_ACCENT)` renders typed text.
 
 **Key source references.**
 - `src/main.zig` — `text_box` rectangle, boss-mode width switching in `frame()`
@@ -369,19 +371,19 @@ graph TB
 
 **Description.** When `is_game_over` is `true`, the normal zombie draw pass is replaced by a full-screen stats overlay showing eight lines of text. The overlay is displayed after the 1-second dying transition (F-26) completes. It gives the player a detailed summary of their session performance and shows whether they set a new high score.
 
-**User-facing behavior.** After the dying pause, the player sees a red "GAME OVER" title followed by six stat lines (wave, score, best/new high score, average WPM, accuracy, kills) and a gray restart prompt at the bottom.
+**User-facing behavior.** After the dying pause, the player sees a rose-red "GAME OVER" title followed by six stat lines (wave, score, best/new high score, average WPM, accuracy, kills) and a dimmed restart prompt at the bottom.
 
 **System behavior.**
 - `drawZombies()` is not called when `is_game_over` is `true`; the stats overlay replaces the normal draw pass.
-- `"GAME OVER"` drawn centered at `y = STATS_TITLE_Y` (30), font size 48, color `RED`.
-- Starting at `y = STATS_LINE_START_Y` (80) with `STATS_LINE_SPACING` (35) px vertical spacing, six stat lines in font size `STATS_FONT_SIZE` (24), color `DARKGRAY`, via the `drawCenteredStat` helper:
+- `"GAME OVER"` drawn centered at `y = STATS_TITLE_Y` (30), font size 48, color `CRT_ERR`.
+- Starting at `y = STATS_LINE_START_Y` (80) with `STATS_LINE_SPACING` (35) px vertical spacing, six stat lines in font size `STATS_FONT_SIZE` (24), color `CRT_FG`, via the `drawCenteredStat` helper:
   - `"Wave reached: N"` — current wave number.
   - `"Score: N"` — final accumulated session score.
-  - `"NEW HIGH SCORE!"` in `GOLD` (if `is_new_high_score`) **or** `"Best: N"` (`DARKGRAY`) showing `best_score.score`.
+  - `"NEW HIGH SCORE!"` in `CRT_WARN` (if `is_new_high_score`) **or** `"Best: N"` (`CRT_FG`) showing `best_score.score`.
   - `"Average WPM: N"` — result of `calculateAverageWpm()`: `(correct_chars / 5) / (elapsed_time / 60)`, returns 0 when `elapsed_time < 1 s`.
   - `"Accuracy: N%"` — result of `calculateStatsAccuracy()`: `(correct_chars * 100) / (correct_chars + wrong_chars)`, returns 0 when total is 0.
   - `"Kills: N"` — total session kill count (`total_kills`, counting both regular zombies and boss).
-- `"Press ENTER to restart"` drawn centered at fixed `y = 405`, font size 18, color `GRAY`.
+- `"Press ENTER to restart"` drawn centered at fixed `y = 405`, font size 18, color `CRT_DIM`.
 
 **Key source references.**
 - `src/main.zig` — game-over draw block
@@ -403,7 +405,7 @@ graph TB
 - Rendered inside the draw phase when `!is_game_over` (`src/main.zig:167`).
 - `getWaveConfig(current_wave)` is called to retrieve `target_wpm` and `pool_size` (`src/main.zig:168`).
 - Text is formatted via `std.fmt.bufPrintZ` into a 64-byte stack buffer (`src/main.zig:170`): `"WAVE {d} — {d} WPM — {d} / {d}"`.
-- Rendered centered at `y = 10`, font size 20, color `DARKGRAY` via `drawCenteredText` (`src/main.zig:171`).
+- Rendered centered at `y = 10`, font size 20, color `CRT_DIM` via `drawCenteredText` (`src/main.zig:171`).
 - `wave_kills` is the live kill counter, incremented in `updateZombies` on each kill (`src/main.zig:327`).
 
 **Key source references.**
@@ -429,7 +431,7 @@ graph TB
 - On completion: `is_transitioning = true`, `transition_timer = WAVE_TRANSITION_DURATION` (3.0 s).
 - Each frame while `is_transitioning`: `transition_timer -= raylib.GetFrameTime()`.
 - When `transition_timer <= 0`: `current_wave += 1`, `wave_kills = 0`, `wave_spawned = 0`, `spawn_timer = 0.0`, `is_transitioning = false`, `resetZombies` called, `resetBoss` called.
-- Transition screen text: `"WAVE {next} — {wpm} WPM challenge — {ceil(timer)}..."` drawn centered at `y = screen_height / 2 - 15`, font size 30, `DARKGRAY`.
+- Transition screen text: `"WAVE {next} — {wpm} WPM challenge — {ceil(timer)}..."` drawn centered at `y = screen_height / 2 - 15`, font size 30, `CRT_FG`.
 - Input guard `!is_transitioning` prevents keystroke processing during the countdown.
 
 **Key source references.**
@@ -593,12 +595,12 @@ graph TB
 
 **Description.** Two persistent text lines appear at the top-left of the screen throughout active gameplay. The first shows the running score; the second shows the combo count and active multiplier. The combo line's color changes based on the current combo tier.
 
-**User-facing behavior.** The player always sees their current score and combo tier at a glance. The combo line changes from dark gray to orange at combo 5, and from orange to red at combo 15.
+**User-facing behavior.** The player always sees their current score and combo tier at a glance. The combo line changes from deep violet (`CRT_DIM`) to amber (`CRT_WARN`) at combo 5, and from amber to rose-red (`CRT_ERR`) at combo 15.
 
 **System behavior.**
-- Score line rendered at `(SCORE_HUD_X=10, SCORE_HUD_Y=5)`, font size `SCORE_HUD_SIZE=24`, color `DARKGREEN`, formatted as `"Score: {d}"` via `std.fmt.bufPrintZ` (`src/main.zig:248–250`).
+- Score line rendered at `(SCORE_HUD_X=10, SCORE_HUD_Y=5)`, font size `SCORE_HUD_SIZE=24`, color `CRT_FG`, formatted as `"Score: {d}"` via `std.fmt.bufPrintZ` (`src/main.zig:248–250`).
 - Combo line rendered at `(COMBO_HUD_X=10, COMBO_HUD_Y=35)`, font size `COMBO_HUD_SIZE=18`, formatted as `"Combo: {d} x{d}"` (`src/main.zig:252–254`).
-- `getComboColor(combo)` (`src/main.zig:679–684`): combo ≥ 15 → `RED`, combo ≥ 5 → `ORANGE`, otherwise `DARKGRAY`.
+- `getComboColor(combo)` (`src/main.zig:679–684`): combo ≥ 15 → `CRT_ERR`, combo ≥ 5 → `CRT_WARN`, otherwise `CRT_DIM`.
 - Both lines rendered inside the `!is_game_over` draw block, after the wave HUD.
 
 **Key source references.**
@@ -620,7 +622,7 @@ graph TB
 - `var popups: [MAX_POPUPS]ScorePopup` (`src/main.zig:79`), all initialised inactive. `var popup_next: usize = 0` (`src/main.zig:80`) is the circular write index.
 - `spawnPopup(x, y, points)` (`src/main.zig:699–701`): writes to `popups[popup_next]` with `active=true, timer=POPUP_DURATION`, advances `popup_next = (popup_next + 1) % MAX_POPUPS`.
 - Popup timer update in the update phase of `frame()`, outside the `!is_game_over` gate so popups continue fading on the game-over screen: each active popup has `timer -= GetFrameTime()`; when `timer <= 0`, `active = false`.
-- `drawPopups()` (`src/main.zig:721–736`): for each active popup, computes `progress = 1 - (timer / POPUP_DURATION)`, `draw_y = y - POPUP_RISE_PX × progress`, `alpha = (timer / POPUP_DURATION) × 255`, formats `"+{d}"` text, draws with `raylib.DrawText` in gold color (`r=255, g=203, b=0, a=alpha`).
+- `drawPopups()` (`src/main.zig:721–736`): for each active popup, computes `progress = 1 - (timer / POPUP_DURATION)`, `draw_y = y - POPUP_RISE_PX × progress`, `alpha = (timer / POPUP_DURATION) × 255`, formats `"+{d}"` text, draws with `raylib.DrawText` using `CRT_WARN` color with its `a` field set to the fade alpha.
 
 **Key source references.**
 - `src/main.zig:22–24` — `MAX_POPUPS=32`, `POPUP_DURATION=0.5`, `POPUP_RISE_PX=30.0`
@@ -710,14 +712,14 @@ graph TB
 
 **Description.** When any active zombie or the boss crosses `screen_height`, instead of immediately setting `is_game_over`, the game enters a 1-second dying state. During this state all updates (movement, spawning, input) are blocked, and the regular zombie that triggered the event (if any) is rendered with a `RED` tint instead of `WHITE`. When the countdown expires, `is_game_over` is set, the high score comparison runs, and the stats overlay is displayed.
 
-**User-facing behavior.** On game-over, the player sees the responsible zombie glow red and gameplay freeze for 1 second before the stats screen appears. If the boss caused the game over, no specific entity is highlighted.
+**User-facing behavior.** On game-over, the player sees the responsible zombie glow in `CRT_ERR` (rose-red) and gameplay freeze for 1 second before the stats screen appears. If the boss caused the game over, no specific entity is highlighted.
 
 **System behavior.**
 - On trigger in `updateZombies`: `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = i; return;`.
 - On trigger in `updateBoss`: `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = null; return;`.
 - Each frame while `is_dying`: `dying_timer -= raylib.GetFrameTime()`.
 - `is_dying` is checked alongside `is_game_over` and `is_transitioning` in all update gates; movement, input, and metrics updates are all blocked.
-- `drawZombies()` still runs during `is_dying`; for each zombie, the render tint is `RED` if `dying_zombie_index` matches the zombie's slot index, otherwise `WHITE`.
+- `drawZombies()` still runs during `is_dying`; for each zombie, the render tint is `CRT_ERR` if `dying_zombie_index` matches the zombie's slot index, otherwise the type-based tint from `getZombieTint`.
 - When `dying_timer <= 0`: `is_game_over = true`, `is_dying = false`; high score comparison and optional save execute immediately before the next draw frame.
 - `resetSessionState()` sets `is_dying = false`, `dying_timer = 0.0`, `dying_zombie_index = null` on restart.
 
@@ -761,13 +763,13 @@ graph TB
 
 **Description.** Regular zombies are categorized into three types — Standard, Runner, and Tank — each with a distinct color tint, speed multiplier, and preferred name length. Type is selected at spawn time using wave-weighted probabilities from `SPAWN_WEIGHT_TABLE`; visual differentiation requires no additional sprite assets.
 
-**User-facing behavior.** Standard zombies appear with no color tint (white) and fall at the wave's normal speed. Runner zombies appear with a green tint and fall 1.8× faster than normal, bearing short names (≤5 characters). Tank zombies appear with a blue tint and fall at 0.5× the normal speed, bearing longer names (≥8 characters). In waves 1–3, all zombies are Standard. Runners appear from wave 4; Tanks from wave 7. During the dying pause, the responsible regular zombie is always tinted red regardless of its type.
+**User-facing behavior.** Standard zombies appear with a violet tint (`CRT_FG`, #d48aff) and fall at the wave's normal speed. Runner zombies appear with an amber tint (`CRT_WARN`, #ffb13a) and fall 1.8× faster than normal, bearing short names (≤5 characters). Tank zombies appear with a deep violet tint (`CRT_DIM`, #3a1a5a) and fall at 0.5× the normal speed, bearing longer names (≥8 characters). In waves 1–3, all zombies are Standard. Runners appear from wave 4; Tanks from wave 7. During the dying pause, the responsible regular zombie is always tinted `CRT_ERR` (rose-red, #ff5a8a) regardless of its type.
 
 **System behavior.**
 - `selectZombieType(getSpawnWeights(wave), rng)` rolls a value in [0, 99] against cumulative weight thresholds from `SPAWN_WEIGHT_TABLE`.
 - `getSpeedMultiplier(zombie_type)` returns `1.0` (standard), `1.8` (runner), or `0.5` (tank).
-- `getZombieTint(zombie_type)` returns `WHITE`, `GREEN`, or `BLUE`.
-- `drawZombies` applies the tint via `raylib.DrawTexturePro`; the `RED` dying-state override takes priority.
+- `getZombieTint(zombie_type)` returns `CRT_FG`, `CRT_WARN`, or `CRT_DIM`.
+- `drawZombies` applies the tint via `raylib.DrawTexturePro`; the `CRT_ERR` dying-state override takes priority.
 - Spawn weight table (waves 1–3 / 4–6 / 7–10 / 11+): standard 100/70/50/40, runner 0/20/30/30, tank 0/10/20/30.
 - Name length preference: Runners draw from names ≤ `RUNNER_MAX_NAME_LEN` (5 chars); Tanks from names ≥ `TANK_MIN_NAME_LEN` (8 chars); falls back to the full eligible list if insufficient filtered names exist.
 
@@ -776,7 +778,27 @@ graph TB
 - `src/main.zig` — `selectZombieType`, `getSpeedMultiplier`, `getZombieTint`
 - `src/main.zig` — tint logic in `drawZombies`
 
-**Dependencies.** F-01 (type selected at spawn), F-04 (speed multiplied by type), F-03 (name length preference), F-26 (dying RED tint overrides type tint).
+**Dependencies.** F-01 (type selected at spawn), F-04 (speed multiplied by type), F-03 (name length preference), F-26 (dying `CRT_ERR` tint overrides type tint).
+
+---
+
+### F-29 CRT Overlay
+
+**Description.** `drawCrtOverlay()` composites three post-processing effects over every frame: horizontal scanlines across the full screen, a two-layer corner vignette, and a double bezel border at the screen edge. The function is called unconditionally at the end of `frame()`, after all game elements and popups have been rendered.
+
+**User-facing behavior.** Every frame displays subtle dark horizontal lines at 3-pixel intervals, darkened corner regions with a soft inner falloff, and a narrow dark double border framing the screen. Together these produce a CRT phosphor monitor aesthetic consistent with the violet/magenta color palette.
+
+**System behavior.**
+- Scanlines: a 1-px-tall `CRT_SCANLINE` rectangle (black, alpha 30) is drawn at every row index divisible by `CRT_SCANLINE_STEP` (3), spanning the full `screen_width`.
+- Vignette outer ring (`CRT_VIGNETTE_OUTER_PX = 20`): four rectangles (top, bottom, left, right edges, each 20 px, `CRT_VIGNETTE_OUTER` alpha 60) darken the screen perimeter.
+- Vignette inner ring (`CRT_VIGNETTE_INNER_PX = 10`): four additional 10-px edge rectangles (`CRT_VIGNETTE_INNER` alpha 30) soften the boundary between the lit center and the outer ring.
+- Bezel: two `DrawRectangleLines` calls at offsets 0/1 draw using `CRT_BEZEL_OUTER` (#140519), and two more at offsets 2/3 draw using `CRT_BEZEL_INNER` (#230a2d), creating a 4-pixel dark double border.
+
+**Key source references.**
+- `src/main.zig` — `CRT_SCANLINE`, `CRT_VIGNETTE_OUTER`, `CRT_VIGNETTE_INNER`, `CRT_BEZEL_OUTER`, `CRT_BEZEL_INNER`, `CRT_SCANLINE_STEP`, `CRT_VIGNETTE_OUTER_PX`, `CRT_VIGNETTE_INNER_PX` constants
+- `src/main.zig` — `drawCrtOverlay()` function
+
+**Dependencies.** No feature dependencies; runs as a pure rendering post-pass that overlays all other draw calls.
 
 ---
 

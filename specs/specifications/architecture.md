@@ -108,7 +108,7 @@ This codebase does not use a traditional layered architecture. All concerns coll
 
 | Layer | Files | Responsibilities |
 |---|---|---|
-| **Presentation / Rendering** | `src/main.zig` (`drawZombies`, `drawBoss`, inline draw calls) | Clears background, draws text input box, blinking cursor, zombie sprites, boss sprite (2× scale, red tint), boss phrase text, boss health bar, zombie names, game-over overlay |
+| **Presentation / Rendering** | `src/main.zig` (`drawZombies`, `drawBoss`, `drawCrtOverlay`, inline draw calls) | Clears background (`CRT_BG`), draws text input box, blinking cursor, zombie sprites (tinted with `CRT_*` palette), boss sprite, boss phrase text, boss health bar, zombie names, game-over overlay, CRT post-processing overlay (scanlines, vignette, bezel) |
 | **Input** | `src/main.zig` | Mouse hit-test against text box; `GetCharPressed` loop (limit via `getCurrentMaxInput()`); backspace handling; `KEY_ENTER` restart |
 | **Gameplay State** | `src/main.zig` (`updateZombies`, `updateBoss`, `spawnZombie`, `spawnBoss`, `resetZombies`, `resetBoss`; module-level globals) | Zombie and boss y-position advance, game-over detection, name/phrase-match comparison, spawn timer, pool management, boss priority, wave completion gate |
 | **Resources** | `src/main.zig`; `assets/` directory | Load/unload `zombie-hit.wav` and `z_spritesheet.png` once at startup; boss reuses both assets — no new resource loads |
