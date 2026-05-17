@@ -40,24 +40,27 @@ There are no lint or type-check commands wired up separately — `zig build` com
 ├── src/
 │   ├── main.zig           # Entry point, game loop, zombie lifecycle, input handling, rendering
 │   ├── raylib.zig         # Thin @cImport wrapper exposing raylib.h / raymath.h / rlgl.h
-│   └── zombie_names.zig   # Flat array of zero-terminated C strings used as zombie names
+│   ├── zombie_names.zig   # Original 49-name array (superseded by name_lists.zig for spawning)
+│   └── name_lists.zig     # Expanded name data: PrimaryNames (349+), CompoundNames (31), TrapGroups (15); selectName logic
 └── assets/                # Runtime-loaded resources (spritesheet, sounds, fonts) loaded by relative path
 ```
 
 ### Runtime flow (`src/main.zig`)
 
-1. `main()` seeds a `std.Random.DefaultPrng` from `std.time.milliTimestamp()`, then initializes the raylib window and audio device (both paired with `defer` for teardown).
+1. `main()` seeds a `std.Random.DefaultPrng` from `std.c.clock_gettime(.REALTIME, …)` (`std.time.milliTimestamp` was removed in Zig 0.16), then initializes the raylib window and audio device (both paired with `defer` for teardown).
 2. Assets are loaded once up-front via `raylib.LoadSound` / `raylib.LoadTexture`, also paired with `defer Unload…`.
 3. The main loop (`while (!raylib.WindowShouldClose())`) is split into an **update** phase (gated by `!is_game_over`) and an always-on **draw** phase inside `BeginDrawing`/`EndDrawing`.
-4. `spawnZombie` allocates a new `Zombie` from `std.heap.page_allocator` and stores it in a fixed-size `[MAX_ZOMBIES]?*Zombie` slot array. `resetZombies` frees and nulls every slot on restart.
+4. `spawnZombie` selects a `ZombieType` (standard/runner/tank) via wave-weighted probabilities, then calls `name_lists.selectName()` to pick a name from PrimaryNames, CompoundNames, or TrapGroups (enforcing anti-doublon and trap-cluster logic). Allocates a new `Zombie` from `std.heap.page_allocator` and stores its pointer in a fixed-size `[MAX_ZOMBIES]?*Zombie` slot. On kill, the zombie is freed immediately (`allocator.destroy`) and the slot set to `null`. `resetZombies` clears any remaining slots on wave transition or restart.
 5. `updateZombies` advances each active zombie's `y`, triggers game-over when one passes `screen_height`, and kills a zombie when the typed input buffer matches its name byte-for-byte (`std.mem.eql(u8, …)`).
-6. `drawZombies` animates the shared spritesheet by slicing a horizontal strip (`ZOMBIE_FRAME_COUNT = 17` frames) and scales each zombie by `0.2`.
+6. `drawZombies` animates the shared spritesheet by slicing a horizontal strip (`ZOMBIE_FRAME_COUNT = 17` frames), scales each zombie by `0.2`, and applies a color tint based on `zombie_type`: WHITE for standard, GREEN for runner, BLUE for tank (RED overrides all during the dying state).
 
 ### Key state (module-level globals in `src/main.zig`)
 
-- `name: [MAX_INPUT_CHARS + 1]u8` — null-terminated input buffer, max 9 chars.
-- `zombies: [MAX_ZOMBIES]?*Zombie` — fixed pool; `MAX_ZOMBIES = 100`.
+- `name: [MAX_BOSS_INPUT_CHARS + 1]u8` — null-terminated input buffer, max 20 chars normally (35 while boss active).
+- `zombies: [MAX_ZOMBIES]?*Zombie` — fixed pool; `MAX_ZOMBIES = 100`. Slots are set to `null` immediately on zombie kill (memory freed via `allocator.destroy`), not just at restart.
 - `spawn_timer` — seconds since last zombie spawn; compared against `getWaveConfig(current_wave).spawn_delay` each frame.
+- `trap_cluster_group: ?usize` / `trap_cluster_remaining: u8` — tracks an active trap-name cluster; when non-zero, the next 1–2 spawns preferentially draw from the same `TrapGroup`.
+- `prng: std.Random.DefaultPrng` — module-level PRNG seeded at startup via `std.c.clock_gettime`; used for zombie type selection and name selection.
 - `is_dying: bool` / `dying_timer: f32` / `dying_zombie_index: ?usize` — 1-second pause state after a zombie crosses the bottom; the indexed zombie is tinted red.
 - `is_game_over: bool` — controls update-phase skipping and stats overlay display; set after `is_dying` timer expires.
 - `current_wave: u32` — active wave number; starts at 1, advances after each wave transition.
@@ -76,11 +79,12 @@ No database or ORM. The key data shapes in `src/main.zig` are:
 const Zombie = struct {
     x: f32,
     y: f32,
-    speed: f32,          // set from WaveConfig.fall_speed at spawn
-    name: [*:0]const u8, // pointer into ZombieNames, zero-terminated
+    speed: f32,                        // fall_speed * type multiplier (1.0x/1.8x/0.5x)
+    name: [*:0]const u8,               // pointer into name_lists arrays, zero-terminated
     is_active: bool,
     frame: f32,
     animation_timer: f32,
+    zombie_type: ZombieType = .standard, // .standard | .runner | .tank
 };
 
 const WaveConfig = struct {
@@ -98,14 +102,15 @@ const HighScoreRecord = struct {
 };
 ```
 
-`WaveConfig` values come from the compile-time `WAVE_TABLE` (waves 1–15) or a scaling formula (waves 16+) via `getWaveConfig(wave: u32)`. Names come from `ZombieNames` in `src/zombie_names.zig` — a compile-time `[_][*:0]const u8{ ... }` array of 49 short first names. `spawnZombie` picks an index at random; names are never copied, only referenced.
+`WaveConfig` values come from the compile-time `WAVE_TABLE` (waves 1–15) or a scaling formula (waves 16+) via `getWaveConfig(wave: u32)`. Names come from `name_lists.zig` — `PrimaryNames` (349+ first names), `CompoundNames` (31 hyphenated names, e.g. `"Jean-Pierre"`), and `TrapGroups` (15 groups of 3–5 visually similar names). `spawnZombie` calls `name_lists.selectName()` which applies wave-weighted category selection, type-appropriate length filtering (runners ≤5 chars, tanks ≥8 chars), and anti-doublon retry (up to 10 attempts). Name pointers are never copied, only referenced. `src/zombie_names.zig` still exists but is no longer the active spawn source — its 49 names are included in `PrimaryNames`.
 
 `HighScoreRecord` is persisted as a 17-byte binary file (`highscore.dat`) on native builds using `std.c.fopen`/`fread`/`fwrite` (use `std.c` for file I/O — `std.fs` was removed in Zig 0.16). On web (Emscripten) builds it is stored in `localStorage` under `"death-note.highscore"` as JSON, accessed via `emscripten_run_script_int` / `emscripten_run_script`.
 
 ## Testing Patterns
 
-- Testing framework: Zig's built-in test runner (`zig build test`). A `test_step` is wired up in `build.zig` against `src/main.zig` as the root test file.
-- Test blocks in `src/main.zig` cover: name-match equality, input-buffer bounds, `getWaveConfig` correctness for waves 1/15/16+, wave completion logic, animation-frame wrap-around, dying state transition, average WPM calculation, stats accuracy edge cases, `HighScoreRecord` struct size, and high score comparison logic.
+- Testing framework: Zig's built-in test runner (`zig build test`). A `test_step` is wired up in `build.zig` against `src/main.zig` as the root test file; `src/name_lists.zig` is also discovered because it is transitively imported.
+- Test blocks in `src/main.zig` cover: name-match equality, input-buffer bounds (now 20 chars), `getWaveConfig` correctness, wave completion logic, animation-frame wrap-around, dying state transition, WPM/accuracy calculation, `HighScoreRecord` struct size, high score comparison, `ZombieType` speed multipliers, spawn/name weight table bracket checks, zombie type selection distribution, tint colors, hyphen input acceptance, and trap cluster state reset.
+- Test blocks in `src/name_lists.zig` cover: primary list size (≥349), all-ASCII validation, compound name validity, trap group sizes, sufficient runner/tank name counts, anti-doublon enforcement, length filtering per type, forced trap-group preference, and weight table sum validation.
 - When adding tests, write them as top-level `test "name" { ... }` blocks inside the module under test (Zig convention). Reachability from `src/main.zig` is required for the existing `test_step` to pick them up; other files only run when imported (transitively) from `src/main.zig`.
 - No end-to-end / GUI testing: the game is exercised manually via `zig build run`.
 

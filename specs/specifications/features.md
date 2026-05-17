@@ -31,6 +31,7 @@
   - [F-25 Live Accuracy HUD](#f-25-live-accuracy-hud)
   - [F-26 Dying Transition](#f-26-dying-transition)
   - [F-27 High Score Persistence](#f-27-high-score-persistence)
+  - [F-28 Zombie Type Differentiation](#f-28-zombie-type-differentiation)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -135,30 +136,29 @@ graph TB
 
 ### F-01 Zombie Spawning
 
-**Description.** The game allocates a new `Zombie` struct on the heap and stores its pointer in the first available `null` slot of the fixed-size `zombies` pool. The zombie is initialised at a random horizontal position, at the top of the screen, with the current wave's fall speed, and a randomly-chosen display name drawn from the 49-entry `ZombieNames` array. Spawning fires on a per-wave timer (inherited from `WaveConfig.spawn_delay`) and is capped at the current wave's `pool_size` — once the wave's quota is exhausted no further spawns occur until the next wave. If no free slot exists the spawn attempt is silently retried next frame with the timer held hot.
+**Description.** The game allocates a new `Zombie` struct on the heap and stores its pointer in the first available `null` slot of the fixed-size `zombies` pool. The zombie is initialised at a random horizontal position, at the top of the screen, with a type-adjusted fall speed, and a name selected from the expanded name lists in `name_lists.zig`. Spawning fires on a per-wave timer (inherited from `WaveConfig.spawn_delay`) and is capped at the current wave's `pool_size`. Killed zombie slots are freed immediately, so slots recycle within the same wave. If no free slot exists or name selection fails (all retries exhausted by anti-doublon), the spawn attempt is silently deferred to the next timer tick.
 
-**User-facing behavior.** New zombies appear at the top of the window at intervals and speeds that increase with each wave. Each wave has a finite number of zombies to spawn.
+**User-facing behavior.** New zombies appear at the top of the window at intervals and speeds that increase with each wave. Each wave has a finite number of zombies to spawn. Zombie type variety increases across waves: only standard zombies appear in waves 1–3; runners and tanks are introduced gradually from wave 4 onward.
 
 **System behavior.**
-- `spawn_timer` is incremented each frame with `raylib.GetFrameTime()` (`src/main.zig:126`).
-- `getWaveConfig(current_wave)` resolves the current wave's `spawn_delay` and `pool_size` each frame (`src/main.zig:123`).
-- When `spawn_timer >= wave_cfg.spawn_delay` AND `wave_spawned < wave_cfg.pool_size`, `spawnZombie` is called (`src/main.zig:129`).
-- On a successful spawn, `spawn_timer = 0.0` and `wave_spawned += 1` (`src/main.zig:132–134`).
-- `spawnZombie` iterates `zombies[0..MAX_ZOMBIES]`; the first `null` slot is filled (`src/main.zig:389–412`).
-- `allocator.create(Zombie)` allocates heap memory; `errdefer allocator.destroy` prevents leaks on failure (`src/main.zig:393`).
-- Horizontal position: `raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)` → [10, 749] (`src/main.zig:395`).
-- Name index: `raylib.GetRandomValue(0, ZombieNames.len - 1)` (`src/main.zig:396`).
-- Spawn speed: `getWaveConfig(current_wave).fall_speed` (`src/main.zig:402`).
+- `spawn_timer` is incremented each frame with `raylib.GetFrameTime()`.
+- When `spawn_timer >= wave_cfg.spawn_delay` AND `wave_spawned < wave_cfg.pool_size`, `spawnZombie(allocator, prng.random())` is called.
+- On a successful spawn, `spawn_timer = 0.0` and `wave_spawned += 1`.
+- `spawnZombie` iterates `zombies[0..MAX_ZOMBIES]`; the first `null` slot is used.
+- `selectZombieType(getSpawnWeights(current_wave), rng)` picks a `ZombieType` from `SPAWN_WEIGHT_TABLE` (waves 1–3: 100% standard; waves 4–6: 70/20/10; waves 7–10: 50/30/20; waves 11+: 40/30/30).
+- Builds `active_names[]` from all currently active zombies' name pointers (for anti-doublon).
+- `name_lists.selectName(wave, zombie_type, active_names, forced_group, rng)` applies `NAME_WEIGHT_TABLE` (wave-weighted category) and type-based length filtering (runners ≤5 chars, tanks ≥8 chars), then retries up to `MAX_SPAWN_RETRIES` (10) on collision; returns `null` on failure.
+- If selection category is `.trap` and no cluster is active, sets `trap_cluster_group` and `trap_cluster_remaining` (1–2 extras); decrements remaining on subsequent spawns.
+- `allocator.create(Zombie)` allocates heap memory; `errdefer allocator.destroy` prevents leaks on failure.
+- Horizontal position: `raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)` → [10, 749].
+- Spawn speed: `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` (1.0×/1.8×/0.5× for standard/runner/tank).
 
 **Key source references.**
-- `src/main.zig:7` — `MAX_ZOMBIES = 100`
-- `src/main.zig:36` — `spawn_timer`
-- `src/main.zig:74–75` — `ZOMBIE_SPAWN_X_MIN`, `ZOMBIE_SPAWN_X_MAX`
-- `src/main.zig:123–134` — timer increment, spawn gate, and spawn trigger
-- `src/main.zig:388–412` — `spawnZombie` function
-- `src/zombie_names.zig:1` — `ZombieNames` array (49 entries)
+- `src/main.zig` — `MAX_ZOMBIES`, `MAX_SPAWN_RETRIES`, `SPAWN_WEIGHT_TABLE`, `NAME_WEIGHT_TABLE`, `ZOMBIE_SPAWN_X_MIN`, `ZOMBIE_SPAWN_X_MAX`, `trap_cluster_group`, `trap_cluster_remaining`
+- `src/main.zig` — `spawnZombie`, `selectZombieType`, `getSpawnWeights`, `getNameWeights`, `getSpeedMultiplier`
+- `src/name_lists.zig` — `PrimaryNames`, `CompoundNames`, `TrapGroups`, `selectName`
 
-**Dependencies.** Relies on the `ZombieNames` pool (F-03 for rendering), `std.heap.page_allocator` being available, and the `!is_game_over and !is_transitioning` guard at `src/main.zig:103`.
+**Dependencies.** Relies on `name_lists.zig` for name selection (F-03 for rendering), `std.heap.page_allocator`, and the `!is_game_over and !is_transitioning and !is_dying` guard. Zombie type determines visual tint (F-28) and fall speed (F-04).
 
 ---
 
@@ -188,20 +188,21 @@ graph TB
 
 ### F-03 Name Label Rendering
 
-**Description.** Each active zombie has its `name` field — a `[*:0]const u8` pointer directly into `ZombieNames` — drawn as text 20 pixels above the sprite's origin position, in `DARKGREEN` at font size 20.
+**Description.** Each active zombie has its `name` field — a `[*:0]const u8` pointer into `name_lists.zig` arrays — drawn as text 20 pixels above the sprite's origin position, in `DARKGREEN` at font size 20. Names may be simple first names (e.g. `"Kai"`), compound hyphenated names (e.g. `"Jean-Pierre"`), or trap-group names that closely resemble others on screen.
 
-**User-facing behavior.** The player sees a short first name floating above each zombie, which they must type to destroy it.
+**User-facing behavior.** The player sees a name floating above each zombie — first names in early waves, with compound hyphenated names appearing from wave 4 onward. Trap-group names in later waves look visually similar to each other, requiring careful reading.
 
 **System behavior.**
-- Executed inside `drawZombies()` for every active zombie (`src/main.zig:205–257`).
-- `text_pos.y = pos.y - 20.0` (`src/main.zig:253`).
-- `raylib.DrawText(zomb.name, …, 20, raylib.DARKGREEN)` (`src/main.zig:254`).
+- Executed inside `drawZombies()` for every active zombie.
+- `text_pos.y = pos.y - 20.0`.
+- `raylib.DrawText(zomb.name, …, 20, raylib.DARKGREEN)`.
 - The name pointer is passed directly; no copy is made because `[*:0]const u8` is compatible with raylib's C string parameter.
+- The hyphen character in compound names is rendered natively by raylib's `DrawText`.
 
 **Key source references.**
-- `src/main.zig:31` — `name: [*:0]const u8` field in `Zombie` struct
-- `src/main.zig:253–254` — label draw call in `drawZombies`
-- `src/zombie_names.zig:1` — source strings
+- `src/main.zig` — `name: [*:0]const u8` field in `Zombie` struct
+- `src/main.zig` — label draw call in `drawZombies`
+- `src/name_lists.zig` — `PrimaryNames`, `CompoundNames`, `TrapGroups` source arrays
 
 **Dependencies.** F-01 (spawn sets the name pointer), F-02 (same draw loop).
 
@@ -209,7 +210,7 @@ graph TB
 
 ### F-04 Falling Motion
 
-**Description.** Every frame during the update phase, each active zombie's `y` coordinate is incremented by its `speed` value. Speed is set at spawn time from the current wave's `fall_speed` parameter (ranging from 0.5 px/frame in wave 1 to 2.0 px/frame in wave 16+) and is never mutated after spawn. This moves zombies steadily downward from `y = 0` toward `y = screen_height` at a rate that increases with each wave.
+**Description.** Every frame during the update phase, each active zombie's `y` coordinate is incremented by its `speed` value. Speed is set at spawn time as `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` and is never mutated after spawn. Standard zombies use the wave's base `fall_speed` (0.5–2.0 px/frame); runners move at 1.8× the base speed; tanks move at 0.5× the base speed.
 
 **User-facing behavior.** Zombies descend at a constant per-wave speed, falling faster in higher waves.
 
@@ -278,24 +279,24 @@ graph TB
 
 ### F-07 Text Input
 
-**Description.** Each frame the game reads characters from raylib's key-press queue and appends printable ASCII characters (codepoints 32–125) to the `name` buffer. The maximum buffer length is dynamic: 9 characters during normal play and 35 characters while a boss is active (F-16). Backspace removes the last character. Input is accepted regardless of mouse position; the mouse-over state only controls the cursor icon and the blinking-underscore overlay (F-09). Input is entirely disabled during wave transitions.
+**Description.** Each frame the game reads characters from raylib's key-press queue and appends printable ASCII characters (codepoints 32–125) to the `name` buffer. The maximum buffer length is dynamic: 20 characters during normal play (up from 9; accommodates compound names up to 20 chars) and 35 characters while a boss is active (F-16). The hyphen character (codepoint 45) falls within the accepted range and is required for compound zombie names. Backspace removes the last character. Input is accepted regardless of mouse position; the mouse-over state only controls the cursor icon and the blinking-underscore overlay (F-09). Input is entirely disabled during wave transitions and the dying pause.
 
-**User-facing behavior.** The player types and characters appear in the text box. Backspace deletes the last character. During the 3-second wave-transition countdown, typing is ignored. While a boss is active the buffer accepts up to 35 characters to accommodate boss phrases.
+**User-facing behavior.** The player types and characters appear in the text box, including hyphens for compound names. Backspace deletes the last character. During the 3-second wave-transition countdown or the 1-second dying pause, typing is ignored. While a boss is active the buffer accepts up to 35 characters to accommodate boss phrases.
 
 **System behavior.**
 - Mouse position checked each frame with `raylib.CheckCollisionPointRec`.
 - `mouse_on_text = true` and `MOUSE_CURSOR_IBEAM` set on hover; otherwise `false` and `MOUSE_CURSOR_DEFAULT`.
-- Input processing gated by `if (!is_game_over and !is_transitioning)`.
+- Input processing gated by `if (!is_game_over and !is_transitioning and !is_dying)`.
 - `raylib.GetCharPressed()` polled in a `while (key > 0)` loop to drain the frame's key queue.
 - Guard: `(key >= 32) and (key <= 125) and (letter_count < getCurrentMaxInput())`.
-- `getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (9).
+- `getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (20).
 - `name[letter_count] = @intCast(key)` appends the byte; `name[letter_count + 1] = '\x00'` maintains null termination.
 - Backspace: `IsKeyPressed(KEY_BACKSPACE) and letter_count > 0` → decrement and re-null-terminate.
 
 **Key source references.**
-- `src/main.zig:8` — `MAX_INPUT_CHARS = 9`
-- `src/main.zig:33–34` — `name` buffer and `letter_count`
-- `src/main.zig:103–121` — full input handling block (gated by `!is_game_over and !is_transitioning`)
+- `src/main.zig` — `MAX_INPUT_CHARS = 20`
+- `src/main.zig` — `name` buffer and `letter_count`
+- `src/main.zig` — full input handling block (gated by `!is_game_over and !is_transitioning and !is_dying`)
 
 **Dependencies.** F-08 (text box rect defined there), F-09 (cursor blink uses `frames_counter` incremented here), F-10 (buffer content drives kill check), F-13 (transition disables input).
 
@@ -303,19 +304,20 @@ graph TB
 
 ### F-08 Input Box Rendering
 
-**Description.** A fixed-size rectangle at screen position (300, 400) with dimensions 225 × 50 is filled with `LIGHTGRAY` and outlined in `RED` when the mouse is over it (focused) or `DARKGRAY` when not. The currently typed text is drawn inside the box at font size 40 in `MAROON`.
+**Description.** A rectangle centered near the bottom of the screen (width 500, x = `screen_width/2 - 250`, y = 400, height 50) is filled with `LIGHTGRAY` and outlined in `RED` when focused or `DARKGRAY` when not. The currently typed text is drawn inside the box at font size 40 in `MAROON`. While a boss is active the box widens to 700 pixels and recenters to accommodate the 35-character boss phrase limit.
 
-**User-facing behavior.** The player sees a rectangular input area near the bottom of the screen. The border turns red to indicate focus and the typed characters are displayed inside.
+**User-facing behavior.** The player sees a rectangular input area centered near the bottom of the screen. The border turns red to indicate focus and the typed characters are displayed inside, with enough width for compound names up to 20 characters. During boss encounters the box expands further.
 
 **System behavior.**
-- `text_box` declared as `raylib.Rectangle{ .x = screen_width / 2.0 - 100.0, .y = 400.0, .width = 225.0, .height = 50.0 }` — evaluates to `x = 300` (`src/main.zig:63`).
-- `raylib.DrawRectangleRec(text_box, raylib.LIGHTGRAY)` fills the box (`src/main.zig:126`).
-- Conditional border: `RED` when `mouse_on_text`, `DARKGRAY` otherwise (`src/main.zig:127–131`).
-- `raylib.DrawText(&name, text_box.x + 5, text_box.y + 8, 40, raylib.MAROON)` renders typed text (`src/main.zig:133`).
+- Default: `text_box.width = 500.0`, `text_box.x = screen_width / 2.0 - 250.0` (i.e. `x = 150`).
+- Boss mode: `text_box.width = 700.0`, `text_box.x = (screen_width - 700.0) / 2.0` (i.e. `x = 50`). Switched each frame based on `boss != null`.
+- `raylib.DrawRectangleRec(text_box, raylib.LIGHTGRAY)` fills the box.
+- Conditional border: `RED` when `mouse_on_text`, `DARKGRAY` otherwise.
+- `raylib.DrawText(&name, text_box.x + 5, text_box.y + 8, 40, raylib.MAROON)` renders typed text.
 
 **Key source references.**
-- `src/main.zig:63` — `text_box` rectangle declaration
-- `src/main.zig:126–133` — box and text draw calls
+- `src/main.zig` — `text_box` rectangle, boss-mode width switching in `frame()`
+- `src/main.zig` — box and text draw calls
 
 **Dependencies.** F-07 (focus state and buffer content), F-09 (blinking cursor overlaid on this box).
 
@@ -323,7 +325,7 @@ graph TB
 
 ### F-09 Blinking Cursor
 
-**Description.** When the mouse is over the text box and the buffer has not yet reached its current character limit, a `"_"` character is drawn immediately after the typed text. Its visibility toggles on and off every 20 frames by evaluating `(frames_counter / 20) % 2 == 0`. When the buffer is full (at 9 normally or 35 during a boss encounter), the blinking cursor is suppressed and a `"Press BACKSPACE to delete chars..."` hint is shown instead.
+**Description.** When the mouse is over the text box and the buffer has not yet reached its current character limit, a `"_"` character is drawn immediately after the typed text. Its visibility toggles on and off every 20 frames by evaluating `(frames_counter / 20) % 2 == 0`. When the buffer is full (at 20 normally or 35 during a boss encounter), the blinking cursor is suppressed and a `"Press BACKSPACE to delete chars..."` hint is shown instead.
 
 **User-facing behavior.** An underscore blinks at the insertion point while the player is focused on the text box. At the current maximum capacity the blink stops and a backspace reminder appears.
 
@@ -344,16 +346,16 @@ graph TB
 
 ### F-10 Kill Mechanic
 
-**Description.** During the update phase, after each active zombie's position is advanced, the typed buffer is compared byte-for-byte against that zombie's name. A match causes the zombie to be marked inactive, the input buffer to be cleared, and the kill sound to be played. The zombie's heap allocation is not freed until restart; only `is_active` is set to `false`.
+**Description.** During the update phase, after each active zombie's position is advanced, the typed buffer is compared byte-for-byte against that zombie's name. A match causes the zombie's heap memory to be freed immediately, the slot set to `null`, the input buffer to be cleared, and the kill sound to be played. The freed slot is immediately available for a new spawn in the same wave.
 
-**User-facing behavior.** When the player correctly types an on-screen zombie name in full, the zombie disappears, a sound effect plays, and the text box is cleared.
+**User-facing behavior.** When the player correctly types an on-screen zombie name in full, the zombie disappears, a sound effect plays, and the text box is cleared. Compound hyphenated names (e.g. `"Jean-Pierre"`) require the hyphen to be typed as part of the name.
 
 **System behavior.**
-- `typed_name = name[0..letter_count]` creates a slice of the buffer (`src/main.zig:181`).
-- Zombie name length computed by scanning for `'\x00'` sentinel (`src/main.zig:184–187`).
-- `std.mem.eql(u8, typed_name, zomb_name_slice)` performs the exact byte comparison (`src/main.zig:193`).
-- On match: `zomb.is_active = false` (`src/main.zig:194`), `letter_count = 0; name[0] = '\x00'` (`src/main.zig:195–196`), `raylib.PlaySound(zombie_kill_sound)` (`src/main.zig:199`).
-- Heap memory for the killed zombie is intentionally not freed here; only `resetZombies` frees all slots on restart.
+- `typed_name = name[0..letter_count]` creates a slice of the buffer.
+- Zombie name length computed by scanning for `'\x00'` sentinel.
+- `std.mem.eql(u8, typed_name, zomb_name_slice)` performs the exact byte comparison.
+- On match: `allocator.destroy(zomb)`, `slot.* = null` (slot immediately freed for reuse), `letter_count = 0; name[0] = '\x00'`, `wave_kills += 1`, `total_kills += 1`, `raylib.PlaySound(zombie_kill_sound)`.
+- Score and combo are updated, and a floating popup is spawned at the kill position (F-19, F-22).
 
 **Key source references.**
 - `src/main.zig:57–58` — sound load/unload with `defer`
@@ -483,12 +485,12 @@ graph TB
 
 ### F-16 Boss Typing Mechanic
 
-**Description.** While a boss is active, the input buffer's effective character limit extends from 9 to 35 to accommodate multi-word boss phrases. The player types the boss phrase character by character; a health bar above the boss reflects typing progress. Typing the complete phrase destroys the boss, clears the input, and reverts the limit to 9.
+**Description.** While a boss is active, the input buffer's effective character limit extends from 20 to 35 to accommodate multi-word boss phrases. The player types the boss phrase character by character; a health bar above the boss reflects typing progress. Typing the complete phrase destroys the boss, clears the input, and reverts the limit to 20.
 
 **User-facing behavior.** The boss displays a multi-word phrase in dark red above its sprite. A health bar below the phrase shrinks as the player types correctly. Completing the phrase destroys the boss with the kill sound. Backspace undoes the last character and expands the health bar.
 
 **System behavior.**
-- `getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (9). The character-append guard and cursor/hint thresholds use this helper.
+- `getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (20). The character-append guard and cursor/hint thresholds use this helper.
 - `updateBoss` (called each frame when `!is_game_over and !is_transitioning`): advances `b.y += b.speed`; if `b.y >= screen_height` sets `is_game_over = true` (F-05). Checks if `name[0..letter_count]` is a valid prefix of the boss phrase; if `letter_count == boss_phrase_len` and the phrase matches: calls `allocator.destroy(b)`, sets `boss = null`, clears input, plays `zombie_kill_sound`. Does not increment `wave_kills`.
 - `drawBoss`: renders the boss sprite at `BOSS_SCALE` (0.4) with `RED` tint; draws phrase text at font size 20 in dark red (`r=139, g=0, b=0`); draws a 200 × 8 px health bar (light-gray background, red fill proportional to remaining untyped characters, dark-gray border).
 
@@ -755,6 +757,29 @@ graph TB
 
 ---
 
+### F-28 Zombie Type Differentiation
+
+**Description.** Regular zombies are categorized into three types — Standard, Runner, and Tank — each with a distinct color tint, speed multiplier, and preferred name length. Type is selected at spawn time using wave-weighted probabilities from `SPAWN_WEIGHT_TABLE`; visual differentiation requires no additional sprite assets.
+
+**User-facing behavior.** Standard zombies appear with no color tint (white) and fall at the wave's normal speed. Runner zombies appear with a green tint and fall 1.8× faster than normal, bearing short names (≤5 characters). Tank zombies appear with a blue tint and fall at 0.5× the normal speed, bearing longer names (≥8 characters). In waves 1–3, all zombies are Standard. Runners appear from wave 4; Tanks from wave 7. During the dying pause, the responsible regular zombie is always tinted red regardless of its type.
+
+**System behavior.**
+- `selectZombieType(getSpawnWeights(wave), rng)` rolls a value in [0, 99] against cumulative weight thresholds from `SPAWN_WEIGHT_TABLE`.
+- `getSpeedMultiplier(zombie_type)` returns `1.0` (standard), `1.8` (runner), or `0.5` (tank).
+- `getZombieTint(zombie_type)` returns `WHITE`, `GREEN`, or `BLUE`.
+- `drawZombies` applies the tint via `raylib.DrawTexturePro`; the `RED` dying-state override takes priority.
+- Spawn weight table (waves 1–3 / 4–6 / 7–10 / 11+): standard 100/70/50/40, runner 0/20/30/30, tank 0/10/20/30.
+- Name length preference: Runners draw from names ≤ `RUNNER_MAX_NAME_LEN` (5 chars); Tanks from names ≥ `TANK_MIN_NAME_LEN` (8 chars); falls back to the full eligible list if insufficient filtered names exist.
+
+**Key source references.**
+- `src/main.zig` — `ZombieType` enum, `SPAWN_WEIGHT_TABLE`, `RUNNER_SPEED_MULTIPLIER`, `TANK_SPEED_MULTIPLIER`, `RUNNER_MAX_NAME_LEN`, `TANK_MIN_NAME_LEN`
+- `src/main.zig` — `selectZombieType`, `getSpeedMultiplier`, `getZombieTint`
+- `src/main.zig` — tint logic in `drawZombies`
+
+**Dependencies.** F-01 (type selected at spawn), F-04 (speed multiplied by type), F-03 (name length preference), F-26 (dying RED tint overrides type tint).
+
+---
+
 ## User Journeys
 
 ### Journey 1: Successful Kill
@@ -881,7 +906,7 @@ sequenceDiagram
     participant Game
     participant UI
 
-    Player->>Game: Type 9 characters (letter_count = MAX_INPUT_CHARS)
+    Player->>Game: Type 20 characters (letter_count = MAX_INPUT_CHARS)
     Game->>Game: Guard (letter_count < MAX_INPUT_CHARS) blocks further input
     Game->>UI: Draw "Press BACKSPACE to delete chars..." at (230, 300)
     UI->>Player: Blinking cursor hidden (letter_count >= MAX_INPUT_CHARS)
@@ -943,8 +968,8 @@ The following rules reflect non-obvious constraints directly evidenced in `src/m
 **BR-02 — Only printable ASCII accepted.**
 The guard `(key >= 32) and (key <= 125)` filters out control characters, extended Unicode codepoints, and all non-printable values (`src/main.zig:84`).
 
-**BR-03 — Dynamic character cap: 9 normally, 35 while boss is active.**
-`getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (9). The same guard enforces the cap at the character-append site. When the boss is killed, the limit immediately reverts to 9 and any characters in the buffer beyond index 9 remain but cannot be extended further.
+**BR-03 — Dynamic character cap: 20 normally, 35 while boss is active.**
+`getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (20). The cap was raised from 9 to 20 to accommodate compound zombie names up to 20 characters. When the boss is killed, the limit immediately reverts to 20 and the input buffer is cleared simultaneously.
 
 **BR-04 — Match is byte-exact.**
 `std.mem.eql(u8, typed_name, zomb_name_slice)` performs a case-sensitive, length-sensitive comparison with no normalisation (`src/main.zig:193`). One wrong character or extra space prevents a kill.
@@ -952,8 +977,8 @@ The guard `(key >= 32) and (key <= 125)` filters out control characters, extende
 **BR-05 — Zombie name length computed at match time.**
 There is no pre-computed length field; `updateZombies` scans for `'\x00'` on every frame for every active zombie (`src/main.zig:184–187`).
 
-**BR-06 — Killed zombies are not freed until restart (intentional memory hold).**
-`zomb.is_active = false` is the only mutation on kill (`src/main.zig:194`). `allocator.destroy` is never called for a killed zombie during normal play. Memory is only reclaimed by `resetZombies` on restart (`src/main.zig:285–292`). All 100 pool slots can therefore be occupied by killed-but-not-freed zombies over a long session.
+**BR-06 — Killed zombies are freed immediately on kill.**
+When a zombie's name is matched, `allocator.destroy(zomb)` is called and `zombies[i] = null` immediately. The slot is freed for a new spawn within the same wave. `resetZombies` reclaims any remaining non-null slots (zombies still falling) on wave transition and restart.
 
 **BR-07 — Spawn is gated by both pool capacity and wave quota.**
 `spawnZombie` is only called when `spawn_timer >= wave_cfg.spawn_delay AND wave_spawned < wave_cfg.pool_size` (`src/main.zig:129`). Once the wave's full quota has been spawned, no further spawns occur regardless of the timer. Within the quota, if no free slot exists in `zombies[]`, the function returns `false` and the timer stays hot so the next freed slot is filled immediately.
@@ -982,8 +1007,8 @@ When the boss is killed via `updateBoss`, `wave_kills` is not incremented. The b
 **BR-15 — Boss phrase prefix suppresses regular zombie kills.**
 While `boss != null` and the typed input is a non-empty valid prefix of the boss phrase, `updateZombies` skips the kill check for all regular zombies. This is a per-frame check; if the player backspaces to a string that is no longer a valid prefix, regular zombie matching resumes immediately on the next frame.
 
-**BR-16 — Boss input buffer reverts to 9 on boss kill.**
-When `updateBoss` destroys the boss and sets `boss = null`, `getCurrentMaxInput()` returns 9 on the very next frame. The input buffer content is simultaneously cleared (`letter_count = 0`), so there is no state where the buffer holds more than 9 characters after boss death.
+**BR-16 — Boss input buffer reverts to 20 on boss kill.**
+When `updateBoss` destroys the boss and sets `boss = null`, `getCurrentMaxInput()` returns 20 on the very next frame. The input buffer content is simultaneously cleared (`letter_count = 0`), so there is no state where the buffer holds more than 20 characters after boss death.
 
 **BR-17 — Per-kill score formula uses vertical position.**
 `calculateScore(name_len, y_pos, is_boss, combo)` returns `round(base × type_mult) × combo_mult`, where `base = name_len × 10 + round(100 × y_pos / screen_height)`. A zombie killed at `y = 0` (top) earns the minimum height bonus (0); one killed at `y = 450` (bottom) earns the maximum (100). Boss kills use `type_mult = 3.0`; standard zombie kills use `type_mult = 1.0`.

@@ -30,11 +30,14 @@ The data containers in the project are:
 
 | Container | Location | Nature |
 |---|---|---|
-| `zombies[MAX_ZOMBIES]` pool | `src/main.zig` (runtime) | Fixed array of heap-allocated `?*Zombie` pointers; mutable at runtime |
+| `zombies[MAX_ZOMBIES]` pool | `src/main.zig` (runtime) | Fixed array of heap-allocated `?*Zombie` pointers; slot freed and set to `null` immediately on zombie kill |
 | `boss` pointer | `src/main.zig` (runtime) | Single `?*Zombie` pointer for the active boss zombie; null when no boss is present |
 | `popups[MAX_POPUPS]` pool | `src/main.zig` (runtime) | Fixed stack-allocated array of 32 `ScorePopup` value-type entries; mutable at runtime |
 | `best_score` | `src/main.zig` (runtime) | `HighScoreRecord` struct loaded at startup; persisted when beaten |
-| `ZombieNames` | `src/zombie_names.zig` (compile-time) | Read-only, compile-time array of 49 null-terminated C string pointers |
+| `PrimaryNames` | `src/name_lists.zig` (compile-time) | Read-only array of 349+ null-terminated first-name C string pointers |
+| `CompoundNames` | `src/name_lists.zig` (compile-time) | Read-only array of 31 null-terminated hyphenated-name pointers (e.g. `"Jean-Pierre"`) |
+| `TrapGroups` | `src/name_lists.zig` (compile-time) | Read-only array of 15 `TrapGroup` structs, each containing 3–5 visually similar names |
+| `ZombieNames` | `src/zombie_names.zig` (compile-time) | Original 49-name array; superseded by `PrimaryNames` for spawning (still imported) |
 | `BossPhrases` | `src/boss_phrases.zig` (compile-time) | Read-only, compile-time array of 10 null-terminated multi-word phrase pointers |
 
 **Persistence layer.** The high score is the sole persisted state. On native builds it is stored in `highscore.dat` (17-byte binary, little-endian) in the working directory, written via `std.c.fopen`/`fwrite`. On web (Emscripten) builds it is stored in `localStorage` under the key `death-note.highscore` as a JSON object, read/written via `emscripten_run_script_int` / `emscripten_run_script`. All other asset files (`assets/zombie-hit.wav`, `assets/z_spritesheet.png`) are loaded at startup by raylib and held in GPU/audio memory as opaque handles — they are not parsed into application data structures.
@@ -113,11 +116,22 @@ erDiagram
         bool is_active
         f32 frame
         f32 animation_timer
+        ZombieType zombie_type
     }
 
-    ZOMBIE_NAMES {
-        cstr entries
-        int count
+    ZOMBIE_TYPE {
+        enum standard
+        enum runner
+        enum tank
+    }
+
+    NAME_LISTS {
+        cstr primary_entries
+        int primary_count
+        cstr compound_entries
+        int compound_count
+        TrapGroup trap_groups
+        int trap_group_count
     }
 
     BOSS_PHRASES {
@@ -139,7 +153,8 @@ erDiagram
     GAME_STATE ||--|| POPUP_POOL : "governs lifecycle of"
     GAME_STATE ||--|| HIGHSCORE_RECORD : "best_score (loaded at startup)"
     ZOMBIE_POOL ||--o{ ZOMBIE : "holds up to 100"
-    ZOMBIE }o--|| ZOMBIE_NAMES : "name points into (regular)"
+    ZOMBIE }|--|| ZOMBIE_TYPE : "categorised by"
+    ZOMBIE }o--|| NAME_LISTS : "name points into (regular)"
     ZOMBIE }o--o| BOSS_PHRASES : "name points into (boss)"
     WAVE_CONFIG ||--o{ ZOMBIE : "fall_speed set at spawn"
     POPUP_POOL ||--o{ SCORE_POPUP : "holds up to 32"
@@ -164,6 +179,7 @@ const Zombie = struct {
     is_active: bool,
     frame: f32,
     animation_timer: f32,
+    zombie_type: ZombieType = .standard,
 };
 ```
 
@@ -175,43 +191,82 @@ const Zombie = struct {
 |---|---|---|---|
 | `x` | `f32` | Horizontal screen position (pixels from left edge) | Set at spawn via `raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)` → [10, 749]; never mutated after spawn |
 | `y` | `f32` | Vertical screen position (pixels from top edge) | Initialised to `0.0`; incremented by `speed` every frame in `updateZombies` |
-| `speed` | `f32` | Pixels per frame the zombie descends | Set once at spawn from `getWaveConfig(current_wave).fall_speed`; ranges from 0.5 (wave 1) to 2.0 (wave 16+); never mutated after spawn |
-| `name` | `[*:0]const u8` | Pointer to a null-terminated C string from `ZombieNames` | Never copied; points directly into the compile-time `ZombieNames` array; never null |
-| `is_active` | `bool` | Whether the zombie is alive and should be updated/drawn | `true` at spawn; set to `false` when the player types the matching name; **memory is not freed on deactivation** |
+| `speed` | `f32` | Pixels per frame the zombie descends | Set once at spawn: `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` — standard×1.0, runner×1.8, tank×0.5; never mutated after spawn |
+| `name` | `[*:0]const u8` | Pointer to a null-terminated C string from `name_lists.zig` | Never copied; points into `PrimaryNames`, `CompoundNames`, or a `TrapGroup` entry; never null |
+| `is_active` | `bool` | Whether the zombie is alive and should be updated/drawn | `true` at spawn; set to `false` when the player types the matching name; **heap memory freed immediately on kill** (`allocator.destroy`; slot set to `null`) |
 | `frame` | `f32` | Current animation frame index (0–16) | Incremented in `drawZombies` every 0.1 s; wraps to `0` when it reaches `ZOMBIE_FRAME_COUNT` (17) |
 | `animation_timer` | `f32` | Accumulated time since last frame advance (seconds) | Starts at `0`; reset to `0` each time a frame advance occurs |
+| `zombie_type` | `ZombieType` | Categorises the zombie as `.standard`, `.runner`, or `.tank` | Determines speed multiplier and color tint; defaults to `.standard`; set by `selectZombieType` at spawn |
 
 **Relationships:**
-- `name` references one entry in the compile-time `ZombieNames` array (pointer, not a copy).
+- `name` references one entry in the compile-time `name_lists.zig` arrays (pointer, not a copy).
 - The `Zombie` instance lives in heap memory obtained from `std.heap.page_allocator`; the pointer is stored in `zombies[i]`.
+- On kill, `allocator.destroy(zomb)` is called and `zombies[i]` is set to `null` immediately, freeing the slot for reuse within the same wave.
 
 ---
 
-### 3.2 ZombieNames
+### 3.2 NameLists
 
-**Source:** `src/zombie_names.zig`, line 1
+**Source:** `src/name_lists.zig`
 
-**Definition:**
+`name_lists.zig` is the active source of zombie names for all regular spawning. It exposes three compile-time name arrays and a `selectName` function that handles wave-weighted category selection, type-based length filtering, and anti-doublon enforcement.
+
+#### PrimaryNames
 
 ```zig
-pub const ZombieNames = [_][*:0]const u8{ ... };
+pub const PrimaryNames = [_][*:0]const u8{ ... };
 ```
-
-This is a compile-time constant array of 49 null-terminated C string pointers. It is the sole source of zombie name strings in the game. The strings are stored in the binary's read-only data segment; no allocation occurs at runtime.
 
 | Attribute | Value |
 |---|---|
 | Element type | `[*:0]const u8` — null-terminated, read-only C string pointer |
-| Element count | 49 |
+| Element count | 349+ (49 original + 300+ additions) |
 | Mutability | Immutable (compile-time constant) |
-| Access pattern | Random index via `rng.random().intRangeLessThan(usize, 0, ZombieNames.len)` at spawn time |
+| Character set | ASCII alphanumeric only (no accents, spaces, or hyphens) |
+| Access pattern | Via `selectName()` with wave-weighted category selection and anti-doublon retry |
 
-**Sample entries (first ten):** `"Aaron"`, `"Abby"`, `"Adrian"`, `"Aisha"`, `"Akira"`, `"Alex"`, `"Ali"`, `"Amara"`, `"Amir"`, `"Ana"`
+The 49 original names from `zombie_names.zig` are included as the first entries.
 
-**Full list:** Aaron, Abby, Adrian, Aisha, Akira, Alex, Ali, Amara, Amir, Ana, Anil, Arjun, Ava, Bao, Bella, Carlos, Carmen, Chin, Dalia, Daniel, Eli, Emma, Eric, Fatima, Felix, Gabriel, Hana, Igor, Ivan, Jack, Jane, Juan, Kai, Lara, Liam, Lina, Maria, Mila, Nina, Omar, Oscar, Pablo, Ravi, Sara, Seth, Tina, Vera, Yara, Zane
+#### CompoundNames
+
+```zig
+pub const CompoundNames = [_][*:0]const u8{ ... };
+```
+
+| Attribute | Value |
+|---|---|
+| Element count | 31 |
+| Character set | ASCII letters and hyphens only; no spaces |
+| Maximum length | 20 characters |
+| Wave availability | Wave 4+ (5% probability); increasing to 25% in wave 13+ |
+| Examples | `"Jean-Pierre"`, `"Anne-Sophie"`, `"Marie-Claire"` |
+
+#### TrapGroups
+
+```zig
+pub const TrapGroups = [_]TrapGroup{ ... };
+pub const TrapGroup = struct { names: []const [*:0]const u8 };
+```
+
+| Attribute | Value |
+|---|---|
+| Group count | 15 |
+| Names per group | 3–5 |
+| Purpose | Visually similar names (e.g. `"Liam"`, `"Lila"`, `"Lina"`) that cluster together in later waves to increase typing attention required |
+| Wave availability | Wave 4+ (10% probability); increasing to 25% in wave 13+ |
+
+#### selectName
+
+`pub fn selectName(wave: u32, zombie_type: ZombieType, active_names: [][*:0]const u8, forced_group: ?usize, rng: std.Random) ?NameSelection`
+
+- Applies wave weights from `NAME_WEIGHT_TABLE` to choose a category (primary/compound/trap).
+- Filters by length for Runners (≤5 chars) and Tanks (≥8 chars); falls back to full list if insufficient names pass the filter.
+- Retries up to `MAX_SPAWN_RETRIES` (10) times on anti-doublon collision; returns `null` if all retries fail.
+- Returns a `NameSelection` with the chosen `name`, its `category`, and `trap_group_index` (for cluster tracking).
 
 **Relationships:**
-- `Zombie.name` holds a pointer into this array. Multiple live zombies can reference the same entry concurrently (no uniqueness enforcement).
+- `Zombie.name` holds a pointer into one of these arrays. No two active zombies share the same name (anti-doublon enforced at spawn).
+- `src/zombie_names.zig` still exists and is imported but is no longer the active spawn source — its 49 names are contained within `PrimaryNames`.
 
 ---
 
@@ -235,8 +290,8 @@ The active input buffer is exclusively `name` + `letter_count`. The buffer is si
 
 **Invariants:**
 - `name[letter_count]` is always `'\x00'` — enforced after every write and after backspace.
-- `letter_count` never exceeds `getCurrentMaxInput()`: 9 normally, 35 while `boss != null`. The character-append branch checks `letter_count < getCurrentMaxInput()` before writing.
-- Only characters in the range `[32, 125]` (printable ASCII) are accepted.
+- `letter_count` never exceeds `getCurrentMaxInput()`: 20 normally, 35 while `boss != null`. The 20-character limit accommodates compound names (e.g. `"Jean-Christophe"`, 15 chars). The character-append branch checks `letter_count < getCurrentMaxInput()` before writing.
+- Only characters in the range `[32, 125]` (printable ASCII) are accepted; this range includes the hyphen (ASCII 45) required for compound names.
 - On regular zombie kill: `letter_count = 0`, `name[0] = '\x00'`.
 - On boss kill: `letter_count = 0`, `name[0] = '\x00'` (cleared by `updateBoss`).
 - On game restart: `letter_count = 0`, `name[0] = '\x00'`.
@@ -269,6 +324,9 @@ These variables collectively represent the running state of the game session.
 | `total_kills` | `u32` | `0` | `0` | Session-wide count of all enemies destroyed (regular zombies and boss). Incremented in `updateZombies` and `updateBoss` on each successful kill. Displayed on the stats screen as "Kills". Reset to 0 by `resetSessionState` on restart. |
 | `best_score` | `HighScoreRecord` | zeroed | preserved | Best session record loaded at startup. Updated in memory (and persisted to `highscore.dat` / localStorage) at the `is_dying → is_game_over` transition if the current session score exceeds `best_score.score`. Not reset on restart — survives across sessions in memory for the lifetime of the process. |
 | `is_new_high_score` | `bool` | `false` | `false` | Set to `true` at the `is_dying → is_game_over` transition when `score > best_score.score`. Controls whether the stats screen shows "NEW HIGH SCORE!" (gold) or "Best: N" (dark gray). Reset to `false` by `resetSessionState` on restart. |
+| `trap_cluster_group` | `?usize` | `null` | `null` | Index into `TrapGroups` of the currently active trap cluster, or `null` when no cluster is in progress. Set when a trap-list name is spawned; cleared when `trap_cluster_remaining` reaches 0. Reset by `resetZombies` and on restart. |
+| `trap_cluster_remaining` | `u8` | `0` | `0` | Number of additional trap-cluster spawns still pending. When >0, `spawnZombie` passes the forced group index to `selectName`. Decremented on each spawn; reset when it reaches 0. |
+| `prng` | `std.Random.DefaultPrng` | seeded at startup | seeded at startup | Module-level PRNG seeded via `std.c.clock_gettime(.REALTIME, …)` at startup. Used by `selectZombieType` and `name_lists.selectName` for type/name selection. Not reset between waves or restarts. |
 | `popup_next` | `usize` | `0` | `0` | Circular write index for the `popups` pool. Advances by 1 modulo `MAX_POPUPS` on each `spawnPopup` call. Reset to 0 by `resetScoreState` on restart. |
 | `wpm_buffer` | `[512]f32` | `[_]f32{0} ** 512` | all-zero | Circular buffer of `elapsed_time` timestamps recording when each correct character was typed. Managed by `wpm_buffer_head` and `wpm_buffer_count`. Reset to all-zero by `resetMetricsState`. |
 | `wpm_buffer_head` | `usize` | `0` | `0` | Write cursor into `wpm_buffer`; advances modulo `WPM_BUFFER_SIZE` on each `recordCorrectTimestamp` call. Reset to 0 by `resetMetricsState`. |
@@ -432,14 +490,43 @@ Key: `"death-note.highscore"`. Value: a JSON object `{"score":N,"wave":N,"wpm":N
 
 ## 4. Enums and Constants
 
-There are no enums in this project. All constants are compile-time `const` values declared at module scope in `src/main.zig`.
+### Enums
+
+#### ZombieType (`src/main.zig`)
+
+```zig
+pub const ZombieType = enum { standard, runner, tank };
+```
+
+| Value | Speed multiplier | Color tint | Name length rule |
+|---|---|---|---|
+| `.standard` | 1.0× base `fall_speed` | WHITE (no tint) | Any length |
+| `.runner` | 1.8× base `fall_speed` | GREEN | ≤ 5 characters preferred |
+| `.tank` | 0.5× base `fall_speed` | BLUE | ≥ 8 characters preferred |
+
+#### NameCategory (`src/name_lists.zig`)
+
+```zig
+pub const NameCategory = enum { primary, compound, trap };
+```
+
+Identifies which name list a spawned name was drawn from, used by `spawnZombie` to update trap cluster state.
+
+---
+
+All other constants are compile-time `const` values declared at module scope in `src/main.zig`.
 
 ### Gameplay Constants
 
 | Constant | Value | Type | Purpose |
 |---|---|---|---|
 | `MAX_ZOMBIES` | `100` | `comptime_int` | Size of the `zombies` fixed pool array; also the maximum number of simultaneously live zombies |
-| `MAX_INPUT_CHARS` | `9` | `comptime_int` | Default maximum characters the player can type during normal play |
+| `MAX_INPUT_CHARS` | `20` | `comptime_int` | Maximum characters the player can type during normal play; raised from 9 to accommodate compound names up to 20 characters |
+| `RUNNER_SPEED_MULTIPLIER` | `1.8` | `f32` | Speed multiplier for Runner zombie type; applied to `fall_speed` at spawn |
+| `TANK_SPEED_MULTIPLIER` | `0.5` | `f32` | Speed multiplier for Tank zombie type; applied to `fall_speed` at spawn |
+| `RUNNER_MAX_NAME_LEN` | `5` | `usize` | Maximum name length (inclusive) preferred for Runner zombies; `selectName` filters by this threshold |
+| `TANK_MIN_NAME_LEN` | `8` | `usize` | Minimum name length (inclusive) preferred for Tank zombies; `selectName` filters by this threshold |
+| `MAX_SPAWN_RETRIES` | `10` | `u32` | Maximum number of name re-rolls in the anti-doublon loop; spawn deferred if all retries collide |
 | `MAX_BOSS_INPUT_CHARS` | `35` | `comptime_int` | Maximum characters accepted while a boss is active; accommodates the longest boss phrase; the `name` buffer is `MAX_BOSS_INPUT_CHARS + 1` bytes |
 | `BOSS_SCALE` | `0.4` | `f32` | Render scale for the boss sprite (double the normal zombie scale of 0.2) |
 | `BOSS_SPEED_MULTIPLIER` | `0.5` | `f32` | Boss fall speed as a fraction of the wave's normal `fall_speed` |
@@ -579,17 +666,19 @@ The following invariants are enforced in code. They are not checked by a schema 
 - `typed_name` is `name[0..letter_count]` — excludes the null terminator.
 - `zomb_name_slice` length is computed by scanning `zomb.name` byte-by-byte until `'\x00'` is reached; the resulting slice also excludes the terminator.
 - Match is case-sensitive; no normalization is applied.
+- Hyphens are valid input characters (codepoint 45 falls within the accepted `[32, 125]` range) and are matched byte-for-byte in compound names such as `"Jean-Pierre"`.
 
 ### Zombie Pool
 
-- `spawnZombie` scans `zombies[]` from index 0 for the first `null` slot. If no null slot is found (pool full with 100 active or deactivated-but-not-freed zombies), the function returns without spawning and without reporting an error.
-- Slot reuse is blocked by killed (deactivated) zombies until `resetZombies` is called — this is a known characteristic of the current implementation, not a defect being proposed for fixing here.
+- `spawnZombie` scans `zombies[]` from index 0 for the first `null` slot. If no null slot is found, the function returns `false` (no spawn this cycle).
+- Killed zombies free their slot immediately (`allocator.destroy` + `slot = null`), so the pool refills naturally without waiting for restart.
 - `errdefer allocator.destroy(new_zombie)` is in place in `spawnZombie` to prevent a leak if `Zombie` initialization were to fail after allocation.
+- Name selection enforces anti-doublon: `selectName` receives the slice of all currently active zombie names and retries up to `MAX_SPAWN_RETRIES` (10) times to avoid duplicates. If all retries fail, `spawnZombie` returns `false` and the spawn is deferred to the next timer tick.
 
 ### Memory Lifecycle
 
-- **Leak on kill (known behavior).** When a zombie is killed (`is_active = false`), its `*Zombie` heap allocation is intentionally left live until game-over restart. The slot in `zombies[]` remains non-null, preventing that slot from being reused for a new spawn.
-- **Full reclaim on restart.** `resetZombies` iterates every slot, calls `allocator.destroy(z)` for every non-null pointer, and sets the slot to `null`. After `resetZombies` returns, all 100 slots are `null` and no `Zombie` heap memory is outstanding.
+- **Freed on kill.** When a zombie is killed, `updateZombies` calls `allocator.destroy(zomb)` and sets `zombies[i] = null` immediately. The slot is available for a new spawn in the same wave without requiring a restart.
+- **Full reclaim on wave transition and restart.** `resetZombies` iterates every slot, calls `allocator.destroy(z)` for every non-null pointer (covering zombies still falling at wave end), and sets the slot to `null`. After `resetZombies` returns, all 100 slots are `null` and no `Zombie` heap memory is outstanding.
 
 ### Boss Memory Lifecycle
 

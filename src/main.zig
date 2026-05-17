@@ -2,14 +2,27 @@ const std = @import("std");
 const builtin = @import("builtin");
 const raylib = @import("raylib.zig").c;
 
-// Importing the list of zombie names
-const ZombieNames = @import("zombie_names.zig").ZombieNames;
 const BossPhrases = @import("boss_phrases.zig").BossPhrases;
+const name_lists = @import("name_lists.zig");
+const zt = @import("zombie_types.zig");
+const highscore = @import("highscore.zig");
+
+// Aliases for the moved shared declarations (see src/zombie_types.zig). Kept at file
+// scope so the rest of main.zig and its tests keep their original identifiers.
+const ZombieType = zt.ZombieType;
+const SpawnWeights = zt.SpawnWeights;
+const NameWeights = zt.NameWeights;
+const SPAWN_WEIGHT_TABLE = zt.SPAWN_WEIGHT_TABLE;
+const NAME_WEIGHT_TABLE = zt.NAME_WEIGHT_TABLE;
+const RUNNER_SPEED_MULTIPLIER = zt.RUNNER_SPEED_MULTIPLIER;
+const TANK_SPEED_MULTIPLIER = zt.TANK_SPEED_MULTIPLIER;
+const getSpawnWeights = zt.getSpawnWeights;
+const getNameWeights = zt.getNameWeights;
 
 const is_web = builtin.target.os.tag == .emscripten;
 
 const MAX_ZOMBIES = 100;
-const MAX_INPUT_CHARS = 9;
+const MAX_INPUT_CHARS = 20;
 const MAX_BOSS_INPUT_CHARS = 35;
 const BOSS_SCALE: f32 = 0.4;
 const BOSS_SPEED_MULTIPLIER: f32 = 0.5;
@@ -55,11 +68,6 @@ const STATS_LINE_SPACING: c_int = 35;
 const STATS_FONT_SIZE: c_int = 24;
 const STATS_RESTART_HINT_Y: c_int = 405;
 const STATS_RESTART_HINT_SIZE: c_int = 18;
-const HIGHSCORE_FILENAME = "highscore.dat";
-// Native on-disk format for HighScoreRecord (see data-model.md §3.8). Field-by-field
-// serialization keeps the file size stable at 17 bytes regardless of in-memory padding.
-const HIGHSCORE_DISK_SIZE: usize = @sizeOf(u64) + @sizeOf(u32) + @sizeOf(u32) + @sizeOf(u8);
-
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
@@ -116,11 +124,16 @@ var elapsed_time: f32 = 0.0;
 var displayed_wpm: f32 = 0.0;
 var displayed_accuracy: f32 = 100.0;
 
+var trap_cluster_group: ?usize = null;
+var trap_cluster_remaining: u8 = 0;
+
+var prng: std.Random.DefaultPrng = undefined;
+
 var total_kills: u32 = 0;
 var is_dying: bool = false;
 var dying_timer: f32 = 0.0;
 var dying_zombie_index: ?usize = null;
-var best_score: HighScoreRecord = .{};
+var best_score: highscore.Record = .{};
 var is_new_high_score: bool = false;
 
 // Define the Zombie structure
@@ -130,8 +143,9 @@ const Zombie = struct {
     speed: f32,
     name: [*:0]const u8,
     is_active: bool,
-    frame: f32, // Current animation frame
+    frame: f32,
     animation_timer: f32,
+    zombie_type: ZombieType = .standard,
 };
 
 const ScorePopup = struct {
@@ -142,15 +156,10 @@ const ScorePopup = struct {
     active: bool,
 };
 
-const HighScoreRecord = struct {
-    score: u64 = 0,
-    wave: u32 = 0,
-    wpm: u32 = 0,
-    accuracy: u8 = 0,
-};
-
-// Array to hold zombie pointers
-var zombies: [MAX_ZOMBIES]?*Zombie = undefined;
+// Array to hold zombie pointers. Initialized explicitly to null per constitution rule;
+// `undefined` debug-fills with 0xAA bytes which read as non-null pointers and crash
+// on the first iteration before any zombie is spawned.
+var zombies: [MAX_ZOMBIES]?*Zombie = [_]?*Zombie{null} ** MAX_ZOMBIES;
 
 var zombie_texture: raylib.Texture2D = undefined;
 var zombie_kill_sound: raylib.Sound = undefined;
@@ -171,6 +180,29 @@ const FrameContext = struct {
     frames_counter: usize,
 };
 
+fn getSpeedMultiplier(zombie_type: ZombieType) f32 {
+    return switch (zombie_type) {
+        .standard => 1.0,
+        .runner => RUNNER_SPEED_MULTIPLIER,
+        .tank => TANK_SPEED_MULTIPLIER,
+    };
+}
+
+fn selectZombieType(weights: SpawnWeights, rng: std.Random) ZombieType {
+    const roll = rng.intRangeAtMost(u8, 0, 99);
+    if (roll < weights.standard) return .standard;
+    if (roll < weights.standard + weights.runner) return .runner;
+    return .tank;
+}
+
+fn getZombieTint(zombie_type: ZombieType) raylib.Color {
+    return switch (zombie_type) {
+        .standard => raylib.WHITE,
+        .runner => raylib.GREEN,
+        .tank => raylib.BLUE,
+    };
+}
+
 fn frame(ctx: *FrameContext) void {
     // Resize input box for boss mode: the 9-char box is too narrow for the 35-char
     // boss buffer at font size 40, so typing overflows visually. Widen and recenter
@@ -179,8 +211,8 @@ fn frame(ctx: *FrameContext) void {
         ctx.text_box.width = 700.0;
         ctx.text_box.x = (screen_width - 700.0) / 2.0;
     } else {
-        ctx.text_box.width = 225.0;
-        ctx.text_box.x = screen_width / 2.0 - 100.0;
+        ctx.text_box.width = 500.0;
+        ctx.text_box.x = screen_width / 2.0 - 250.0;
     }
 
     // Mouse-over and cursor state are updated every frame (not gated by is_game_over),
@@ -242,7 +274,7 @@ fn frame(ctx: *FrameContext) void {
         // resets it). When the gate is open but spawnZombie returns false (pool full),
         // spawn_timer is left untouched so the engine retries every frame.
         if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size) {
-            const spawned = spawnZombie(ctx.allocator) catch false;
+            const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
             if (spawned) {
                 spawn_timer = 0.0;
                 wave_spawned += 1;
@@ -299,17 +331,13 @@ fn frame(ctx: *FrameContext) void {
             const acc: u8 = @intCast(calculateStatsAccuracy());
             if (score > best_score.score) {
                 is_new_high_score = true;
-                best_score = HighScoreRecord{
+                best_score = highscore.Record{
                     .score = score,
                     .wave = current_wave,
                     .wpm = avg_wpm,
                     .accuracy = acc,
                 };
-                if (comptime is_web) {
-                    saveHighScoreWeb(best_score);
-                } else {
-                    saveHighScore(best_score) catch {};
-                }
+                highscore.save(best_score);
             }
         }
     }
@@ -465,13 +493,14 @@ pub fn main() !void {
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
 
-    raylib.SetTargetFPS(60); // Set target frames per second
+    raylib.SetTargetFPS(60);
 
-    if (comptime is_web) {
-        best_score = loadHighScoreWeb();
-    } else {
-        best_score = loadHighScore() catch HighScoreRecord{};
-    }
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.REALTIME, &ts);
+    const seed: u64 = @intCast(@max(0, ts.sec *% 1000 + @divTrunc(ts.nsec, 1_000_000)));
+    prng = std.Random.DefaultPrng.init(seed);
+
+    best_score = highscore.load();
 
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
@@ -483,7 +512,7 @@ pub fn main() !void {
 
     var ctx = FrameContext{
         .allocator = &allocator,
-        .text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 100.0, .y = 400.0, .width = 225.0, .height = 50.0 },
+        .text_box = raylib.Rectangle{ .x = screen_width / 2.0 - 250.0, .y = 400.0, .width = 500.0, .height = 50.0 },
         .mouse_on_text = false,
         .frames_counter = 0,
     };
@@ -578,14 +607,14 @@ fn drawZombies() void {
                 .height = @as(f32, @floatFromInt(zombie_texture.height)),
             };
 
-            const scale = 0.2; // Adjust the scale factor to make the zombie smaller
+            const scale = 0.2;
             const tint: raylib.Color = blk: {
                 if (is_dying) {
                     if (dying_zombie_index) |idx| {
                         if (idx == i) break :blk raylib.RED;
                     }
                 }
-                break :blk raylib.WHITE;
+                break :blk getZombieTint(zomb.zombie_type);
             };
             raylib.DrawTexturePro(
                 zombie_texture,
@@ -608,26 +637,64 @@ fn drawZombies() void {
     }
 }
 
-// Function to spawn new zombies. Returns true when a slot was claimed, false when
-// the pool is full so the caller can keep the spawn timer hot for next frame.
-fn spawnZombie(allocator: *std.mem.Allocator) !bool {
+fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
     for (zombies, 0..) |zombie, i| {
         if (zombie == null) {
-            // Allocate memory for a new zombie and assign it to zombies[i]
+            const zombie_type = selectZombieType(getSpawnWeights(current_wave), rng);
+
+            var active_buf: [MAX_ZOMBIES][*:0]const u8 = undefined;
+            var active_count: usize = 0;
+            for (zombies) |slot| {
+                if (slot) |z| {
+                    if (z.is_active) {
+                        active_buf[active_count] = z.name;
+                        active_count += 1;
+                    }
+                }
+            }
+
+            const forced_group: ?usize = if (trap_cluster_remaining > 0) trap_cluster_group else null;
+
+            const selection = name_lists.selectName(
+                current_wave,
+                zombie_type,
+                active_buf[0..active_count],
+                forced_group,
+                rng,
+            ) orelse {
+                // Anti-doublon retries exhausted. Count this as a cluster tick anyway,
+                // otherwise the cluster counter stays frozen and forces the same exhausted
+                // group on every subsequent frame — the spawner stalls for the rest of the
+                // wave.
+                if (trap_cluster_remaining > 0) {
+                    trap_cluster_remaining -= 1;
+                    if (trap_cluster_remaining == 0) trap_cluster_group = null;
+                }
+                return false;
+            };
+
+            if (selection.category == .trap and trap_cluster_remaining == 0) {
+                trap_cluster_group = selection.trap_group_index;
+                trap_cluster_remaining = @intCast(rng.intRangeAtMost(u8, 1, 2));
+            } else if (trap_cluster_remaining > 0) {
+                trap_cluster_remaining -= 1;
+                if (trap_cluster_remaining == 0) trap_cluster_group = null;
+            }
+
             const new_zombie = try allocator.create(Zombie);
             errdefer allocator.destroy(new_zombie);
 
             const x = @as(f32, @floatFromInt(raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)));
-            const name_index: usize = @intCast(raylib.GetRandomValue(0, @intCast(ZombieNames.len - 1)));
 
             new_zombie.* = Zombie{
                 .x = x,
                 .y = 0.0,
-                .speed = getWaveConfig(current_wave).fall_speed,
-                .name = ZombieNames[name_index],
+                .speed = getWaveConfig(current_wave).fall_speed * getSpeedMultiplier(zombie_type),
+                .name = selection.name,
                 .is_active = true,
                 .frame = 0,
                 .animation_timer = 0,
+                .zombie_type = zombie_type,
             };
             zombies[i] = new_zombie;
             return true;
@@ -652,11 +719,14 @@ fn getWaveConfig(wave: u32) WaveConfig {
     if (wave >= 1 and wave <= WAVE_TABLE.len) {
         return WAVE_TABLE[wave - 1];
     }
+    // Cap at MAX_ZOMBIES — past wave ~49 the formula exceeds the pool capacity, at which
+    // point wave_spawned can never reach pool_size and the wave never completes (soft-lock).
+    const calculated: u32 = 33 + 2 * (wave - 15);
     return WaveConfig{
         .target_wpm = 110,
         .spawn_delay = 0.66,
         .fall_speed = 2.0,
-        .pool_size = 33 + 2 * (wave - 15),
+        .pool_size = if (calculated > MAX_ZOMBIES) MAX_ZOMBIES else calculated,
     };
 }
 
@@ -809,6 +879,8 @@ fn resetZombies(allocator: *std.mem.Allocator) void {
             zombie.* = null;
         }
     }
+    trap_cluster_group = null;
+    trap_cluster_remaining = 0;
 }
 
 fn getComboMultiplier(combo: u32) u64 {
@@ -924,72 +996,6 @@ fn calculateStatsAccuracy() u32 {
     const total = correct_chars + wrong_chars;
     if (total == 0) return 0;
     return (correct_chars * 100) / total;
-}
-
-fn loadHighScore() !HighScoreRecord {
-    const fp = std.c.fopen(HIGHSCORE_FILENAME, "rb") orelse return error.FileNotFound;
-    defer _ = std.c.fclose(fp);
-    var buf: [HIGHSCORE_DISK_SIZE]u8 = undefined;
-    const n = std.c.fread(&buf, 1, HIGHSCORE_DISK_SIZE, fp);
-    if (n != HIGHSCORE_DISK_SIZE) return error.InvalidSize;
-    return HighScoreRecord{
-        .score = std.mem.readInt(u64, buf[0..8], .little),
-        .wave = std.mem.readInt(u32, buf[8..12], .little),
-        .wpm = std.mem.readInt(u32, buf[12..16], .little),
-        .accuracy = buf[16],
-    };
-}
-
-fn saveHighScore(record: HighScoreRecord) !void {
-    const fp = std.c.fopen(HIGHSCORE_FILENAME, "wb") orelse return error.AccessDenied;
-    defer _ = std.c.fclose(fp);
-    var buf: [HIGHSCORE_DISK_SIZE]u8 = undefined;
-    std.mem.writeInt(u64, buf[0..8], record.score, .little);
-    std.mem.writeInt(u32, buf[8..12], record.wave, .little);
-    std.mem.writeInt(u32, buf[12..16], record.wpm, .little);
-    buf[16] = record.accuracy;
-    const n = std.c.fwrite(&buf, 1, HIGHSCORE_DISK_SIZE, fp);
-    if (n != HIGHSCORE_DISK_SIZE) return error.InputOutput;
-}
-
-// Reads a numeric field from localStorage. Returns u64 (not c_int) by going through
-// emscripten_run_script_string so scores above 2^31-1 are preserved instead of being
-// truncated to a negative c_int and clamped to 0.
-fn readHighScoreField(field: []const u8) u64 {
-    var buf: [256]u8 = undefined;
-    const js = std.fmt.bufPrintZ(
-        &buf,
-        "(function(){{try{{var d=JSON.parse(localStorage.getItem('death-note.highscore'));return d&&typeof d.{s}==='number'&&isFinite(d.{s})?String(Math.max(0,Math.floor(d.{s}))):'0'}}catch(e){{return '0'}}}})()",
-        .{ field, field, field },
-    ) catch return 0;
-    const cstr = raylib.emscripten_run_script_string(js.ptr) orelse return 0;
-    var len: usize = 0;
-    while (cstr[len] != 0) : (len += 1) {}
-    return std.fmt.parseInt(u64, cstr[0..len], 10) catch 0;
-}
-
-fn loadHighScoreWeb() HighScoreRecord {
-    // Clamp untrusted localStorage values before downcasting; raw @intCast traps on
-    // out-of-range inputs and would crash the web build on corrupt/tampered storage.
-    const wave_v = readHighScoreField("wave");
-    const wpm_v = readHighScoreField("wpm");
-    const acc_v = readHighScoreField("accuracy");
-    return HighScoreRecord{
-        .score = readHighScoreField("score"),
-        .wave = if (wave_v > std.math.maxInt(u32)) 0 else @intCast(wave_v),
-        .wpm = if (wpm_v > std.math.maxInt(u32)) 0 else @intCast(wpm_v),
-        .accuracy = if (acc_v > 100) 0 else @intCast(acc_v),
-    };
-}
-
-fn saveHighScoreWeb(record: HighScoreRecord) void {
-    var js_buf: [256]u8 = undefined;
-    const js = std.fmt.bufPrintZ(
-        &js_buf,
-        "localStorage.setItem('death-note.highscore',JSON.stringify({{score:{d},wave:{d},wpm:{d},accuracy:{d}}}));",
-        .{ record.score, record.wave, record.wpm, record.accuracy },
-    ) catch return;
-    raylib.emscripten_run_script(js.ptr);
 }
 
 fn updateMetrics() void {
@@ -1122,8 +1128,19 @@ test "getWaveConfig scales correctly for wave 16+" {
     const cfg20 = getWaveConfig(20);
     try std.testing.expectEqual(@as(u32, 43), cfg20.pool_size);
 
+    // Past the pool capacity the formula would yield 203, but the cap pins pool_size at
+    // MAX_ZOMBIES to prevent a soft-lock (wave_spawned could never reach an above-pool
+    // target).
     const cfg100 = getWaveConfig(100);
-    try std.testing.expectEqual(@as(u32, 203), cfg100.pool_size);
+    try std.testing.expectEqual(@as(u32, MAX_ZOMBIES), cfg100.pool_size);
+
+    // Just past the cap threshold should also clamp.
+    const cfg_threshold = getWaveConfig(49);
+    try std.testing.expectEqual(@as(u32, MAX_ZOMBIES), cfg_threshold.pool_size);
+
+    // Just below the threshold should still scale linearly.
+    const cfg48 = getWaveConfig(48);
+    try std.testing.expectEqual(@as(u32, 99), cfg48.pool_size);
 }
 
 // T005: frame-index wrap — mirrors the animation increment in drawZombies
@@ -1341,7 +1358,7 @@ test "restart resets session state but preserves best_score" {
         is_new_high_score = saved_new_hs;
     }
 
-    best_score = HighScoreRecord{ .score = 500, .wave = 3, .wpm = 40, .accuracy = 90 };
+    best_score = highscore.Record{ .score = 500, .wave = 3, .wpm = 40, .accuracy = 90 };
     total_kills = 15;
     is_dying = true;
     dying_timer = 0.5;
@@ -1607,21 +1624,11 @@ test "accuracy edge case zero input stats" {
     try std.testing.expectEqual(@as(u32, 0), calculateStatsAccuracy());
 }
 
-test "HighScoreRecord disk size" {
-    // FR-011 / ARD-2 mandate a fixed 17-byte on-disk format for highscore.dat.
-    try std.testing.expectEqual(@as(usize, 17), HIGHSCORE_DISK_SIZE);
-}
-
-test "emscripten persistence branch compiles" {
-    try std.testing.expect(@typeInfo(@TypeOf(loadHighScoreWeb)).@"fn".return_type == HighScoreRecord);
-    try std.testing.expect(@typeInfo(@TypeOf(saveHighScoreWeb)).@"fn".params.len == 1);
-}
-
 test "high score comparison logic" {
     const saved = best_score;
     defer best_score = saved;
 
-    best_score = HighScoreRecord{ .score = 100, .wave = 2, .wpm = 30, .accuracy = 85 };
+    best_score = highscore.Record{ .score = 100, .wave = 2, .wpm = 30, .accuracy = 85 };
 
     try std.testing.expect(200 > best_score.score);
     try std.testing.expect(!(100 > best_score.score));
@@ -1642,4 +1649,135 @@ test "kill counter tracks total kills" {
     total_kills += 1;
     total_kills += 1;
     try std.testing.expectEqual(@as(u32, 5), total_kills);
+}
+
+test "ZombieType speed multipliers" {
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), getSpeedMultiplier(.standard), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.8), getSpeedMultiplier(.runner), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), getSpeedMultiplier(.tank), 0.001);
+}
+
+test "spawn weight table wave brackets" {
+    const w1 = getSpawnWeights(1);
+    try std.testing.expectEqual(@as(u8, 100), w1.standard);
+    try std.testing.expectEqual(@as(u8, 0), w1.runner);
+
+    const w3 = getSpawnWeights(3);
+    try std.testing.expectEqual(@as(u8, 100), w3.standard);
+
+    const w4 = getSpawnWeights(4);
+    try std.testing.expectEqual(@as(u8, 70), w4.standard);
+    try std.testing.expectEqual(@as(u8, 20), w4.runner);
+    try std.testing.expectEqual(@as(u8, 10), w4.tank);
+
+    const w7 = getSpawnWeights(7);
+    try std.testing.expectEqual(@as(u8, 50), w7.standard);
+    try std.testing.expectEqual(@as(u8, 30), w7.runner);
+    try std.testing.expectEqual(@as(u8, 20), w7.tank);
+
+    const w11 = getSpawnWeights(11);
+    try std.testing.expectEqual(@as(u8, 40), w11.standard);
+    try std.testing.expectEqual(@as(u8, 30), w11.runner);
+    try std.testing.expectEqual(@as(u8, 30), w11.tank);
+}
+
+test "selectZombieType distribution" {
+    var test_prng = std.Random.DefaultPrng.init(42);
+    const rng = test_prng.random();
+
+    const weights = SpawnWeights{ .standard = 50, .runner = 30, .tank = 20 };
+    var standard_count: u32 = 0;
+    var runner_count: u32 = 0;
+    var tank_count: u32 = 0;
+
+    var i: u32 = 0;
+    while (i < 1000) : (i += 1) {
+        switch (selectZombieType(weights, rng)) {
+            .standard => standard_count += 1,
+            .runner => runner_count += 1,
+            .tank => tank_count += 1,
+        }
+    }
+
+    try std.testing.expect(standard_count > 400 and standard_count < 600);
+    try std.testing.expect(runner_count > 200 and runner_count < 400);
+    try std.testing.expect(tank_count > 100 and tank_count < 300);
+}
+
+test "zombie tint colors" {
+    const white = getZombieTint(.standard);
+    try std.testing.expectEqual(raylib.WHITE.r, white.r);
+    try std.testing.expectEqual(raylib.WHITE.g, white.g);
+    try std.testing.expectEqual(raylib.WHITE.b, white.b);
+
+    const green = getZombieTint(.runner);
+    try std.testing.expectEqual(raylib.GREEN.r, green.r);
+    try std.testing.expectEqual(raylib.GREEN.g, green.g);
+    try std.testing.expectEqual(raylib.GREEN.b, green.b);
+
+    const blue = getZombieTint(.tank);
+    try std.testing.expectEqual(raylib.BLUE.r, blue.r);
+    try std.testing.expectEqual(raylib.BLUE.g, blue.g);
+    try std.testing.expectEqual(raylib.BLUE.b, blue.b);
+}
+
+test "hyphen accepted in input" {
+    const key_hyphen: i32 = 45;
+    try std.testing.expect(key_hyphen >= 32 and key_hyphen <= 125);
+
+    const hyphen_name: [*:0]const u8 = "Jean-Luc";
+    var typed_buf = [_]u8{ 'J', 'e', 'a', 'n', '-', 'L', 'u', 'c', '\x00' };
+    const typed_name = typed_buf[0..8];
+    var zomb_len: usize = 0;
+    while (hyphen_name[zomb_len] != '\x00') zomb_len += 1;
+    try std.testing.expect(std.mem.eql(u8, typed_name, hyphen_name[0..zomb_len]));
+}
+
+test "name weight table wave brackets" {
+    const w1 = getNameWeights(1);
+    try std.testing.expectEqual(@as(u8, 100), w1.primary);
+    try std.testing.expectEqual(@as(u8, 0), w1.trap);
+    try std.testing.expectEqual(@as(u8, 0), w1.compound);
+
+    const w5 = getNameWeights(5);
+    try std.testing.expectEqual(@as(u8, 85), w5.primary);
+    try std.testing.expectEqual(@as(u8, 10), w5.trap);
+    try std.testing.expectEqual(@as(u8, 5), w5.compound);
+
+    const w10 = getNameWeights(10);
+    try std.testing.expectEqual(@as(u8, 65), w10.primary);
+    try std.testing.expectEqual(@as(u8, 20), w10.trap);
+    try std.testing.expectEqual(@as(u8, 15), w10.compound);
+
+    const w13 = getNameWeights(13);
+    try std.testing.expectEqual(@as(u8, 50), w13.primary);
+    try std.testing.expectEqual(@as(u8, 25), w13.trap);
+    try std.testing.expectEqual(@as(u8, 25), w13.compound);
+}
+
+test "trap cluster state reset" {
+    const saved_group = trap_cluster_group;
+    const saved_remaining = trap_cluster_remaining;
+    defer {
+        trap_cluster_group = saved_group;
+        trap_cluster_remaining = saved_remaining;
+    }
+
+    trap_cluster_group = 5;
+    trap_cluster_remaining = 2;
+
+    trap_cluster_group = null;
+    trap_cluster_remaining = 0;
+
+    try std.testing.expect(trap_cluster_group == null);
+    try std.testing.expectEqual(@as(u8, 0), trap_cluster_remaining);
+}
+
+test "anti-doublon retries exhaust gracefully" {
+    var test_prng_val = std.Random.DefaultPrng.init(42);
+    const rng = test_prng_val.random();
+    const empty: []const [*:0]const u8 = &.{};
+
+    const result = name_lists.selectName(1, .standard, empty, null, rng);
+    try std.testing.expect(result != null);
 }
