@@ -12,6 +12,7 @@
   - [3.5 WaveConfig](#35-waveconfig)
   - [3.6 BossPhrases](#36-bossphrases)
   - [3.7 ScorePopup](#37-scorepopup)
+  - [3.8 HighScoreRecord](#38-highscorerecord)
 - [4. Enums and Constants](#4-enums-and-constants)
 - [5. State Machines](#5-state-machines)
   - [5.1 Game State Machine](#51-game-state-machine)
@@ -23,21 +24,20 @@
 
 ## 1. Data Layer Overview
 
-**There is no database, no ORM, no schema file, and no persistence layer of any kind.**
+**There is no database or ORM.** Most game state lives in module-level global variables in `src/main.zig` and does not survive process exit. One exception: the best score is persisted across sessions.
 
-All game state lives in module-level global variables declared at the top of `src/main.zig`. None of this state survives process exit; every session starts fresh.
-
-The three "data containers" in the project are:
+The data containers in the project are:
 
 | Container | Location | Nature |
 |---|---|---|
 | `zombies[MAX_ZOMBIES]` pool | `src/main.zig` (runtime) | Fixed array of heap-allocated `?*Zombie` pointers; mutable at runtime |
 | `boss` pointer | `src/main.zig` (runtime) | Single `?*Zombie` pointer for the active boss zombie; null when no boss is present |
 | `popups[MAX_POPUPS]` pool | `src/main.zig` (runtime) | Fixed stack-allocated array of 32 `ScorePopup` value-type entries; mutable at runtime |
+| `best_score` | `src/main.zig` (runtime) | `HighScoreRecord` struct loaded at startup; persisted when beaten |
 | `ZombieNames` | `src/zombie_names.zig` (compile-time) | Read-only, compile-time array of 49 null-terminated C string pointers |
 | `BossPhrases` | `src/boss_phrases.zig` (compile-time) | Read-only, compile-time array of 10 null-terminated multi-word phrase pointers |
 
-There are no files read or written during gameplay. Asset files (`assets/zombie-hit.wav`, `assets/z_spritesheet.png`) are loaded at startup by raylib and held in GPU/audio memory as opaque handles — they are not parsed into application data structures.
+**Persistence layer.** The high score is the sole persisted state. On native builds it is stored in `highscore.dat` (17-byte binary, little-endian) in the working directory, written via `std.c.fopen`/`fwrite`. On web (Emscripten) builds it is stored in `localStorage` under the key `death-note.highscore` as a JSON object, read/written via `emscripten_run_script_int` / `emscripten_run_script`. All other asset files (`assets/zombie-hit.wav`, `assets/z_spritesheet.png`) are loaded at startup by raylib and held in GPU/audio memory as opaque handles — they are not parsed into application data structures.
 
 ---
 
@@ -47,6 +47,9 @@ There are no files read or written during gameplay. Asset files (`assets/zombie-
 erDiagram
     GAME_STATE {
         bool is_game_over
+        bool is_dying
+        f32 dying_timer
+        usize dying_zombie_index
         f32 spawn_timer
         u32 current_wave
         u32 wave_kills
@@ -60,6 +63,8 @@ erDiagram
         usize boss_phrase_len
         u64 score
         u32 combo_count
+        u32 total_kills
+        bool is_new_high_score
         usize popup_next
         f32_array wpm_buffer
         usize wpm_buffer_head
@@ -69,6 +74,13 @@ erDiagram
         f32 elapsed_time
         f32 displayed_wpm
         f32 displayed_accuracy
+    }
+
+    HIGHSCORE_RECORD {
+        u64 score
+        u32 wave
+        u32 wpm
+        u8 accuracy
     }
 
     SCORE_POPUP {
@@ -125,6 +137,7 @@ erDiagram
     GAME_STATE ||--|| WAVE_CONFIG : "resolves per wave"
     GAME_STATE ||--o| ZOMBIE : "boss pointer (0 or 1)"
     GAME_STATE ||--|| POPUP_POOL : "governs lifecycle of"
+    GAME_STATE ||--|| HIGHSCORE_RECORD : "best_score (loaded at startup)"
     ZOMBIE_POOL ||--o{ ZOMBIE : "holds up to 100"
     ZOMBIE }o--|| ZOMBIE_NAMES : "name points into (regular)"
     ZOMBIE }o--o| BOSS_PHRASES : "name points into (boss)"
@@ -238,7 +251,10 @@ These variables collectively represent the running state of the game session.
 
 | Variable | Type | Initial value | Reset on restart | Meaning |
 |---|---|---|---|---|
-| `is_game_over` | `bool` | `false` | `false` | When `true`, the update phase is skipped and the game-over overlay is rendered. Set to `true` when any zombie's `y >= screen_height`. Reset on `KEY_ENTER` press. |
+| `is_game_over` | `bool` | `false` | `false` | When `true`, the update phase is skipped and the stats overlay is rendered. Set to `true` after the `is_dying` countdown expires. Reset on `KEY_ENTER` press. |
+| `is_dying` | `bool` | `false` | `false` | When `true`, all updates (movement, input, spawning) are paused for `DYING_DURATION` (1 s). Set by `updateZombies` / `updateBoss` when a zombie/boss crosses `screen_height`. Cleared when `dying_timer <= 0`. Reset by `resetSessionState` on restart. |
+| `dying_timer` | `f32` | `0.0` | `0.0` | Counts down from `DYING_DURATION` (1.0 s) while `is_dying` is true. When it reaches ≤ 0, `is_game_over` is set and the high score comparison runs. Reset by `resetSessionState` on restart. |
+| `dying_zombie_index` | `?usize` | `null` | `null` | Slot index in `zombies[]` of the regular zombie that triggered the dying state, used to draw a red tint during the pause. `null` when the boss triggered the dying state. Reset by `resetSessionState` on restart. |
 | `spawn_timer` | `f32` | `0.0` | `0.0` | Accumulated seconds since the last zombie spawn. Incremented each frame by `raylib.GetFrameTime()`. Reset when `spawnZombie` claims a slot, on wave advance, and on game restart. |
 | `current_wave` | `u32` | `1` | `1` | The currently active wave number. Incremented at the end of each wave transition. Reset to `1` on game restart. |
 | `wave_kills` | `u32` | `0` | `0` | Count of zombies killed by the player in the current wave. Incremented in `updateZombies` on each name match. Reset to `0` at wave advance and restart. |
@@ -250,6 +266,9 @@ These variables collectively represent the running state of the game session.
 | `boss_phrase_len` | `usize` | `0` | `0` | Length of the active boss phrase (number of characters before the null terminator), precomputed at spawn. Used by `updateBoss` and `drawBoss` to compute health bar fill and detect full-phrase match. |
 | `score` | `u64` | `0` | `0` | Accumulated points earned across all kills in the current game session. Incremented by `calculateScore` result on each kill. Reset to 0 by `resetScoreState` on game restart. |
 | `combo_count` | `u32` | `0` | `0` | Consecutive kill count without a mismatch. Determines the active combo multiplier tier (x1–x5 via `getComboMultiplier`). Reset to 0 on mismatch or wave transition; also reset by `resetScoreState` on restart. |
+| `total_kills` | `u32` | `0` | `0` | Session-wide count of all enemies destroyed (regular zombies and boss). Incremented in `updateZombies` and `updateBoss` on each successful kill. Displayed on the stats screen as "Kills". Reset to 0 by `resetSessionState` on restart. |
+| `best_score` | `HighScoreRecord` | zeroed | preserved | Best session record loaded at startup. Updated in memory (and persisted to `highscore.dat` / localStorage) at the `is_dying → is_game_over` transition if the current session score exceeds `best_score.score`. Not reset on restart — survives across sessions in memory for the lifetime of the process. |
+| `is_new_high_score` | `bool` | `false` | `false` | Set to `true` at the `is_dying → is_game_over` transition when `score > best_score.score`. Controls whether the stats screen shows "NEW HIGH SCORE!" (gold) or "Best: N" (dark gray). Reset to `false` by `resetSessionState` on restart. |
 | `popup_next` | `usize` | `0` | `0` | Circular write index for the `popups` pool. Advances by 1 modulo `MAX_POPUPS` on each `spawnPopup` call. Reset to 0 by `resetScoreState` on restart. |
 | `wpm_buffer` | `[512]f32` | `[_]f32{0} ** 512` | all-zero | Circular buffer of `elapsed_time` timestamps recording when each correct character was typed. Managed by `wpm_buffer_head` and `wpm_buffer_count`. Reset to all-zero by `resetMetricsState`. |
 | `wpm_buffer_head` | `usize` | `0` | `0` | Write cursor into `wpm_buffer`; advances modulo `WPM_BUFFER_SIZE` on each `recordCorrectTimestamp` call. Reset to 0 by `resetMetricsState`. |
@@ -365,6 +384,52 @@ const ScorePopup = struct {
 
 ---
 
+### 3.8 HighScoreRecord
+
+**Source:** `src/main.zig`
+
+**Definition:**
+
+```zig
+const HighScoreRecord = struct {
+    score: u64 = 0,
+    wave: u32 = 0,
+    wpm: u32 = 0,
+    accuracy: u8 = 0,
+};
+```
+
+**Runtime instance:** `var best_score: HighScoreRecord = .{}` — a single value-type struct at module scope. Loaded once at startup; updated in memory and conditionally written to the persistence store at the `is_dying → is_game_over` transition.
+
+| Field | Type | Meaning | Constraints |
+|---|---|---|---|
+| `score` | `u64` | Best session score ever achieved | 0 if no record exists |
+| `wave` | `u32` | Wave reached when the best score was set | 0 if no record exists |
+| `wpm` | `u32` | Average WPM of the session that set the best score | 0 if no record exists |
+| `accuracy` | `u8` | Accuracy percentage (0–100) of the session that set the best score | 0 if no record exists |
+
+**Native persistence (`highscore.dat`):**
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 8 bytes | `score` (u64, little-endian) |
+| 8 | 4 bytes | `wave` (u32, little-endian) |
+| 12 | 4 bytes | `wpm` (u32, little-endian) |
+| 16 | 1 byte | `accuracy` (u8) |
+
+Total: `HIGHSCORE_DISK_SIZE` = 17 bytes. The on-disk format is independent of the in-memory struct layout: load/save serialize each field via `std.mem.readInt`/`writeInt` through a fixed 17-byte buffer (the in-memory `HighScoreRecord` is a normal Zig struct, so its `@sizeOf` may differ from the on-disk size due to alignment padding). On load, the read length is compared to `HIGHSCORE_DISK_SIZE`; a mismatch treats the file as corrupt and defaults all fields to 0. Written via `std.c.fopen`/`std.c.fwrite`; read via `std.c.fopen`/`std.c.fread`.
+
+**Web persistence (`localStorage`):**
+
+Key: `"death-note.highscore"`. Value: a JSON object `{"score":N,"wave":N,"wpm":N,"accuracy":N}`. Per-field reads use `emscripten_run_script_int` with inline JavaScript. Writes use `emscripten_run_script` with `localStorage.setItem`. On parse failure or missing key, all fields default to 0.
+
+**Relationships:**
+- Read by `loadHighScore()` (native) or `loadHighScoreWeb()` (web) into `best_score` at startup.
+- Written by `saveHighScore(best_score)` (native) or `saveHighScoreWeb(best_score)` (web) when `score > best_score.score`.
+- `is_new_high_score` flag controls stats screen display and is set at the same transition.
+
+---
+
 ## 4. Enums and Constants
 
 There are no enums in this project. All constants are compile-time `const` values declared at module scope in `src/main.zig`.
@@ -408,6 +473,12 @@ There are no enums in this project. All constants are compile-time `const` value
 | `ACC_HUD_Y` | `30` | `c_int` | Y pixel position of the accuracy HUD label (below WPM) |
 | `METRICS_HUD_SIZE` | `18` | `c_int` | Font size for both WPM and accuracy HUD labels |
 | `SMOOTHING_FACTOR` | `0.2` | `f32` | Per-frame interpolation rate applied to both `displayed_wpm` and `displayed_accuracy`; at 60 FPS, display converges to within 1% of target in ~21 frames |
+| `DYING_DURATION` | `1.0` | `f32` | Seconds the dying state lasts before transitioning to game-over; during this time the responsible regular zombie is drawn with a red tint |
+| `STATS_TITLE_Y` | `30` | `c_int` | Y pixel position of the "GAME OVER" title on the stats overlay |
+| `STATS_LINE_START_Y` | `80` | `c_int` | Y pixel position of the first stat line on the stats overlay |
+| `STATS_LINE_SPACING` | `35` | `c_int` | Vertical pixel spacing between stat lines on the stats overlay |
+| `STATS_FONT_SIZE` | `24` | `c_int` | Font size for the six stat lines (wave, score, best/high score, WPM, accuracy, kills) |
+| `HIGHSCORE_FILENAME` | `"highscore.dat"` | string literal | Filename for native high score persistence; written to and read from the working directory |
 
 ### Raylib Constants in Use
 
@@ -443,15 +514,18 @@ stateDiagram-v2
 
     Transitioning --> Playing : transition_timer <= 0\n(current_wave += 1, wave counters reset,\nresetZombies called)
 
-    Playing --> GameOver : zombie.y >= screen_height\n(updateZombies sets is_game_over = true)
+    Playing --> Dying : zombie.y >= screen_height\nOR boss.y >= screen_height\n(is_dying = true, dying_timer = 1.0)
 
-    GameOver --> Playing : KEY_ENTER pressed\n(is_game_over = false, current_wave = 1,\nwave counters reset, resetZombies called)
+    Dying --> GameOver : dying_timer <= 0\n(is_game_over = true, high score compared\nand persisted if beaten)
+
+    GameOver --> Playing : KEY_ENTER pressed\n(is_game_over = false, current_wave = 1,\nwave counters reset, resetSessionState +\nresetScoreState + resetMetricsState called,\nbest_score preserved)
 ```
 
 **Notes:**
 - While in the `Playing` state the update phase runs every frame: input is captured, `spawn_timer` accumulates, `spawnZombie` fires up to `pool_size` times, and `updateZombies` runs.
+- While in the `Dying` state all updates are paused (gated by `!is_dying`); only `dying_timer` decrements and the responsible regular zombie (if any) is tinted red.
 - While in the `Transitioning` state the update phase is skipped (gated by `!is_transitioning`); only the transition countdown draw and the timer decrement run.
-- While in the `GameOver` state the update phase is entirely skipped (gated by `!is_game_over`); only the draw phase runs, showing the overlay.
+- While in the `GameOver` state the update phase is entirely skipped (gated by `!is_game_over`); only the draw phase runs, showing the 8-line stats overlay.
 - `resetZombies` frees all heap-allocated `Zombie` instances and sets every pool slot to `null` before re-entering `Playing`.
 
 ---

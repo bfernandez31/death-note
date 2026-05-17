@@ -58,15 +58,19 @@ There are no lint or type-check commands wired up separately — `zig build` com
 - `name: [MAX_INPUT_CHARS + 1]u8` — null-terminated input buffer, max 9 chars.
 - `zombies: [MAX_ZOMBIES]?*Zombie` — fixed pool; `MAX_ZOMBIES = 100`.
 - `spawn_timer` — seconds since last zombie spawn; compared against `getWaveConfig(current_wave).spawn_delay` each frame.
-- `is_game_over: bool` — controls update-phase skipping and restart prompt.
+- `is_dying: bool` / `dying_timer: f32` / `dying_zombie_index: ?usize` — 1-second pause state after a zombie crosses the bottom; the indexed zombie is tinted red.
+- `is_game_over: bool` — controls update-phase skipping and stats overlay display; set after `is_dying` timer expires.
 - `current_wave: u32` — active wave number; starts at 1, advances after each wave transition.
 - `wave_kills: u32` / `wave_spawned: u32` — per-wave counters; wave completes when both reach `pool_size`.
+- `total_kills: u32` — session-wide kill count (regular + boss); shown on stats screen; reset on restart.
 - `is_transitioning: bool` / `transition_timer: f32` — 3-second inter-wave countdown state.
+- `best_score: HighScoreRecord` — persisted best performance; loaded at startup, preserved across restarts.
+- `is_new_high_score: bool` — set when current session score exceeds `best_score.score`; controls "NEW HIGH SCORE!" display.
 - `zombie_texture: raylib.Texture2D`, `zombie_kill_sound: raylib.Sound` — loaded once, reused.
 
 ## Data Models
 
-No database or ORM. The two key data shapes in `src/main.zig` are:
+No database or ORM. The key data shapes in `src/main.zig` are:
 
 ```zig
 const Zombie = struct {
@@ -85,14 +89,23 @@ const WaveConfig = struct {
     fall_speed: f32,
     pool_size: u32,
 };
+
+const HighScoreRecord = struct {
+    score: u64 = 0,
+    wave: u32 = 0,
+    wpm: u32 = 0,
+    accuracy: u8 = 0,
+};
 ```
 
 `WaveConfig` values come from the compile-time `WAVE_TABLE` (waves 1–15) or a scaling formula (waves 16+) via `getWaveConfig(wave: u32)`. Names come from `ZombieNames` in `src/zombie_names.zig` — a compile-time `[_][*:0]const u8{ ... }` array of 49 short first names. `spawnZombie` picks an index at random; names are never copied, only referenced.
 
+`HighScoreRecord` is persisted as a 17-byte binary file (`highscore.dat`) on native builds using `std.c.fopen`/`fread`/`fwrite` (use `std.c` for file I/O — `std.fs` was removed in Zig 0.16). On web (Emscripten) builds it is stored in `localStorage` under `"death-note.highscore"` as JSON, accessed via `emscripten_run_script_int` / `emscripten_run_script`.
+
 ## Testing Patterns
 
 - Testing framework: Zig's built-in test runner (`zig build test`). A `test_step` is wired up in `build.zig` against `src/main.zig` as the root test file.
-- Seven `test { ... }` blocks exist in `src/main.zig`: name-match equality, input-buffer bounds, `getWaveConfig` correctness for waves 1/15/16+, wave completion logic, and animation-frame wrap-around.
+- Test blocks in `src/main.zig` cover: name-match equality, input-buffer bounds, `getWaveConfig` correctness for waves 1/15/16+, wave completion logic, animation-frame wrap-around, dying state transition, average WPM calculation, stats accuracy edge cases, `HighScoreRecord` struct size, and high score comparison logic.
 - When adding tests, write them as top-level `test "name" { ... }` blocks inside the module under test (Zig convention). Reachability from `src/main.zig` is required for the existing `test_step` to pick them up; other files only run when imported (transitively) from `src/main.zig`.
 - No end-to-end / GUI testing: the game is exercised manually via `zig build run`.
 
