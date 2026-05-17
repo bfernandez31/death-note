@@ -112,6 +112,7 @@ var is_dying: bool = false;
 var dying_timer: f32 = 0.0;
 var dying_zombie_index: ?usize = null;
 var best_score: HighScoreRecord = .{ .score = 0, .wave = 0, .wpm = 0, .accuracy = 0 };
+var is_new_high_score: bool = false;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -190,7 +191,7 @@ fn frame(ctx: *FrameContext) void {
         ctx.frames_counter = 0;
     }
 
-    if (!is_game_over and !is_transitioning) {
+    if (!is_game_over and !is_transitioning and !is_dying) {
         // Accept keystrokes regardless of mouse position so players can start typing
         // immediately on load (especially on web, where focus is on the canvas, not the
         // text box hit-test rectangle).
@@ -275,7 +276,26 @@ fn frame(ctx: *FrameContext) void {
         }
     }
 
-    if (!is_game_over) {
+    if (is_dying) {
+        dying_timer -= raylib.GetFrameTime();
+        if (dying_timer <= 0) {
+            is_game_over = true;
+            is_dying = false;
+            const avg_wpm = calculateAverageWpm();
+            const acc: u8 = @intCast(calculateStatsAccuracy());
+            if (score > best_score.score) {
+                is_new_high_score = true;
+                best_score = HighScoreRecord{
+                    .score = score,
+                    .wave = current_wave,
+                    .wpm = avg_wpm,
+                    .accuracy = acc,
+                };
+            }
+        }
+    }
+
+    if (!is_game_over and !is_dying) {
         updateMetrics();
     }
 
@@ -331,23 +351,47 @@ fn frame(ctx: *FrameContext) void {
     raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, raylib.MAROON);
 
     if (is_game_over) {
-        raylib.DrawText("GAME OVER", screen_width / 2 - 100, screen_height / 2 - 40, 40, raylib.RED);
+        drawCenteredText("GAME OVER", STATS_TITLE_Y, 48, raylib.RED);
+
+        var line_y: c_int = STATS_LINE_START_Y;
 
         var go_wave_buf: [32]u8 = undefined;
         const go_wave_text = std.fmt.bufPrintZ(&go_wave_buf, "Wave reached: {d}", .{current_wave}) catch "Wave reached: ?";
-        drawCenteredText(go_wave_text.ptr, screen_height / 2 + 5, 20, raylib.GRAY);
-
-        var go_wpm_buf: [32]u8 = undefined;
-        const go_wpm_text = std.fmt.bufPrintZ(&go_wpm_buf, "Required WPM: {d}", .{getWaveConfig(current_wave).target_wpm}) catch "Required WPM: ?";
-        drawCenteredText(go_wpm_text.ptr, screen_height / 2 + 30, 20, raylib.GRAY);
+        drawCenteredText(go_wave_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
+        line_y += STATS_LINE_SPACING;
 
         var go_score_buf: [32]u8 = undefined;
         const go_score_text = std.fmt.bufPrintZ(&go_score_buf, "Score: {d}", .{score}) catch "Score: ?";
-        drawCenteredText(go_score_text.ptr, screen_height / 2 + 55, 20, raylib.GRAY);
+        drawCenteredText(go_score_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
+        line_y += STATS_LINE_SPACING;
 
-        raylib.DrawText("Press ENTER to Restart", screen_width / 2 - 130, screen_height / 2 + 85, 20, raylib.GRAY);
+        if (is_new_high_score) {
+            drawCenteredText("NEW HIGH SCORE!", line_y, STATS_FONT_SIZE, raylib.GOLD);
+        } else {
+            var go_best_buf: [32]u8 = undefined;
+            const go_best_text = std.fmt.bufPrintZ(&go_best_buf, "Best: {d}", .{best_score.score}) catch "Best: ?";
+            drawCenteredText(go_best_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
+        }
+        line_y += STATS_LINE_SPACING;
 
-        // Restart game if Enter is pressed
+        const avg_wpm = calculateAverageWpm();
+        var go_wpm_buf: [32]u8 = undefined;
+        const go_wpm_text = std.fmt.bufPrintZ(&go_wpm_buf, "Average WPM: {d}", .{avg_wpm}) catch "Average WPM: ?";
+        drawCenteredText(go_wpm_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
+        line_y += STATS_LINE_SPACING;
+
+        const acc = calculateStatsAccuracy();
+        var go_acc_buf: [32]u8 = undefined;
+        const go_acc_text = std.fmt.bufPrintZ(&go_acc_buf, "Accuracy: {d}%", .{acc}) catch "Accuracy: ?";
+        drawCenteredText(go_acc_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
+        line_y += STATS_LINE_SPACING;
+
+        var go_kills_buf: [32]u8 = undefined;
+        const go_kills_text = std.fmt.bufPrintZ(&go_kills_buf, "Kills: {d}", .{total_kills}) catch "Kills: ?";
+        drawCenteredText(go_kills_text.ptr, line_y, STATS_FONT_SIZE, raylib.DARKGRAY);
+
+        drawCenteredText("Press ENTER to restart", 405, 18, raylib.GRAY);
+
         if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
             is_game_over = false;
             letter_count = 0;
@@ -461,13 +505,15 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
 
     // Free killed zombies and null their slots so spawnZombie can reuse them; otherwise
     // pool_size values above MAX_ZOMBIES (waves 49+) soft-lock once every slot is consumed.
-    for (&zombies) |*slot| {
+    for (&zombies, 0..) |*slot, i| {
         if (slot.*) |zomb| {
             if (!zomb.is_active) continue;
             zomb.y += zomb.speed;
 
             if (zomb.y >= screen_height) {
-                is_game_over = true;
+                is_dying = true;
+                dying_timer = DYING_DURATION;
+                dying_zombie_index = i;
                 return;
             }
 
@@ -501,7 +547,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
 fn drawZombies() void {
     const delta_time = 1.0 / 60.0; // 60 FPS
 
-    for (zombies) |zombie| {
+    for (zombies, 0..) |zombie, i| {
         if (zombie) |zomb| {
             if (!zomb.is_active) continue;
 
@@ -529,6 +575,14 @@ fn drawZombies() void {
             };
 
             const scale = 0.2; // Adjust the scale factor to make the zombie smaller
+            const tint: raylib.Color = blk: {
+                if (is_dying) {
+                    if (dying_zombie_index) |idx| {
+                        if (idx == i) break :blk raylib.RED;
+                    }
+                }
+                break :blk raylib.WHITE;
+            };
             raylib.DrawTexturePro(
                 zombie_texture,
                 src_rect,
@@ -540,7 +594,7 @@ fn drawZombies() void {
                 },
                 raylib.Vector2{ .x = 0, .y = 0 }, // Origin for scaling
                 0.0, // Rotation
-                raylib.WHITE,
+                tint,
             );
 
             // Draw the zombie's name above the zombie
@@ -600,7 +654,9 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
         b.y += b.speed;
 
         if (b.y >= screen_height) {
-            is_game_over = true;
+            is_dying = true;
+            dying_timer = DYING_DURATION;
+            dying_zombie_index = null;
             return;
         }
 
@@ -832,6 +888,20 @@ fn calculateTargetAccuracy() f32 {
     const total = correct_chars + wrong_chars;
     if (total == 0) return 100.0;
     return (@as(f32, @floatFromInt(correct_chars)) / @as(f32, @floatFromInt(total))) * 100.0;
+}
+
+fn calculateAverageWpm() u32 {
+    if (elapsed_time < 1.0) return 0;
+    const chars_f = @as(f32, @floatFromInt(correct_chars));
+    const words = chars_f / CHARS_PER_WORD;
+    const minutes = elapsed_time / SECONDS_PER_MINUTE;
+    return @intFromFloat(@round(words / minutes));
+}
+
+fn calculateStatsAccuracy() u32 {
+    const total = correct_chars + wrong_chars;
+    if (total == 0) return 0;
+    return (correct_chars * 100) / total;
 }
 
 fn updateMetrics() void {
@@ -1351,4 +1421,79 @@ test "smoothing convergence toward target WPM" {
 
     displayed_wpm += SMOOTHING_FACTOR * (target - displayed_wpm);
     try std.testing.expectApproxEqAbs(@as(f32, 25.92), displayed_wpm, 0.01);
+}
+
+test "dying state transition" {
+    const saved_dying = is_dying;
+    const saved_timer = dying_timer;
+    const saved_game_over = is_game_over;
+    const saved_index = dying_zombie_index;
+    defer {
+        is_dying = saved_dying;
+        dying_timer = saved_timer;
+        is_game_over = saved_game_over;
+        dying_zombie_index = saved_index;
+    }
+
+    is_dying = true;
+    dying_timer = DYING_DURATION;
+    dying_zombie_index = 5;
+    is_game_over = false;
+
+    try std.testing.expect(is_dying);
+    try std.testing.expect(!is_game_over);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), dying_timer, 0.001);
+
+    dying_timer = 0.0;
+    if (dying_timer <= 0) {
+        is_game_over = true;
+        is_dying = false;
+    }
+
+    try std.testing.expect(!is_dying);
+    try std.testing.expect(is_game_over);
+}
+
+test "average WPM calculation" {
+    const saved_correct = correct_chars;
+    const saved_elapsed = elapsed_time;
+    defer {
+        correct_chars = saved_correct;
+        elapsed_time = saved_elapsed;
+    }
+
+    correct_chars = 600;
+    elapsed_time = 60.0;
+    try std.testing.expectEqual(@as(u32, 120), calculateAverageWpm());
+
+    elapsed_time = 0.5;
+    try std.testing.expectEqual(@as(u32, 0), calculateAverageWpm());
+}
+
+test "accuracy edge case zero input stats" {
+    const saved_correct = correct_chars;
+    const saved_wrong = wrong_chars;
+    defer {
+        correct_chars = saved_correct;
+        wrong_chars = saved_wrong;
+    }
+
+    correct_chars = 0;
+    wrong_chars = 0;
+    try std.testing.expectEqual(@as(u32, 0), calculateStatsAccuracy());
+}
+
+test "kill counter tracks total kills" {
+    const saved = total_kills;
+    defer total_kills = saved;
+
+    total_kills = 0;
+    total_kills += 1;
+    try std.testing.expectEqual(@as(u32, 1), total_kills);
+    total_kills += 1;
+    try std.testing.expectEqual(@as(u32, 2), total_kills);
+    total_kills += 1;
+    total_kills += 1;
+    total_kills += 1;
+    try std.testing.expectEqual(@as(u32, 5), total_kills);
 }

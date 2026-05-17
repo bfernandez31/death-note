@@ -52,18 +52,18 @@
 **NOTE**: Write these tests FIRST, ensure they FAIL before implementation.
 **RULE (constitution)**: All tests extend existing test file `src/main.zig` — no new test files.
 
-- [ ] T006 [P] [US1] Extend tests in `src/main.zig`: add test "dying state transition" — verify `is_dying` set to true triggers timer countdown, and when timer reaches 0 `is_game_over` becomes true and `is_dying` becomes false
-- [ ] T007 [P] [US1] Extend tests in `src/main.zig`: add test "average WPM calculation" — verify `(600 / 5) / (60 / 60) = 120` and edge case where elapsed_time < 1.0 returns 0
-- [ ] T008 [P] [US1] Extend tests in `src/main.zig`: add test "accuracy edge case zero input" — verify 0 correct + 0 wrong returns 0% (spec says 0%, unlike existing `calculateTargetAccuracy` which returns 100%)
-- [ ] T009 [P] [US1] Extend tests in `src/main.zig`: add test "kill counter tracks total kills" — verify `total_kills` increments on regular zombie kill and on boss kill
+- [X] T006 [P] [US1] Extend tests in `src/main.zig`: add test "dying state transition" — verify `is_dying` set to true triggers timer countdown, and when timer reaches 0 `is_game_over` becomes true and `is_dying` becomes false
+- [X] T007 [P] [US1] Extend tests in `src/main.zig`: add test "average WPM calculation" — verify `(600 / 5) / (60 / 60) = 120` and edge case where elapsed_time < 1.0 returns 0
+- [X] T008 [P] [US1] Extend tests in `src/main.zig`: add test "accuracy edge case zero input" — verify 0 correct + 0 wrong returns 0% (spec says 0%, unlike existing `calculateTargetAccuracy` which returns 100%)
+- [X] T009 [P] [US1] Extend tests in `src/main.zig`: add test "kill counter tracks total kills" — verify `total_kills` increments on regular zombie kill and on boss kill
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Implement dying state transition in `src/main.zig`: in `updateZombies`, when `zomb.y >= screen_height`, set `is_dying = true`, `dying_timer = DYING_DURATION`, `dying_zombie_index = i` instead of `is_game_over = true`. Apply same pattern in `updateBoss`
-- [ ] T011 [US1] Gate gameplay updates during dying state in `src/main.zig`: add `and !is_dying` to the `!is_game_over and !is_transitioning` condition in `frame()` (line 173). Add dying timer countdown logic — when `dying_timer <= 0`: set `is_game_over = true`, `is_dying = false`
-- [ ] T012 [US1] Implement red tint for dying zombie in `drawZombies` in `src/main.zig`: when `is_dying` and zombie slot index matches `dying_zombie_index`, pass `raylib.RED` tint instead of `raylib.WHITE` to `DrawTexturePro`. Also handle boss case in `drawBoss`
-- [ ] T013 [US1] Replace existing game-over drawing block (lines 313-328) in `src/main.zig` with full stats overlay: "GAME OVER" (size 48, red, centered, y=30), "Wave reached: N" (size 24, dark gray), "Score: N", "Best: N" or "NEW HIGH SCORE!" (gold), "Average WPM: N", "Accuracy: N%", "Kills: N", "Press ENTER to restart" (size 18, gray, near bottom ~y=405)
-- [ ] T014 [US1] Implement average WPM calculation for stats screen in `src/main.zig`: `(correct_chars / 5.0) / (elapsed_time / 60.0)`, returning 0 when `elapsed_time < 1.0` (FR-005, ARD-3). Implement stats accuracy as `(correct_chars * 100) / (correct_chars + wrong_chars)`, returning 0 when both are zero (spec edge case)
+- [X] T010 [US1] Implement dying state transition in `src/main.zig`: in `updateZombies`, when `zomb.y >= screen_height`, set `is_dying = true`, `dying_timer = DYING_DURATION`, `dying_zombie_index = i` instead of `is_game_over = true`. Apply same pattern in `updateBoss`
+- [X] T011 [US1] Gate gameplay updates during dying state in `src/main.zig`: add `and !is_dying` to the `!is_game_over and !is_transitioning` condition in `frame()` (line 173). Add dying timer countdown logic — when `dying_timer <= 0`: set `is_game_over = true`, `is_dying = false`
+- [X] T012 [US1] Implement red tint for dying zombie in `drawZombies` in `src/main.zig`: when `is_dying` and zombie slot index matches `dying_zombie_index`, pass `raylib.RED` tint instead of `raylib.WHITE` to `DrawTexturePro`. Also handle boss case in `drawBoss`
+- [X] T013 [US1] Replace existing game-over drawing block (lines 313-328) in `src/main.zig` with full stats overlay: "GAME OVER" (size 48, red, centered, y=30), "Wave reached: N" (size 24, dark gray), "Score: N", "Best: N" or "NEW HIGH SCORE!" (gold), "Average WPM: N", "Accuracy: N%", "Kills: N", "Press ENTER to restart" (size 18, gray, near bottom ~y=405)
+- [X] T014 [US1] Implement average WPM calculation for stats screen in `src/main.zig`: `(correct_chars / 5.0) / (elapsed_time / 60.0)`, returning 0 when `elapsed_time < 1.0` (FR-005, ARD-3). Implement stats accuracy as `(correct_chars * 100) / (correct_chars + wrong_chars)`, returning 0 when both are zero (spec edge case)
 
 **Checkpoint**: User Story 1 should be fully functional — game-over shows death transition and complete stats screen
 
