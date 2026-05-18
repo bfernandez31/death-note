@@ -1,0 +1,53 @@
+THIRD-PARTY LICENSES
+====================
+
+This file documents the licenses and attributions for third-party assets
+used in the death-note project.
+
+1. Monkeytype Sound Packs (GPL-3.0)
+------------------------------------
+
+The following WAV files are sourced from Monkeytype
+(https://github.com/monkeytypegame/monkeytype), licensed under the
+GNU General Public License v3.0 (GPL-3.0).
+
+  Covered files:
+    assets/sounds/click/1.wav
+    assets/sounds/click/2.wav
+    assets/sounds/click/3.wav
+    assets/sounds/typewriter/1.wav
+    assets/sounds/typewriter/2.wav
+    assets/sounds/typewriter/3.wav
+    assets/sounds/typewriter/4.wav
+    assets/sounds/typewriter/5.wav
+    assets/sounds/typewriter/6.wav
+    assets/sounds/hitmarker/1.wav
+    assets/sounds/hitmarker/2.wav
+    assets/sounds/hitmarker/3.wav
+    assets/sounds/damage/1.wav
+    assets/sounds/square/1.wav
+    assets/sounds/missed-punch/1.wav
+    assets/sounds/missed-punch/2.wav
+
+  License: GPL-3.0 (https://www.gnu.org/licenses/gpl-3.0.en.html)
+  Source: https://github.com/monkeytypegame/monkeytype
+
+  Note: These files are distributed under the terms of the GPL-3.0.
+  The project owner must evaluate whether to adopt GPL-3.0 project-wide,
+  isolate these assets under a GPL notice, or replace them with
+  non-viral alternatives before public distribution.
+
+
+2. Nightmare Pulse Music Track (Pixabay Content License)
+--------------------------------------------------------
+
+  Covered file:
+    assets/music/nightmare-pulse.wav
+
+  License: Pixabay Content License
+           (https://pixabay.com/service/license-summary/)
+  Source: https://pixabay.com/
+
+  The Pixabay Content License allows free use for commercial and
+  non-commercial purposes without attribution, though attribution is
+  appreciated. No additional restrictions apply.

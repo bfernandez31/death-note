@@ -6,6 +6,7 @@ const BossPhrases = @import("boss_phrases.zig").BossPhrases;
 const name_lists = @import("name_lists.zig");
 const zt = @import("zombie_types.zig");
 const highscore = @import("highscore.zig");
+const sound_config = @import("sound_config.zig");
 
 // Aliases for the moved shared declarations (see src/zombie_types.zig). Kept at file
 // scope so the rest of main.zig and its tests keep their original identifiers.
@@ -189,6 +190,8 @@ var best_score_zen: highscore.Record = .{};
 var last_played_mode: GameMode = .survival;
 var is_new_high_score: bool = false;
 
+var sound_cfg: sound_config.SoundConfig = .{};
+
 var held_power_up: ?PowerUpType = null;
 var freeze_timer: f32 = 0.0;
 var shield_active: bool = false;
@@ -204,6 +207,7 @@ const GameScreen = enum {
     playing,
     paused,
     game_over,
+    sound_settings,
 };
 
 var current_screen: GameScreen = .main_menu;
@@ -244,6 +248,35 @@ var zombies: [MAX_ZOMBIES]?*Zombie = [_]?*Zombie{null} ** MAX_ZOMBIES;
 var zombie_texture: raylib.Texture2D = undefined;
 var zombie_kill_sound: raylib.Sound = undefined;
 
+const CLICK_SAMPLE_COUNT: u8 = 3;
+const TYPEWRITER_SAMPLE_COUNT: u8 = 6;
+const HITMARKER_SAMPLE_COUNT: u8 = 3;
+const DAMAGE_SAMPLE_COUNT: u8 = 1;
+const SQUARE_SAMPLE_COUNT: u8 = 1;
+const MISSED_PUNCH_SAMPLE_COUNT: u8 = 2;
+
+var click_sounds: [CLICK_SAMPLE_COUNT]raylib.Sound = undefined;
+var typewriter_sounds: [TYPEWRITER_SAMPLE_COUNT]raylib.Sound = undefined;
+var hitmarker_sounds: [HITMARKER_SAMPLE_COUNT]raylib.Sound = undefined;
+var damage_sounds: [DAMAGE_SAMPLE_COUNT]raylib.Sound = undefined;
+var square_sounds: [SQUARE_SAMPLE_COUNT]raylib.Sound = undefined;
+var missed_punch_sounds: [MISSED_PUNCH_SAMPLE_COUNT]raylib.Sound = undefined;
+var bomb_sound: raylib.Sound = undefined;
+var freeze_sound: raylib.Sound = undefined;
+var shield_sound: raylib.Sound = undefined;
+var music: raylib.Music = undefined;
+
+var typing_round_robin: u8 = 0;
+var error_round_robin: u8 = 0;
+var audio_ready: bool = false;
+
+var sound_menu_selection: u8 = 0;
+var sound_menu_return_screen: GameScreen = .paused;
+const SOUND_MENU_ITEM_COUNT: u8 = 10;
+
+// Tracks the currently-playing preview so a new pack focus interrupts the previous sample (ARD-5).
+var last_preview_sound: ?*raylib.Sound = null;
+
 const screen_width = 800;
 const screen_height = 1000;
 
@@ -259,6 +292,99 @@ const FrameContext = struct {
     mouse_on_text: bool,
     frames_counter: usize,
 };
+
+// 20-step volume sliders map linearly to raylib's 0.0–1.0 range (20 * VOLUME_STEP = 1.0).
+const VOLUME_STEP: f32 = 0.05;
+// Pack preview plays at half the typing volume, with a floor so a near-muted slider can still audition packs.
+const PREVIEW_VOL_FACTOR: f32 = 0.5;
+const PREVIEW_VOL_FLOOR: f32 = 0.30;
+// Sound settings screen layout.
+const SOUND_SETTINGS_TITLE_Y: c_int = 60;
+const SOUND_SETTINGS_TITLE_SIZE: c_int = 40;
+const SOUND_SETTINGS_ITEM_START_Y: c_int = 160;
+const SOUND_SETTINGS_ITEM_SPACING: c_int = 75;
+const SOUND_SETTINGS_ITEM_LEFT_X: c_int = 40;
+const SOUND_SETTINGS_ITEM_FONT_SIZE: c_int = 22;
+const SOUND_SETTINGS_VALUE_RIGHT_OFFSET: c_int = 300;
+const SOUND_SETTINGS_HINT_Y_OFFSET: c_int = 50;
+const SOUND_SETTINGS_HINT_SIZE: c_int = 18;
+const VOLUME_BAR_SEGMENTS: u8 = 10;
+
+fn volumeToFloat(level: u8) f32 {
+    return @as(f32, @floatFromInt(level)) * VOLUME_STEP;
+}
+
+fn cyclePackEnum(comptime T: type, current: T, forward: bool) T {
+    const max: u8 = @intCast(@typeInfo(T).@"enum".fields.len);
+    const ord: u8 = @intFromEnum(current);
+    const next: u8 = if (forward) (ord + 1) % max else (ord + max - 1) % max;
+    return @enumFromInt(next);
+}
+
+fn getTypingSounds() []raylib.Sound {
+    return switch (sound_cfg.typing_pack) {
+        .click => &click_sounds,
+        .typewriter => &typewriter_sounds,
+        .hitmarker => &hitmarker_sounds,
+    };
+}
+
+fn getTypingSampleCount() u8 {
+    return switch (sound_cfg.typing_pack) {
+        .click => CLICK_SAMPLE_COUNT,
+        .typewriter => TYPEWRITER_SAMPLE_COUNT,
+        .hitmarker => HITMARKER_SAMPLE_COUNT,
+    };
+}
+
+fn playTypingSound() void {
+    if (!sound_cfg.keystrokes_enabled or !audio_ready) return;
+    const sounds = getTypingSounds();
+    raylib.SetSoundVolume(sounds[typing_round_robin], volumeToFloat(sound_cfg.typing_volume));
+    raylib.PlaySound(sounds[typing_round_robin]);
+    typing_round_robin = (typing_round_robin + 1) % getTypingSampleCount();
+}
+
+fn getErrorSounds() []raylib.Sound {
+    return switch (sound_cfg.error_pack) {
+        .damage => &damage_sounds,
+        .square => &square_sounds,
+        .missed_punch => &missed_punch_sounds,
+    };
+}
+
+fn getErrorSampleCount() u8 {
+    return switch (sound_cfg.error_pack) {
+        .damage => DAMAGE_SAMPLE_COUNT,
+        .square => SQUARE_SAMPLE_COUNT,
+        .missed_punch => MISSED_PUNCH_SAMPLE_COUNT,
+    };
+}
+
+// Errors share the typing pack's volume slider — they're part of the typing-feedback experience.
+fn playErrorSound() void {
+    if (!sound_cfg.errors_enabled or !audio_ready) return;
+    const sounds = getErrorSounds();
+    raylib.SetSoundVolume(sounds[error_round_robin], volumeToFloat(sound_cfg.typing_volume));
+    raylib.PlaySound(sounds[error_round_robin]);
+    error_round_robin = (error_round_robin + 1) % getErrorSampleCount();
+}
+
+fn typingPackName(pack: sound_config.TypingPack) []const u8 {
+    return switch (pack) {
+        .click => "CLICK",
+        .typewriter => "TYPEWRITER",
+        .hitmarker => "HITMARKER",
+    };
+}
+
+fn errorPackName(pack: sound_config.ErrorPack) []const u8 {
+    return switch (pack) {
+        .damage => "DAMAGE",
+        .square => "SQUARE",
+        .missed_punch => "MISSED PUNCH",
+    };
+}
 
 fn getSpeedMultiplier(zombie_type: ZombieType) f32 {
     return switch (zombie_type) {
@@ -296,6 +422,8 @@ fn frame(ctx: *FrameContext) void {
             updateWpmSelect(ctx.allocator);
         },
         .playing => {
+            if (audio_ready) raylib.UpdateMusicStream(music);
+
             // Resize input box for boss mode
             if (boss != null) {
                 ctx.text_box.width = 700.0;
@@ -323,6 +451,7 @@ fn frame(ctx: *FrameContext) void {
                 if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
                     current_screen = .paused;
                     pause_selection = 0;
+                    if (audio_ready) raylib.PauseMusicStream(music);
                 } else {
                     var space_consumed = false;
                     if (raylib.IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null) {
@@ -345,13 +474,16 @@ fn frame(ctx: *FrameContext) void {
                                 if (typedMatchesAnyEnemy()) {
                                     recordCorrectTimestamp(elapsed_time);
                                     correct_chars += 1;
+                                    playTypingSound();
                                 } else {
                                     wrong_chars += 1;
                                     combo_count = 0;
+                                    playErrorSound();
                                 }
                             } else {
                                 wrong_chars += 1;
                                 combo_count = 0;
+                                playErrorSound();
                             }
                         }
                         key = raylib.GetCharPressed();
@@ -424,6 +556,7 @@ fn frame(ctx: *FrameContext) void {
                 if (dying_timer <= 0) {
                     current_screen = .game_over;
                     is_dying = false;
+                    if (audio_ready) raylib.StopMusicStream(music);
                     const avg_wpm = calculateAverageWpm();
                     const acc: u8 = @intCast(calculateStatsAccuracy());
                     if (score > best_score_survival.score) {
@@ -457,6 +590,9 @@ fn frame(ctx: *FrameContext) void {
         },
         .paused => {
             updatePause(ctx.allocator);
+        },
+        .sound_settings => {
+            updateSoundSettings();
         },
         .game_over => {
             if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
@@ -531,6 +667,9 @@ fn frame(ctx: *FrameContext) void {
             drawBoss();
             drawPauseOverlay();
         },
+        .sound_settings => {
+            drawSoundSettings();
+        },
         .game_over => {
             raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
             raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
@@ -579,10 +718,10 @@ fn frame(ctx: *FrameContext) void {
     drawPopups();
 }
 
-const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "QUIT" };
-const MENU_ITEM_COUNT: u8 = 3;
-const PAUSE_ITEMS = [_][]const u8{ "RESUME", "QUIT TO MENU" };
-const PAUSE_ITEM_COUNT: u8 = 2;
+const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "SOUND", "QUIT" };
+const MENU_ITEM_COUNT: u8 = 4;
+const PAUSE_ITEMS = [_][]const u8{ "RESUME", "SOUND", "QUIT TO MENU" };
+const PAUSE_ITEM_COUNT: u8 = 3;
 
 fn updateMenu(allocator: *std.mem.Allocator) void {
     if (raylib.IsKeyPressed(raylib.KEY_UP)) {
@@ -600,10 +739,12 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 current_screen = .wpm_select;
             },
             2 => {
-                // Defensive: Zen sessions can only reach this branch via Pause → Quit-to-Menu (which
-                // already saves), but call again in case future flows route here from active play.
+                sound_menu_return_screen = .main_menu;
+                sound_menu_selection = 0;
+                current_screen = .sound_settings;
+            },
+            3 => {
                 saveZenScoreIfBest();
-                // Set a flag instead of calling CloseWindow here — see comment on `should_quit_app`.
                 should_quit_app = true;
             },
             else => {},
@@ -680,17 +821,199 @@ fn updatePause(allocator: *std.mem.Allocator) void {
         switch (pause_selection) {
             0 => {
                 current_screen = .playing;
+                if (audio_ready) raylib.ResumeMusicStream(music);
             },
             1 => {
-                // FR-020: survival sessions discarded from pause don't save; Zen WPM record is preserved.
+                sound_menu_return_screen = .paused;
+                sound_menu_selection = 0;
+                current_screen = .sound_settings;
+            },
+            2 => {
                 saveZenScoreIfBest();
                 resetZombies(allocator);
                 resetBoss(allocator);
+                if (audio_ready) raylib.StopMusicStream(music);
                 current_screen = .main_menu;
             },
             else => {},
         }
     }
+}
+
+fn updateSoundSettings() void {
+    const prev_selection = sound_menu_selection;
+
+    if (raylib.IsKeyPressed(raylib.KEY_UP)) {
+        sound_menu_selection = (sound_menu_selection +% SOUND_MENU_ITEM_COUNT -% 1) % SOUND_MENU_ITEM_COUNT;
+    }
+    if (raylib.IsKeyPressed(raylib.KEY_DOWN)) {
+        sound_menu_selection = (sound_menu_selection +% 1) % SOUND_MENU_ITEM_COUNT;
+    }
+
+    // Pack selector preview on focus change
+    if (sound_menu_selection != prev_selection) {
+        if (sound_menu_selection == 1) {
+            playPackPreview(true);
+        } else if (sound_menu_selection == 4) {
+            playPackPreview(false);
+        }
+    }
+
+    if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
+        switch (sound_menu_selection) {
+            0 => sound_cfg.keystrokes_enabled = !sound_cfg.keystrokes_enabled,
+            3 => sound_cfg.errors_enabled = !sound_cfg.errors_enabled,
+            5 => sound_cfg.kills_enabled = !sound_cfg.kills_enabled,
+            6 => sound_cfg.power_ups_enabled = !sound_cfg.power_ups_enabled,
+            8 => {
+                sound_cfg.music_enabled = !sound_cfg.music_enabled;
+                if (audio_ready) {
+                    if (!sound_cfg.music_enabled) {
+                        raylib.StopMusicStream(music);
+                    } else if (sound_menu_return_screen == .paused) {
+                        // Coming from an active (paused) session: prime the stream so the game's
+                        // resume flow has something to ResumeMusicStream, but pause it immediately
+                        // so music does not audibly play on the pause screen.
+                        raylib.SetMusicVolume(music, volumeToFloat(sound_cfg.music_volume));
+                        raylib.PlayMusicStream(music);
+                        raylib.PauseMusicStream(music);
+                    }
+                    // From main menu: there's nothing to hear yet — music starts when a mode is chosen.
+                }
+            },
+            else => {},
+        }
+    }
+
+    const left = raylib.IsKeyPressed(raylib.KEY_LEFT);
+    const right = raylib.IsKeyPressed(raylib.KEY_RIGHT);
+
+    if (left or right) {
+        switch (sound_menu_selection) {
+            1 => {
+                sound_cfg.typing_pack = cyclePackEnum(sound_config.TypingPack, sound_cfg.typing_pack, right);
+                typing_round_robin = 0;
+                playPackPreview(true);
+            },
+            4 => {
+                sound_cfg.error_pack = cyclePackEnum(sound_config.ErrorPack, sound_cfg.error_pack, right);
+                error_round_robin = 0;
+                playPackPreview(false);
+            },
+            2 => {
+                if (right and sound_cfg.typing_volume < 20) sound_cfg.typing_volume += 1;
+                if (left and sound_cfg.typing_volume > 0) sound_cfg.typing_volume -|= 1;
+                // Use the always-on preview so the player hears the level even if keystroke sounds are toggled off.
+                const tsounds = getTypingSounds();
+                playVolumePreview(tsounds[typing_round_robin], sound_cfg.typing_volume);
+                typing_round_robin = (typing_round_robin + 1) % getTypingSampleCount();
+            },
+            7 => {
+                if (right and sound_cfg.effects_volume < 20) sound_cfg.effects_volume += 1;
+                if (left and sound_cfg.effects_volume > 0) sound_cfg.effects_volume -|= 1;
+                playVolumePreview(zombie_kill_sound, sound_cfg.effects_volume);
+            },
+            9 => {
+                if (right and sound_cfg.music_volume < 20) sound_cfg.music_volume += 1;
+                if (left and sound_cfg.music_volume > 0) sound_cfg.music_volume -|= 1;
+                if (audio_ready) raylib.SetMusicVolume(music, volumeToFloat(sound_cfg.music_volume));
+                // FR-014 calibration: the music stream is usually paused/stopped on this screen, so the
+                // kill sound stands in as a short representative sample at the music slider's level.
+                playVolumePreview(zombie_kill_sound, sound_cfg.music_volume);
+            },
+            else => {},
+        }
+    }
+
+    if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
+        sound_config.save(sound_cfg);
+        current_screen = sound_menu_return_screen;
+        if (sound_menu_return_screen == .paused) {
+            pause_selection = 0;
+        }
+    }
+}
+
+fn playPackPreview(is_typing: bool) void {
+    if (!audio_ready) return;
+    const sounds = if (is_typing) getTypingSounds() else getErrorSounds();
+    const vol = volumeToFloat(sound_cfg.typing_volume);
+    const preview_vol = if (vol < PREVIEW_VOL_FLOOR) PREVIEW_VOL_FLOOR else vol * PREVIEW_VOL_FACTOR;
+    if (last_preview_sound) |prev| raylib.StopSound(prev.*);
+    raylib.SetSoundVolume(sounds[0], preview_vol);
+    raylib.PlaySound(sounds[0]);
+    last_preview_sound = &sounds[0];
+}
+
+// Always-on volume calibration preview that bypasses the category toggle — when adjusting a
+// volume slider, the player needs audible feedback even if the matching category is disabled.
+fn playVolumePreview(snd: raylib.Sound, level: u8) void {
+    if (!audio_ready) return;
+    if (last_preview_sound) |prev| raylib.StopSound(prev.*);
+    raylib.SetSoundVolume(snd, volumeToFloat(level));
+    raylib.PlaySound(snd);
+    last_preview_sound = null;
+}
+
+fn drawSoundSettings() void {
+    raylib.DrawRectangle(0, 0, screen_width, screen_height, CRT_BG);
+
+    drawCenteredTextShadow("SOUND SETTINGS", SOUND_SETTINGS_TITLE_Y, SOUND_SETTINGS_TITLE_SIZE, CRT_FG);
+
+    const labels = [SOUND_MENU_ITEM_COUNT][]const u8{
+        "KEYSTROKE SOUNDS",
+        "TYPING PACK",
+        "TYPING VOLUME",
+        "ERROR SOUNDS",
+        "ERROR PACK",
+        "KILL SOUNDS",
+        "POWER-UP SOUNDS",
+        "EFFECTS VOLUME",
+        "MUSIC",
+        "MUSIC VOLUME",
+    };
+
+    for (labels, 0..) |label, i| {
+        const y = SOUND_SETTINGS_ITEM_START_Y + @as(c_int, @intCast(i)) * SOUND_SETTINGS_ITEM_SPACING;
+        const selected = (i == sound_menu_selection);
+        const color = if (selected) CRT_ACCENT else CRT_DIM;
+
+        var label_buf: [48]u8 = undefined;
+        const prefix: []const u8 = if (selected) "> " else "  ";
+        const label_text = std.fmt.bufPrintZ(&label_buf, "{s}{s}", .{ prefix, label }) catch "???";
+        raylib.DrawText(label_text.ptr, SOUND_SETTINGS_ITEM_LEFT_X, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
+
+        var val_buf: [48]u8 = undefined;
+        const val_text: [*:0]const u8 = switch (@as(u8, @intCast(i))) {
+            0 => if (sound_cfg.keystrokes_enabled) "[ON]" else "[OFF]",
+            1 => std.fmt.bufPrintZ(&val_buf, "< {s} >", .{typingPackName(sound_cfg.typing_pack)}) catch "???",
+            2 => formatVolumeBar(&val_buf, sound_cfg.typing_volume),
+            3 => if (sound_cfg.errors_enabled) "[ON]" else "[OFF]",
+            4 => std.fmt.bufPrintZ(&val_buf, "< {s} >", .{errorPackName(sound_cfg.error_pack)}) catch "???",
+            5 => if (sound_cfg.kills_enabled) "[ON]" else "[OFF]",
+            6 => if (sound_cfg.power_ups_enabled) "[ON]" else "[OFF]",
+            7 => formatVolumeBar(&val_buf, sound_cfg.effects_volume),
+            8 => if (sound_cfg.music_enabled) "[ON]" else "[OFF]",
+            9 => formatVolumeBar(&val_buf, sound_cfg.music_volume),
+            else => "???",
+        };
+        raylib.DrawText(val_text, screen_width - SOUND_SETTINGS_VALUE_RIGHT_OFFSET, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
+    }
+
+    drawCenteredText("ESC: BACK", screen_height - SOUND_SETTINGS_HINT_Y_OFFSET, SOUND_SETTINGS_HINT_SIZE, CRT_DIM);
+}
+
+fn formatVolumeBar(buf: *[48]u8, level: u8) [*:0]const u8 {
+    const filled: u8 = @intCast(@as(u16, level) * VOLUME_BAR_SEGMENTS / 20);
+    var bar: [VOLUME_BAR_SEGMENTS + 2]u8 = undefined;
+    bar[0] = '[';
+    var i: u8 = 0;
+    while (i < VOLUME_BAR_SEGMENTS) : (i += 1) {
+        bar[i + 1] = if (i < filled) '#' else '-';
+    }
+    bar[VOLUME_BAR_SEGMENTS + 1] = ']';
+    const pct = @as(u32, level) * 5;
+    return std.fmt.bufPrintZ(buf, "{s} {d:>3}%", .{ bar, pct }) catch "???";
 }
 
 fn drawPauseOverlay() void {
@@ -787,8 +1110,26 @@ fn drawZenHud() void {
     drawMetricsHud();
 }
 
+fn playPowerUpSound(pu_type: PowerUpType) void {
+    if (!sound_cfg.power_ups_enabled or !audio_ready) return;
+    const snd = switch (pu_type) {
+        .freeze => freeze_sound,
+        .bomb => bomb_sound,
+        .shield => shield_sound,
+    };
+    raylib.SetSoundVolume(snd, volumeToFloat(sound_cfg.effects_volume));
+    raylib.PlaySound(snd);
+}
+
+fn playKillSound() void {
+    if (!sound_cfg.kills_enabled or !audio_ready) return;
+    raylib.SetSoundVolume(zombie_kill_sound, volumeToFloat(sound_cfg.effects_volume));
+    raylib.PlaySound(zombie_kill_sound);
+}
+
 fn activatePowerUp(allocator: *std.mem.Allocator) void {
     if (held_power_up) |pu| {
+        playPowerUpSound(pu);
         switch (pu) {
             .freeze => {
                 freeze_timer = FREEZE_DURATION;
@@ -814,7 +1155,7 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
                         }
                     }
                 }
-                if (bomb_killed_any) raylib.PlaySound(zombie_kill_sound);
+                if (bomb_killed_any) playKillSound();
             },
             .shield => {
                 shield_active = true;
@@ -862,6 +1203,11 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     resetMetricsState();
     resetZombies(allocator);
     resetBoss(allocator);
+    if (sound_cfg.music_enabled and audio_ready) {
+        raylib.SetMusicVolume(music, volumeToFloat(sound_cfg.music_volume));
+        raylib.StopMusicStream(music);
+        raylib.PlayMusicStream(music);
+    }
 }
 
 // Emscripten C-callback trampoline; arg carries the FrameContext pointer
@@ -878,8 +1224,21 @@ fn frame_c_callback(arg: ?*anyopaque) callconv(.c) void {
 // it is the cleanest available hook for any controlled teardown the runtime offers.
 fn cleanup_on_exit() callconv(.c) void {
     raylib.UnloadTexture(zombie_texture);
-    raylib.UnloadSound(zombie_kill_sound);
-    raylib.CloseAudioDevice();
+    // Skip audio unloads when audio init failed — handles are zeroed and unloading them is UB.
+    if (audio_ready) {
+        raylib.UnloadSound(zombie_kill_sound);
+        for (&click_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&typewriter_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&hitmarker_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&damage_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&square_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&missed_punch_sounds) |*s| raylib.UnloadSound(s.*);
+        raylib.UnloadSound(bomb_sound);
+        raylib.UnloadSound(freeze_sound);
+        raylib.UnloadSound(shield_sound);
+        raylib.UnloadMusicStream(music);
+        raylib.CloseAudioDevice();
+    }
     raylib.CloseWindow();
 }
 
@@ -895,6 +1254,58 @@ pub fn main() !void {
     zombie_kill_sound = raylib.LoadSound("assets/zombie-hit.wav");
     defer raylib.UnloadSound(zombie_kill_sound);
 
+    click_sounds[0] = raylib.LoadSound("assets/sounds/click/1.wav");
+    defer raylib.UnloadSound(click_sounds[0]);
+    click_sounds[1] = raylib.LoadSound("assets/sounds/click/2.wav");
+    defer raylib.UnloadSound(click_sounds[1]);
+    click_sounds[2] = raylib.LoadSound("assets/sounds/click/3.wav");
+    defer raylib.UnloadSound(click_sounds[2]);
+
+    typewriter_sounds[0] = raylib.LoadSound("assets/sounds/typewriter/1.wav");
+    defer raylib.UnloadSound(typewriter_sounds[0]);
+    typewriter_sounds[1] = raylib.LoadSound("assets/sounds/typewriter/2.wav");
+    defer raylib.UnloadSound(typewriter_sounds[1]);
+    typewriter_sounds[2] = raylib.LoadSound("assets/sounds/typewriter/3.wav");
+    defer raylib.UnloadSound(typewriter_sounds[2]);
+    typewriter_sounds[3] = raylib.LoadSound("assets/sounds/typewriter/4.wav");
+    defer raylib.UnloadSound(typewriter_sounds[3]);
+    typewriter_sounds[4] = raylib.LoadSound("assets/sounds/typewriter/5.wav");
+    defer raylib.UnloadSound(typewriter_sounds[4]);
+    typewriter_sounds[5] = raylib.LoadSound("assets/sounds/typewriter/6.wav");
+    defer raylib.UnloadSound(typewriter_sounds[5]);
+
+    hitmarker_sounds[0] = raylib.LoadSound("assets/sounds/hitmarker/1.wav");
+    defer raylib.UnloadSound(hitmarker_sounds[0]);
+    hitmarker_sounds[1] = raylib.LoadSound("assets/sounds/hitmarker/2.wav");
+    defer raylib.UnloadSound(hitmarker_sounds[1]);
+    hitmarker_sounds[2] = raylib.LoadSound("assets/sounds/hitmarker/3.wav");
+    defer raylib.UnloadSound(hitmarker_sounds[2]);
+
+    damage_sounds[0] = raylib.LoadSound("assets/sounds/damage/1.wav");
+    defer raylib.UnloadSound(damage_sounds[0]);
+
+    square_sounds[0] = raylib.LoadSound("assets/sounds/square/1.wav");
+    defer raylib.UnloadSound(square_sounds[0]);
+
+    missed_punch_sounds[0] = raylib.LoadSound("assets/sounds/missed-punch/1.wav");
+    defer raylib.UnloadSound(missed_punch_sounds[0]);
+    missed_punch_sounds[1] = raylib.LoadSound("assets/sounds/missed-punch/2.wav");
+    defer raylib.UnloadSound(missed_punch_sounds[1]);
+
+    bomb_sound = raylib.LoadSound("assets/sounds/bomb/1.wav");
+    defer raylib.UnloadSound(bomb_sound);
+    freeze_sound = raylib.LoadSound("assets/sounds/freeze/1.wav");
+    defer raylib.UnloadSound(freeze_sound);
+    shield_sound = raylib.LoadSound("assets/sounds/shield/1.wav");
+    defer raylib.UnloadSound(shield_sound);
+
+    music = raylib.LoadMusicStream("assets/music/nightmare-pulse.wav");
+    defer raylib.UnloadMusicStream(music);
+    music.looping = true;
+    // Detect headless / driver-less environments so subsequent PlaySound/UpdateMusicStream
+    // calls become no-ops instead of operating on zeroed handles.
+    audio_ready = raylib.IsAudioDeviceReady();
+
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
 
@@ -907,6 +1318,7 @@ pub fn main() !void {
 
     best_score_survival = highscore.load(.survival);
     best_score_zen = highscore.load(.zen);
+    sound_cfg = sound_config.load();
 
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.
@@ -998,7 +1410,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                 name[letter_count] = '\x00';
                 wave_kills += 1;
                 total_kills += 1;
-                raylib.PlaySound(zombie_kill_sound);
+                playKillSound();
             }
         }
     }
@@ -1247,7 +1659,7 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
             // Give the player a full spawn_delay of breathing room before regular
             // zombies resume — typing the boss phrase is enough work for one beat.
             spawn_timer = 0.0;
-            raylib.PlaySound(zombie_kill_sound);
+            playKillSound();
         }
     }
 }
@@ -2367,20 +2779,20 @@ test "anti-doublon retries exhaust gracefully" {
     try std.testing.expect(result != null);
 }
 
-test "GameScreen enum has exactly 5 variants" {
+test "GameScreen enum has exactly 6 variants" {
     const fields = @typeInfo(GameScreen).@"enum".fields;
-    try std.testing.expectEqual(@as(usize, 5), fields.len);
+    try std.testing.expectEqual(@as(usize, 6), fields.len);
 }
 
 test "menu selection circular wrap" {
-    try std.testing.expectEqual(@as(u8, 2), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(u8, 0), (2 +% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 3), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (3 +% 1) % MENU_ITEM_COUNT);
     try std.testing.expectEqual(@as(u8, 1), (0 +% 1) % MENU_ITEM_COUNT);
 }
 
 test "pause selection circular wrap" {
-    try std.testing.expectEqual(@as(u8, 1), (0 +% PAUSE_ITEM_COUNT -% 1) % PAUSE_ITEM_COUNT);
-    try std.testing.expectEqual(@as(u8, 0), (1 +% 1) % PAUSE_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 2), (0 +% PAUSE_ITEM_COUNT -% 1) % PAUSE_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (2 +% 1) % PAUSE_ITEM_COUNT);
 }
 
 test "pause does not modify game state" {
@@ -2604,4 +3016,69 @@ test "per-mode high scores are independent" {
     try std.testing.expectEqual(@as(u64, 1000), best_score_survival.score);
     try std.testing.expectEqual(@as(u32, 80), best_score_zen.wpm);
     try std.testing.expect(best_score_survival.score != best_score_zen.score);
+}
+
+test "sample count constants match array sizes" {
+    try std.testing.expectEqual(@as(usize, CLICK_SAMPLE_COUNT), click_sounds.len);
+    try std.testing.expectEqual(@as(usize, TYPEWRITER_SAMPLE_COUNT), typewriter_sounds.len);
+    try std.testing.expectEqual(@as(usize, HITMARKER_SAMPLE_COUNT), hitmarker_sounds.len);
+    try std.testing.expectEqual(@as(usize, DAMAGE_SAMPLE_COUNT), damage_sounds.len);
+    try std.testing.expectEqual(@as(usize, SQUARE_SAMPLE_COUNT), square_sounds.len);
+    try std.testing.expectEqual(@as(usize, MISSED_PUNCH_SAMPLE_COUNT), missed_punch_sounds.len);
+}
+
+test "round-robin wrapping returns to 0 for each pack" {
+    const counts = [_]u8{ CLICK_SAMPLE_COUNT, TYPEWRITER_SAMPLE_COUNT, HITMARKER_SAMPLE_COUNT, DAMAGE_SAMPLE_COUNT, SQUARE_SAMPLE_COUNT, MISSED_PUNCH_SAMPLE_COUNT };
+    for (counts) |count| {
+        var idx: u8 = 0;
+        var i: u8 = 0;
+        while (i < count) : (i += 1) {
+            idx = (idx + 1) % count;
+        }
+        try std.testing.expectEqual(@as(u8, 0), idx);
+    }
+}
+
+test "getTypingSampleCount returns correct value for each pack" {
+    const saved = sound_cfg;
+    defer sound_cfg = saved;
+
+    sound_cfg.typing_pack = .click;
+    try std.testing.expectEqual(CLICK_SAMPLE_COUNT, getTypingSampleCount());
+    sound_cfg.typing_pack = .typewriter;
+    try std.testing.expectEqual(TYPEWRITER_SAMPLE_COUNT, getTypingSampleCount());
+    sound_cfg.typing_pack = .hitmarker;
+    try std.testing.expectEqual(HITMARKER_SAMPLE_COUNT, getTypingSampleCount());
+}
+
+test "getErrorSampleCount returns correct value for each pack" {
+    const saved = sound_cfg;
+    defer sound_cfg = saved;
+
+    sound_cfg.error_pack = .damage;
+    try std.testing.expectEqual(DAMAGE_SAMPLE_COUNT, getErrorSampleCount());
+    sound_cfg.error_pack = .square;
+    try std.testing.expectEqual(SQUARE_SAMPLE_COUNT, getErrorSampleCount());
+    sound_cfg.error_pack = .missed_punch;
+    try std.testing.expectEqual(MISSED_PUNCH_SAMPLE_COUNT, getErrorSampleCount());
+}
+
+test "sound menu selection wraps correctly" {
+    try std.testing.expectEqual(@as(u8, 9), (0 +% SOUND_MENU_ITEM_COUNT -% 1) % SOUND_MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (9 +% 1) % SOUND_MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 5), (4 +% 1) % SOUND_MENU_ITEM_COUNT);
+}
+
+test "volume step clamping cannot go below 0 or above 20" {
+    var vol: u8 = 0;
+    vol -|= 1;
+    try std.testing.expectEqual(@as(u8, 0), vol);
+
+    vol = 20;
+    if (vol < 20) vol += 1;
+    try std.testing.expectEqual(@as(u8, 20), vol);
+
+    vol = 19;
+    if (vol < 20) vol += 1;
+    try std.testing.expectEqual(@as(u8, 20), vol);
 }

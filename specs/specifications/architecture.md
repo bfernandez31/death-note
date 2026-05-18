@@ -21,7 +21,7 @@
 
 All game logic lives in `src/main.zig`. The `main()` function (line 46) structures runtime execution in four phases:
 
-1. **Init** — `raylib.InitWindow`, `raylib.InitAudioDevice`, `raylib.LoadSound`, `raylib.LoadTexture` (lines 49–61), each immediately followed by a `defer` teardown.
+1. **Init** — `raylib.InitWindow`, `raylib.InitAudioDevice`, `raylib.LoadSound` (kill sound + 22 typing/error/power-up samples), `raylib.LoadMusicStream` (background music), `raylib.LoadTexture` (zombie spritesheet), each immediately followed by a `defer` teardown. `sound_config.load()` is called once to populate `sound_cfg`.
 2. **Update** — gated by `if (!is_game_over)` (line 73): input polling, spawn timer advancement (`spawn_timer += raylib.GetFrameTime()`, line 109), and `updateZombies()` (line 118).
 3. **Draw** — always-on inside `raylib.BeginDrawing()` / `defer raylib.EndDrawing()` (lines 121–122): `drawZombies()` or game-over overlay.
 4. **Teardown** — the matching `defer` statements registered during Init unwind in reverse order when `main()` returns.
@@ -46,6 +46,7 @@ graph TB
         NAMELISTS["src/name_lists.zig\n(expanded name data + selectName logic)"]
         NAMES["src/zombie_names.zig\n(original 49-name table, superseded)"]
         PHRASES["src/boss_phrases.zig\n(boss phrase data table)"]
+        SOUNDCFG["src/sound_config.zig\n(SoundConfig struct, TypingPack/ErrorPack,\ndual-backend persistence)"]
     end
 
     subgraph External_OS["External / OS"]
@@ -62,6 +63,7 @@ graph TB
     MAIN --> NAMELISTS
     MAIN --> NAMES
     MAIN --> PHRASES
+    MAIN --> SOUNDCFG
     NAMELISTS --> MAIN
     RLIB --> RAYLIB_LIB
     RAYLIB_LIB --> WINDOW
@@ -111,7 +113,8 @@ This codebase does not use a traditional layered architecture. All concerns coll
 | **Presentation / Rendering** | `src/main.zig` (`drawZombies`, `drawBoss`, `drawCrtOverlay`, inline draw calls) | Clears background (`CRT_BG`), draws text input box, blinking cursor, zombie sprites (tinted with `CRT_*` palette), boss sprite, boss phrase text, boss health bar, zombie names, game-over overlay, CRT post-processing overlay (scanlines, vignette, bezel) |
 | **Input** | `src/main.zig` | Mouse hit-test against text box; `GetCharPressed` loop (limit via `getCurrentMaxInput()`); backspace handling; `KEY_ENTER` restart |
 | **Gameplay State** | `src/main.zig` (`updateZombies`, `updateBoss`, `spawnZombie`, `spawnBoss`, `resetZombies`, `resetBoss`; module-level globals) | Zombie and boss y-position advance, game-over detection, name/phrase-match comparison, spawn timer, pool management, boss priority, wave completion gate |
-| **Resources** | `src/main.zig`; `assets/` directory | Load/unload `zombie-hit.wav` and `z_spritesheet.png` once at startup; boss reuses both assets — no new resource loads |
+| **Resources** | `src/main.zig`; `assets/` directory | Load/unload `zombie-hit.wav`, `z_spritesheet.png`, 22 typing/error/power-up WAV files, and `nightmare-pulse.wav` music stream once at startup; all paired with `defer Unload…` |
+| **Sound Persistence** | `src/sound_config.zig` | `SoundConfig` struct + `TypingPack`/`ErrorPack` enums; `load()`/`save()` dispatching to `std.c.fopen` native backend (`soundconfig.dat`) or Emscripten `localStorage` (`"death-note.soundconfig"`) depending on `comptime is_web` |
 | **C Interop** | `src/raylib.zig` (lines 1–5) | Single `pub const c = @cImport(…)` aggregating `raylib.h`, `raymath.h`, `rlgl.h`; all raylib symbols are re-exported from this module |
 | **Name Data** | `src/name_lists.zig` | Compile-time arrays `PrimaryNames` (349+), `CompoundNames` (31), `TrapGroups` (15); `selectName` function with wave-weighted category selection, type-based length filtering, and anti-doublon retry; test blocks for data validity |
 | **Boss Phrase Data** | `src/boss_phrases.zig` (line 1) | Compile-time array of 10 zero-terminated C string literals (multi-word phrases ≤ 35 chars); no logic, no imports |
@@ -191,6 +194,7 @@ graph LR
     NAMELISTS["src/name_lists.zig"]
     NAMES["src/zombie_names.zig"]
     PHRASES["src/boss_phrases.zig"]
+    SOUNDCFG["src/sound_config.zig"]
     CIMPORT["@cImport\n(raylib.h, raymath.h, rlgl.h)"]
     RAYLIB_DEP["raylib dependency\n(build.zig.zon)"]
     BUILD["build.zig"]
@@ -199,7 +203,9 @@ graph LR
     MAIN -->|"@import('name_lists.zig')"| NAMELISTS
     MAIN -->|"@import('zombie_names.zig')"| NAMES
     MAIN -->|"@import('boss_phrases.zig')"| PHRASES
+    MAIN -->|"@import('sound_config.zig')"| SOUNDCFG
     NAMELISTS -->|"@import('main.zig') for ZombieType"| MAIN
+    SOUNDCFG -->|"@import('raylib.zig') for emscripten symbols"| RLIB
     RLIB -->|"pub const c = @cImport"| CIMPORT
     BUILD -->|"b.dependency('raylib')"| RAYLIB_DEP
     CIMPORT -.->|"headers from"| RAYLIB_DEP
