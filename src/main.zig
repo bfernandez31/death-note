@@ -111,6 +111,7 @@ const WaveConfig = struct {
     spawn_delay: f32,
     fall_speed: f32,
     pool_size: u32,
+    burst_size: u32,
 };
 
 const WaveAuthoring = struct {
@@ -247,6 +248,7 @@ var zombies: [MAX_ZOMBIES]?*Zombie = [_]?*Zombie{null} ** MAX_ZOMBIES;
 
 var zombie_texture: raylib.Texture2D = undefined;
 var zombie_kill_sound: raylib.Sound = undefined;
+var game_font: raylib.Font = undefined;
 
 const CLICK_SAMPLE_COUNT: u8 = 3;
 const TYPEWRITER_SAMPLE_COUNT: u8 = 6;
@@ -509,11 +511,20 @@ fn frame(ctx: *FrameContext) void {
                     } else {
                         const wave_cfg = getWaveConfig(current_wave);
                         if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size and boss == null) {
-                            const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
-                            if (spawned) {
-                                spawn_timer = 0.0;
-                                wave_spawned += 1;
+                            const remaining = wave_cfg.pool_size - wave_spawned;
+                            const burst = if (wave_cfg.burst_size < remaining) wave_cfg.burst_size else remaining;
+                            var burst_spawned: u32 = 0;
+                            var burst_i: u32 = 0;
+                            while (burst_i < burst) : (burst_i += 1) {
+                                const zone_min: c_int = ZOMBIE_SPAWN_X_MIN + @as(c_int, @intCast(burst_i)) * @divTrunc(ZOMBIE_SPAWN_X_MAX - ZOMBIE_SPAWN_X_MIN, @as(c_int, @intCast(burst)));
+                                const zone_max: c_int = if (burst_i == burst - 1) ZOMBIE_SPAWN_X_MAX else ZOMBIE_SPAWN_X_MIN + @as(c_int, @intCast(burst_i + 1)) * @divTrunc(ZOMBIE_SPAWN_X_MAX - ZOMBIE_SPAWN_X_MIN, @as(c_int, @intCast(burst)));
+                                const spawned = spawnZombieInZone(ctx.allocator, prng.random(), zone_min, zone_max) catch false;
+                                if (spawned) {
+                                    wave_spawned += 1;
+                                    burst_spawned += 1;
+                                }
                             }
+                            if (burst_spawned > 0) spawn_timer = 0.0;
                         }
                     }
 
@@ -639,7 +650,7 @@ fn frame(ctx: *FrameContext) void {
                 @intFromFloat(ctx.text_box.height),
                 border_color,
             );
-            raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
+            drawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
 
             if (is_transitioning) {
                 const next_wave = current_wave + 1;
@@ -655,7 +666,7 @@ fn frame(ctx: *FrameContext) void {
             }
 
             if (ctx.mouse_on_text and letter_count < getCurrentMaxInput() and ((ctx.frames_counter / 20) % 2) == 0) {
-                raylib.DrawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + raylib.MeasureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, CRT_ACCENT);
+                drawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + measureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, CRT_ACCENT);
             }
             if (ctx.mouse_on_text and letter_count >= getCurrentMaxInput()) {
                 drawCenteredText("Press BACKSPACE to delete chars...", 905, 18, CRT_DIM);
@@ -664,7 +675,7 @@ fn frame(ctx: *FrameContext) void {
         .paused => {
             // Draw frozen gameplay behind the pause overlay
             raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
-            raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
+            drawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
             drawZombies();
             drawBoss();
             drawPauseOverlay();
@@ -674,7 +685,7 @@ fn frame(ctx: *FrameContext) void {
         },
         .game_over => {
             raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
-            raylib.DrawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
+            drawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
 
             drawCenteredTextShadow("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, CRT_ERR);
 
@@ -983,7 +994,7 @@ fn drawSoundSettings() void {
         var label_buf: [48]u8 = undefined;
         const prefix: []const u8 = if (selected) "> " else "  ";
         const label_text = std.fmt.bufPrintZ(&label_buf, "{s}{s}", .{ prefix, label }) catch "???";
-        raylib.DrawText(label_text.ptr, SOUND_SETTINGS_ITEM_LEFT_X, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
+        drawText(label_text.ptr, SOUND_SETTINGS_ITEM_LEFT_X, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
 
         var val_buf: [48]u8 = undefined;
         const val_text: [*:0]const u8 = switch (@as(u8, @intCast(i))) {
@@ -999,7 +1010,7 @@ fn drawSoundSettings() void {
             9 => formatVolumeBar(&val_buf, sound_cfg.music_volume),
             else => "???",
         };
-        raylib.DrawText(val_text, screen_width - SOUND_SETTINGS_VALUE_RIGHT_OFFSET, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
+        drawText(val_text, screen_width - SOUND_SETTINGS_VALUE_RIGHT_OFFSET, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
     }
 
     drawCenteredText("ESC: BACK", screen_height - SOUND_SETTINGS_HINT_Y_OFFSET, SOUND_SETTINGS_HINT_SIZE, CRT_DIM);
@@ -1039,12 +1050,12 @@ fn drawMetricsHud() void {
     const wpm_rounded: u32 = @intFromFloat(@round(displayed_wpm));
     var wpm_buf: [32]u8 = undefined;
     const wpm_text = std.fmt.bufPrintZ(&wpm_buf, "WPM {d}", .{wpm_rounded}) catch "WPM ?";
-    raylib.DrawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+    drawText(wpm_text.ptr, WPM_HUD_X, WPM_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
 
     const acc_rounded: u32 = @intFromFloat(@round(displayed_accuracy));
     var acc_buf: [32]u8 = undefined;
     const acc_text = std.fmt.bufPrintZ(&acc_buf, "Acc {d}%", .{acc_rounded}) catch "Acc ?";
-    raylib.DrawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
+    drawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
 }
 
 fn drawPlayingHud() void {
@@ -1060,11 +1071,11 @@ fn drawPlayingHud() void {
 
     var score_buf: [32]u8 = undefined;
     const score_text = std.fmt.bufPrintZ(&score_buf, "Score: {d:0>6}", .{score}) catch "Score: ?";
-    raylib.DrawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, CRT_FG);
+    drawText(score_text.ptr, SCORE_HUD_X, SCORE_HUD_Y, SCORE_HUD_SIZE, CRT_FG);
 
     var combo_buf: [32]u8 = undefined;
     const combo_text = std.fmt.bufPrintZ(&combo_buf, "Combo: {d} x{d}", .{ combo_count, getComboMultiplier(combo_count) }) catch "Combo: ?";
-    raylib.DrawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
+    drawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
 
     drawMetricsHud();
 
@@ -1080,20 +1091,20 @@ fn drawPlayingHud() void {
                 .bomb => CRT_ERR,
                 .shield => CRT_WARN,
             };
-            raylib.DrawText(label, SCORE_HUD_X, 60, METRICS_HUD_SIZE, color);
+            drawText(label, SCORE_HUD_X, 60, METRICS_HUD_SIZE, color);
         }
 
         if (freeze_timer > 0) {
             var ft_buf: [32]u8 = undefined;
             const timer_int: u32 = @intFromFloat(@ceil(freeze_timer));
             const ft_text = std.fmt.bufPrintZ(&ft_buf, "FREEZE {d}s", .{timer_int}) catch "FREEZE";
-            raylib.DrawText(ft_text.ptr, SCORE_HUD_X, 80, METRICS_HUD_SIZE, CRT_ACCENT);
+            drawText(ft_text.ptr, SCORE_HUD_X, 80, METRICS_HUD_SIZE, CRT_ACCENT);
         }
 
         if (shield_active) {
             // Drawn on its own row so it does not overlap the FREEZE countdown when both effects are active.
             const shield_y: c_int = if (freeze_timer > 0) 100 else 80;
-            raylib.DrawText("SHIELD ARMED", SCORE_HUD_X, shield_y, METRICS_HUD_SIZE, CRT_WARN);
+            drawText("SHIELD ARMED", SCORE_HUD_X, shield_y, METRICS_HUD_SIZE, CRT_WARN);
         }
     }
 }
@@ -1311,6 +1322,10 @@ pub fn main() !void {
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
 
+    game_font = raylib.LoadFontEx("assets/JetBrainsMonoNerdFont-Thin.ttf", 64, null, 0);
+    defer raylib.UnloadFont(game_font);
+    raylib.SetTextureFilter(game_font.texture, raylib.TEXTURE_FILTER_BILINEAR);
+
     raylib.SetTargetFPS(60);
 
     var ts: std.c.timespec = undefined;
@@ -1472,7 +1487,7 @@ fn drawZombies() void {
 
             // Draw the zombie's name above the zombie
             const text_pos = raylib.Vector2{ .x = pos.x, .y = pos.y - 20.0 };
-            raylib.DrawText(zomb.name, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y), 20, CRT_ACCENT);
+            drawText(zomb.name, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y), 20, CRT_ACCENT);
 
             if (zomb.power_up) |pu| {
                 const t = raylib.GetTime();
@@ -1489,13 +1504,17 @@ fn drawZombies() void {
                     .shield => CRT_WARN,
                 };
                 glyph_color.a = alpha;
-                raylib.DrawText(glyph, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y - 18.0), 20, glyph_color);
+                drawText(glyph, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y - 18.0), 20, glyph_color);
             }
         }
     }
 }
 
 fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
+    return spawnZombieInZone(allocator, rng, ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX);
+}
+
+fn spawnZombieInZone(allocator: *std.mem.Allocator, rng: std.Random, zone_x_min: c_int, zone_x_max: c_int) !bool {
     for (zombies, 0..) |zombie, i| {
         if (zombie == null) {
             const zombie_type = selectZombieType(getSpawnWeights(current_wave), rng);
@@ -1520,10 +1539,6 @@ fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
                 forced_group,
                 rng,
             ) orelse {
-                // Anti-doublon retries exhausted. Count this as a cluster tick anyway,
-                // otherwise the cluster counter stays frozen and forces the same exhausted
-                // group on every subsequent frame — the spawner stalls for the rest of the
-                // wave.
                 if (trap_cluster_remaining > 0) {
                     trap_cluster_remaining -= 1;
                     if (trap_cluster_remaining == 0) trap_cluster_group = null;
@@ -1542,15 +1557,13 @@ fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
             const new_zombie = try allocator.create(Zombie);
             errdefer allocator.destroy(new_zombie);
 
-            // Clamp spawn x so the displayed name (drawn left-aligned at zombie.x in size 20)
-            // never overflows the right edge. Long names like "marie-claire" can be ~130px
-            // wide, exceeding the ~51px sprite footprint the static X_MAX assumes.
-            const name_width = raylib.MeasureText(selection.name, 20);
+            const name_width = measureText(selection.name, 20);
             const sprite_width: c_int = screen_width - ZOMBIE_SPAWN_X_MAX;
             const required = if (name_width > sprite_width) name_width else sprite_width;
-            const dynamic_x_max_raw = screen_width - required - 5;
-            const dynamic_x_max = if (dynamic_x_max_raw < ZOMBIE_SPAWN_X_MIN) ZOMBIE_SPAWN_X_MIN else dynamic_x_max_raw;
-            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, dynamic_x_max)));
+            const dynamic_x_max_raw = zone_x_max - required - 5;
+            const effective_x_min = zone_x_min;
+            const effective_x_max = if (dynamic_x_max_raw < effective_x_min) effective_x_min else dynamic_x_max_raw;
+            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(effective_x_min, effective_x_max)));
 
             var carrier_power_up: ?PowerUpType = null;
             if (game_mode == .survival) {
@@ -1581,24 +1594,35 @@ fn spawnZombie(allocator: *std.mem.Allocator, rng: std.Random) !bool {
     return false;
 }
 
+const FONT_SPACING: f32 = 1.0;
+
+fn drawText(text: [*c]const u8, x: c_int, y: c_int, size: c_int, color: raylib.Color) void {
+    raylib.DrawTextEx(game_font, text, raylib.Vector2{ .x = @floatFromInt(x), .y = @floatFromInt(y) }, @floatFromInt(size), FONT_SPACING, color);
+}
+
+fn measureText(text: [*c]const u8, size: c_int) c_int {
+    const v = raylib.MeasureTextEx(game_font, text, @floatFromInt(size), FONT_SPACING);
+    return @intFromFloat(@ceil(v.x));
+}
+
 fn drawCenteredText(text: [*:0]const u8, y: c_int, size: c_int, color: raylib.Color) void {
-    const width = raylib.MeasureText(text, size);
-    raylib.DrawText(text, @divTrunc(screen_width - width, 2), y, size, color);
+    const width = measureText(text, size);
+    drawText(text, @divTrunc(screen_width - width, 2), y, size, color);
 }
 
 // Cheap CRT-style glow: a soft dim copy offset by a couple of pixels behind
 // the main text. Avoids per-frame blur passes while still selling the look.
 fn drawCenteredTextShadow(text: [*:0]const u8, y: c_int, size: c_int, color: raylib.Color) void {
-    const width = raylib.MeasureText(text, size);
+    const width = measureText(text, size);
     const x = @divTrunc(screen_width - width, 2);
     const shadow = raylib.Color{ .r = color.r / 3, .g = color.g / 3, .b = color.b / 3, .a = color.a };
-    raylib.DrawText(text, x + 2, y + 3, size, shadow);
-    raylib.DrawText(text, x, y, size, color);
+    drawText(text, x + 2, y + 3, size, shadow);
+    drawText(text, x, y, size, color);
 }
 
 fn drawColumnCenteredText(text: [*:0]const u8, cx: c_int, y: c_int, size: c_int, color: raylib.Color) void {
-    const width = raylib.MeasureText(text, size);
-    raylib.DrawText(text, cx - @divTrunc(width, 2), y, size, color);
+    const width = measureText(text, size);
+    drawText(text, cx - @divTrunc(width, 2), y, size, color);
 }
 
 fn drawStatCell(label: [*:0]const u8, value: [*:0]const u8, cx: c_int, label_y: c_int, value_y: c_int) void {
@@ -1606,10 +1630,12 @@ fn drawStatCell(label: [*:0]const u8, value: [*:0]const u8, cx: c_int, label_y: 
     drawColumnCenteredText(value, cx, value_y, STATS_GRID_VALUE_SIZE, CRT_FG);
 }
 
+const MIN_TIME_ON_SCREEN: f32 = 2.5;
+
 fn deriveWaveTiming(target_wpm: u32) struct { spawn_delay: f32, fall_speed: f32 } {
     const chars_per_sec = @as(f32, @floatFromInt(target_wpm)) * CHARS_PER_WORD / SECONDS_PER_MINUTE;
     const time_to_type = AVG_NAME_CHARS / chars_per_sec;
-    const time_on_screen = time_to_type * FALL_GRACE_FACTOR;
+    const time_on_screen = @max(MIN_TIME_ON_SCREEN, time_to_type * FALL_GRACE_FACTOR);
     const sh: f32 = @floatFromInt(screen_height);
     return .{
         .spawn_delay = time_to_type,
@@ -1621,20 +1647,34 @@ fn getWaveConfig(wave: u32) WaveConfig {
     const authoring = if (wave >= 1 and wave <= WAVE_TABLE.len) blk: {
         break :blk WAVE_TABLE[wave - 1];
     } else blk: {
-        // Cap at MAX_ZOMBIES — past wave ~49 the formula exceeds the pool capacity, at which
-        // point wave_spawned can never reach pool_size and the wave never completes (soft-lock).
+        const extra = (wave - 15) * 5;
+        const wpm: u32 = if (100 + extra > 250) 250 else 100 + extra;
         const calculated: u32 = 33 + 2 * (wave - 15);
         break :blk WaveAuthoring{
-            .target_wpm = 110,
+            .target_wpm = wpm,
             .pool_size = if (calculated > MAX_ZOMBIES) MAX_ZOMBIES else calculated,
         };
     };
-    const timing = deriveWaveTiming(authoring.target_wpm);
+
+    const wave_f: f32 = @floatFromInt(wave);
+    const time_on_screen_raw = 6.0 - 0.15 * (wave_f - 1.0);
+    const time_on_screen = @max(MIN_TIME_ON_SCREEN, @min(6.0, time_on_screen_raw));
+
+    const sh: f32 = @floatFromInt(screen_height);
+    const fall_speed = sh / (time_on_screen * FRAMES_PER_SECOND);
+
+    const burst_size: u32 = (wave + 3) / 4;
+
+    const burst_f: f32 = @floatFromInt(burst_size);
+    const wpm_f: f32 = @floatFromInt(authoring.target_wpm);
+    const spawn_delay = (72.0 * burst_f) / wpm_f;
+
     return WaveConfig{
         .target_wpm = authoring.target_wpm,
-        .spawn_delay = timing.spawn_delay,
-        .fall_speed = timing.fall_speed,
+        .spawn_delay = spawn_delay,
+        .fall_speed = fall_speed,
         .pool_size = authoring.pool_size,
+        .burst_size = burst_size,
     };
 }
 
@@ -1713,7 +1753,7 @@ fn drawBoss() void {
         const boss_y: c_int = @intFromFloat(b.y);
         // FR-007: phrase text sits above the sprite; health bar sits below the phrase
         // (between phrase and sprite). Stacked top→bottom: phrase, bar, sprite.
-        raylib.DrawText(b.name, boss_x, boss_y - 50, 20, CRT_ERR);
+        drawText(b.name, boss_x, boss_y - 50, 20, CRT_ERR);
 
         const bar_x = boss_x;
         const bar_y = boss_y - 25;
@@ -1971,7 +2011,7 @@ fn drawPopups() void {
         color.a = alpha;
         var buf: [32]u8 = undefined;
         const text = std.fmt.bufPrintZ(&buf, "+{d}", .{p.points}) catch "+?";
-        raylib.DrawText(text.ptr, @intFromFloat(p.x), @intFromFloat(draw_y), POPUP_FONT_SIZE, color);
+        drawText(text.ptr, @intFromFloat(p.x), @intFromFloat(draw_y), POPUP_FONT_SIZE, color);
     }
 }
 
@@ -2048,31 +2088,42 @@ test "input buffer bounds" {
     try std.testing.expectEqual(@as(u8, '\x00'), buf[count]);
 }
 
-// Expected timing per the WPM-driven formula:
-//   spawn_delay  = AVG_NAME_CHARS / (target_wpm * CHARS_PER_WORD / SECONDS_PER_MINUTE)
-//   fall_speed   = screen_height / (spawn_delay * FALL_GRACE_FACTOR * FRAMES_PER_SECOND)
-fn expectedSpawnDelay(target_wpm: u32) f32 {
-    const chars_per_sec = @as(f32, @floatFromInt(target_wpm)) * CHARS_PER_WORD / SECONDS_PER_MINUTE;
-    return AVG_NAME_CHARS / chars_per_sec;
-}
-fn expectedFallSpeed(target_wpm: u32) f32 {
-    const sh: f32 = @floatFromInt(screen_height);
-    return sh / (expectedSpawnDelay(target_wpm) * FALL_GRACE_FACTOR * FRAMES_PER_SECOND);
+fn expectedTimeOnScreen(wave: u32) f32 {
+    const wave_f: f32 = @floatFromInt(wave);
+    const raw = 6.0 - 0.15 * (wave_f - 1.0);
+    return @max(MIN_TIME_ON_SCREEN, @min(6.0, raw));
 }
 
-test "getWaveConfig wave 1 follows WPM-driven formula" {
+fn expectedFallSpeed(wave: u32) f32 {
+    const sh: f32 = @floatFromInt(screen_height);
+    return sh / (expectedTimeOnScreen(wave) * FRAMES_PER_SECOND);
+}
+
+fn expectedBurstSize(wave: u32) u32 {
+    return (wave + 3) / 4;
+}
+
+fn expectedSpawnDelay(target_wpm: u32, burst_size: u32) f32 {
+    const burst_f: f32 = @floatFromInt(burst_size);
+    const wpm_f: f32 = @floatFromInt(target_wpm);
+    return (72.0 * burst_f) / wpm_f;
+}
+
+test "getWaveConfig wave 1 density model" {
     const cfg = getWaveConfig(1);
     try std.testing.expectEqual(@as(u32, 15), cfg.target_wpm);
-    try std.testing.expectApproxEqAbs(expectedSpawnDelay(15), cfg.spawn_delay, 0.01);
-    try std.testing.expectApproxEqAbs(expectedFallSpeed(15), cfg.fall_speed, 0.01);
+    try std.testing.expectEqual(@as(u32, 1), cfg.burst_size);
+    try std.testing.expectApproxEqAbs(expectedFallSpeed(1), cfg.fall_speed, 0.01);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(15, 1), cfg.spawn_delay, 0.01);
     try std.testing.expectEqual(@as(u32, 5), cfg.pool_size);
 }
 
-test "getWaveConfig wave 15 follows WPM-driven formula" {
+test "getWaveConfig wave 15 density model" {
     const cfg = getWaveConfig(15);
     try std.testing.expectEqual(@as(u32, 100), cfg.target_wpm);
-    try std.testing.expectApproxEqAbs(expectedSpawnDelay(100), cfg.spawn_delay, 0.01);
-    try std.testing.expectApproxEqAbs(expectedFallSpeed(100), cfg.fall_speed, 0.01);
+    try std.testing.expectEqual(@as(u32, 4), cfg.burst_size);
+    try std.testing.expectApproxEqAbs(expectedFallSpeed(15), cfg.fall_speed, 0.01);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(100, 4), cfg.spawn_delay, 0.01);
     try std.testing.expectEqual(@as(u32, 33), cfg.pool_size);
 }
 
@@ -2088,27 +2139,58 @@ test "wave completes when kills equals pool size" {
 
 test "getWaveConfig scales correctly for wave 16+" {
     const cfg16 = getWaveConfig(16);
-    try std.testing.expectEqual(@as(u32, 110), cfg16.target_wpm);
-    try std.testing.expectApproxEqAbs(expectedSpawnDelay(110), cfg16.spawn_delay, 0.01);
-    try std.testing.expectApproxEqAbs(expectedFallSpeed(110), cfg16.fall_speed, 0.01);
+    try std.testing.expectEqual(@as(u32, 105), cfg16.target_wpm);
     try std.testing.expectEqual(@as(u32, 35), cfg16.pool_size);
 
     const cfg20 = getWaveConfig(20);
     try std.testing.expectEqual(@as(u32, 43), cfg20.pool_size);
 
-    // Past the pool capacity the formula would yield 203, but the cap pins pool_size at
-    // MAX_ZOMBIES to prevent a soft-lock (wave_spawned could never reach an above-pool
-    // target).
     const cfg100 = getWaveConfig(100);
     try std.testing.expectEqual(@as(u32, MAX_ZOMBIES), cfg100.pool_size);
 
-    // Just past the cap threshold should also clamp.
     const cfg_threshold = getWaveConfig(49);
     try std.testing.expectEqual(@as(u32, MAX_ZOMBIES), cfg_threshold.pool_size);
 
-    // Just below the threshold should still scale linearly.
     const cfg48 = getWaveConfig(48);
     try std.testing.expectEqual(@as(u32, 99), cfg48.pool_size);
+}
+
+test "target WPM caps at 250" {
+    const cfg45 = getWaveConfig(45);
+    try std.testing.expectEqual(@as(u32, 250), cfg45.target_wpm);
+    const cfg100 = getWaveConfig(100);
+    try std.testing.expectEqual(@as(u32, 250), cfg100.target_wpm);
+}
+
+test "fall time floor is 2.5s at wave 25+" {
+    const sh: f32 = @floatFromInt(screen_height);
+    const cfg25 = getWaveConfig(25);
+    const time25 = sh / (cfg25.fall_speed * FRAMES_PER_SECOND);
+    try std.testing.expect(time25 >= MIN_TIME_ON_SCREEN - 0.01);
+
+    const cfg50 = getWaveConfig(50);
+    const time50 = sh / (cfg50.fall_speed * FRAMES_PER_SECOND);
+    try std.testing.expect(time50 >= MIN_TIME_ON_SCREEN - 0.01);
+}
+
+test "burst size equals ceil(wave/4)" {
+    try std.testing.expectEqual(@as(u32, 1), getWaveConfig(1).burst_size);
+    try std.testing.expectEqual(@as(u32, 1), getWaveConfig(4).burst_size);
+    try std.testing.expectEqual(@as(u32, 2), getWaveConfig(5).burst_size);
+    try std.testing.expectEqual(@as(u32, 2), getWaveConfig(8).burst_size);
+    try std.testing.expectEqual(@as(u32, 3), getWaveConfig(9).burst_size);
+    try std.testing.expectEqual(@as(u32, 7), getWaveConfig(25).burst_size);
+}
+
+test "runner fall time stays above 1.9s at all waves" {
+    const sh: f32 = @floatFromInt(screen_height);
+    var wave: u32 = 1;
+    while (wave <= 100) : (wave += 1) {
+        const cfg = getWaveConfig(wave);
+        const runner_speed = cfg.fall_speed * RUNNER_SPEED_MULTIPLIER;
+        const runner_time = sh / (runner_speed * FRAMES_PER_SECOND);
+        try std.testing.expect(runner_time >= 1.9);
+    }
 }
 
 // T005: frame-index wrap — mirrors the animation increment in drawZombies
@@ -2656,7 +2738,7 @@ test "kill counter tracks total kills" {
 
 test "ZombieType speed multipliers" {
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), getSpeedMultiplier(.standard), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 1.8), getSpeedMultiplier(.runner), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.3), getSpeedMultiplier(.runner), 0.001);
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), getSpeedMultiplier(.tank), 0.001);
 }
 
