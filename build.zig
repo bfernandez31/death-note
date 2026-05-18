@@ -134,6 +134,12 @@ pub fn build(b: *std.Build) void {
         // path consumes deep stack frames in the per-frame callback. 1 MB
         // matches the value used by raylib's official PLATFORM_WEB samples.
         emcc_link.addArgs(&.{"-sSTACK_SIZE=1048576"});
+        // Default INITIAL_MEMORY (16 MB) is too small once the bundled assets
+        // exceed ~10 MB (DEATHN-26 added ~9 MB of audio). 32 MB covers the
+        // current asset payload + raylib runtime + game state without an
+        // immediate grow, and ALLOW_MEMORY_GROWTH is the safety net so future
+        // asset additions don't reintroduce the OOM seen after PR #12.
+        emcc_link.addArgs(&.{ "-sINITIAL_MEMORY=33554432", "-sALLOW_MEMORY_GROWTH=1" });
         emcc_link.addArgs(&.{ "-o", "zig-out/web/index.html" });
         emcc_link.step.dependOn(&emcc_check.step);
         emcc_link.step.dependOn(&raylib_make.step);
