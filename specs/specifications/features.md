@@ -978,7 +978,7 @@ graph TB
 **System behavior.**
 - `held_power_up: ?PowerUpType` (null = empty).
 - HUD rendered only when `game_mode == .survival`: formats `"PU: {s}"` using a name string per type.
-- Space bar: `IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null` → `activatePowerUp(allocator)` → `held_power_up = null` after activation.
+- Space bar: `IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null and boss == null` → `activatePowerUp(allocator)` → `held_power_up = null` after activation. The `boss == null` guard prevents the space key from triggering the held power-up while a boss is active — boss phrases contain spaces (F-16) so during a boss fight the space character must be routed to the input buffer instead.
 - On restart / quit-to-menu: `held_power_up = null`.
 
 **Key source references.**
@@ -1035,7 +1035,7 @@ graph TB
 
 **System behavior.**
 - `activatePowerUp`: sets `shield_active = true`.
-- In `updateZombies`, zombie-at-bottom detection: if `shield_active` → free zombie (`allocator.destroy`, slot = `null`) and mark `shield_absorbed_any = true`; continue iteration so additional same-frame crossings are also absorbed. After the loop, `shield_active = false` if `shield_absorbed_any`.
+- In `updateZombies`, zombie-at-bottom detection: if `shield_active` → free zombie (`allocator.destroy`, slot = `null`), mark `shield_absorbed_any = true`, and increment both `wave_kills` and `total_kills`; continue iteration so additional same-frame crossings are also absorbed. After the loop, `shield_active = false` if `shield_absorbed_any`. Absorbed zombies count toward wave completion — without the `wave_kills` increment the wave would stall forever once a zombie was shielded, because `wave_spawned` would have advanced but `wave_kills` never would. They also count toward `total_kills` for stat-screen accuracy, but they do NOT award `score`, `combo_count`, or score popups (the shield is a defensive consumable, not a kill reward).
 - Shield does not block boss crossing the bottom (boss-crossing path is in `updateBoss`, which does not check `shield_active`).
 - HUD: when `shield_active` and `game_mode == .survival`, renders `"SHIELD ARMED"` with `CRT_WARN` color (on its own row when `freeze_timer > 0` so it does not overlap the FREEZE countdown).
 - On restart / quit-to-menu: `shield_active = false`.

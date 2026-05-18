@@ -35,7 +35,7 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Thirty-six or more `test "..." {}` blocks exist across `src/main.zig` and `src/name_lists.zig`:
+**Current state**: Approximately 98 `test "..." {}` blocks exist, distributed as `src/main.zig` (67), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3) — all reachable from the `test_step` root because each is either directly inside `src/main.zig` or `@import`-ed transitively. The list below catalogs the historically documented blocks; many newer additions (sound system, per-mode high scores, power-ups, shield wave-kill counting) are not enumerated here but follow the same conventions:
 - `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
 - `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
 - `test "getWaveConfig returns correct values for wave 1"` — verifies wave 1 difficulty parameters
@@ -96,8 +96,11 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(36+ blocks — name match, input bounds (20 chars), wave config×4, frame wrap,\nboss wave detection, boss threshold, boss input limit,\nboss phrase validity, buffer capacity, wave completion gate,\ncalculateScore cases, combo multiplier tiers, mismatch detection,\npopup pool recycling, score/combo reset,\ncircular buffer wrap, resetMetricsState,\nWPM sliding window, WPM early game, WPM zero input,\naccuracy 100/4, accuracy zero input, smoothing convergence,\nZombieType speed multipliers, spawn/name weight brackets,\ntype selection distribution, tint colors, hyphen input,\ntrap cluster reset, input buffer 20 chars)"]
-    UNIT_NAMELISTS["Unit tests\nsrc/name_lists.zig\n(10 blocks — primary list size, all-ASCII, compound validity,\ntrap group sizes, runner/tank name counts,\nanti-doublon, length filtering, trap group preference,\nweight table sum validation)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(67 blocks — name match, input bounds (20 chars), wave config, frame wrap,\nboss wave detection, boss threshold, boss input limit, boss phrase validity,\nwave completion gate, calculateScore cases, combo multiplier tiers, mismatch\ndetection, popup pool, score/combo reset, circular buffer wrap, resetMetricsState,\nWPM sliding window/early game/zero, accuracy 100/4 and zero, smoothing convergence,\nZombieType speed multipliers, spawn/name weight brackets, type selection distribution,\ntint colors, hyphen input, trap cluster reset, plus DEATHN-26 sound integration tests\nand power-up / per-mode high-score coverage)"]
+    UNIT_NAMELISTS["Unit tests\nsrc/name_lists.zig\n(12 blocks — primary list size, all-ASCII, compound validity,\ntrap group sizes, runner/tank name counts, anti-doublon,\nlength filtering, trap group preference, weight table sum validation)"]
+    UNIT_SOUNDCFG["Unit tests\nsrc/sound_config.zig\n(10 blocks — DISK_SIZE, default values, TypingPack/ErrorPack variant counts,\nvolume clamping at 0/20/25/255, invalid-enum fallback, load/save signatures)"]
+    UNIT_HIGHSCORE["Unit tests\nsrc/highscore.zig\n(6 blocks — record size, filename/key per GameMode, mode-specific persistence paths)"]
+    UNIT_ZOMBIETYPES["Unit tests\nsrc/zombie_types.zig\n(3 blocks — enum variants, weight-table well-formedness)"]
     UNIT_NAMES["Unit tests\nsrc/zombie_names.zig\n(0 blocks — reachable via @import)"]
     UNIT_PHRASES["Unit tests\nsrc/boss_phrases.zig\n(0 blocks — reachable via @import)"]
     RAYLIB_ZIG["src/raylib.zig\n(C interop wall — not unit-testable)"]
@@ -124,7 +127,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | 36+ | Pure-logic tests in `src/main.zig`: name-match equality, input-buffer bounds (20 chars), wave config, wave completion, frame wrap-around, boss detection, score/combo/WPM/accuracy, ZombieType speed multipliers, spawn/name weight tables, type selection distribution, tint colors, hyphen input, trap cluster reset. Tests in `src/name_lists.zig`: primary list size, ASCII validation, compound name validity, trap group sizes, runner/tank name count minimums, anti-doublon, length filtering, trap group preference, weight sum validation. |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | ~98 | Pure-logic tests distributed across `src/main.zig` (67), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3). Coverage includes name-match equality, input-buffer bounds (20 chars), wave config, wave completion, frame wrap-around, boss detection, score/combo/WPM/accuracy, ZombieType speed multipliers, spawn/name weight tables, type selection distribution, tint colors, hyphen input, trap cluster reset, primary list size, ASCII validation, compound name validity, trap group sizes, runner/tank name count minimums, anti-doublon, length filtering, trap group preference, weight sum validation, sound config defaults / clamping / pack-enum cycling / load+save signatures, per-mode high-score filenames and keys, and zombie type weight-table well-formedness. |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 
