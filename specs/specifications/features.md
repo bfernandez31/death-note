@@ -204,26 +204,27 @@ graph TB
 
 ### F-01 Zombie Spawning
 
-**Description.** The game allocates a new `Zombie` struct on the heap and stores its pointer in the first available `null` slot of the fixed-size `zombies` pool. The zombie is initialised at a random horizontal position, at the top of the screen, with a type-adjusted fall speed, and a name selected from the expanded name lists in `name_lists.zig`. Spawning fires on a per-wave timer (inherited from `WaveConfig.spawn_delay`) and is capped at the current wave's `pool_size`. Killed zombie slots are freed immediately, so slots recycle within the same wave. If no free slot exists or name selection fails (all retries exhausted by anti-doublon), the spawn attempt is silently deferred to the next timer tick.
+**Description.** The game allocates a new `Zombie` struct on the heap and stores its pointer in the first available `null` slot of the fixed-size `zombies` pool. Spawning fires in **bursts**: when `spawn_timer >= wave_cfg.spawn_delay`, the game spawns `wave_cfg.burst_size` zombies simultaneously (or fewer if the wave pool is nearly exhausted). The screen is divided into equal-width horizontal zones so burst zombies spread across the screen rather than overlapping. Each zombie is initialised with a type-adjusted fall speed and a name from `name_lists.zig`. Killed zombie slots are freed immediately, so slots recycle within the same wave. If no free slot exists or name selection fails, that individual spawn attempt is silently skipped.
 
-**User-facing behavior.** New zombies appear at the top of the window at intervals and speeds that increase with each wave. Each wave has a finite number of zombies to spawn. Zombie type variety increases across waves: only standard zombies appear in waves 1–3; runners and tanks are introduced gradually from wave 4 onward.
+**User-facing behavior.** New zombies appear at the top of the window in groups whose size grows with each wave. Wave 1 spawns one zombie at a time; by wave 9 three arrive simultaneously. Each wave has a finite pool of zombies. Zombie type variety increases across waves: only standard zombies appear in waves 1–3; runners and tanks are introduced gradually from wave 4 onward.
 
 **System behavior.**
 - `spawn_timer` is incremented each frame with `raylib.GetFrameTime()`.
-- When `spawn_timer >= wave_cfg.spawn_delay` AND `wave_spawned < wave_cfg.pool_size`, `spawnZombie(allocator, prng.random())` is called.
-- On a successful spawn, `spawn_timer = 0.0` and `wave_spawned += 1`.
-- `spawnZombie` iterates `zombies[0..MAX_ZOMBIES]`; the first `null` slot is used.
+- When `spawn_timer >= wave_cfg.spawn_delay` AND `wave_spawned < wave_cfg.pool_size`, a burst fires.
+- `burst = min(wave_cfg.burst_size, pool_size - wave_spawned)` zombies are attempted.
+- The spawn zone `[ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX]` is divided into `burst` equal-width zones; each zombie in the burst calls `spawnZombieInZone(allocator, rng, zone_min, zone_max)`.
+- If any zombie in the burst was spawned, `spawn_timer = 0.0`; `wave_spawned` is incremented per successful spawn.
+- `spawnZombieInZone` iterates `zombies[0..MAX_ZOMBIES]` for the first `null` slot; selects zombie type and name; clamps horizontal position so the name label does not overflow the right edge.
 - `selectZombieType(getSpawnWeights(current_wave), rng)` picks a `ZombieType` from `SPAWN_WEIGHT_TABLE` (waves 1–3: 100% standard; waves 4–6: 70/20/10; waves 7–10: 50/30/20; waves 11+: 40/30/30).
 - Builds `active_names[]` from all currently active zombies' name pointers (for anti-doublon).
-- `name_lists.selectName(wave, zombie_type, active_names, forced_group, rng)` applies `NAME_WEIGHT_TABLE` (wave-weighted category) and type-based length filtering (runners ≤5 chars, tanks ≥8 chars), then retries up to `MAX_SPAWN_RETRIES` (10) on collision; returns `null` on failure.
+- `name_lists.selectName(wave, zombie_type, active_names, forced_group, rng)` applies `NAME_WEIGHT_TABLE` and type-based length filtering, retrying up to `MAX_SPAWN_RETRIES` (10) on collision.
 - If selection category is `.trap` and no cluster is active, sets `trap_cluster_group` and `trap_cluster_remaining` (1–2 extras); decrements remaining on subsequent spawns.
 - `allocator.create(Zombie)` allocates heap memory; `errdefer allocator.destroy` prevents leaks on failure.
-- Horizontal position: `raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)` → [10, 749].
-- Spawn speed: `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` (1.0×/1.8×/0.5× for standard/runner/tank).
+- Spawn speed: `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` (1.0×/1.3×/0.5× for standard/runner/tank).
 
 **Key source references.**
 - `src/main.zig` — `MAX_ZOMBIES`, `MAX_SPAWN_RETRIES`, `SPAWN_WEIGHT_TABLE`, `NAME_WEIGHT_TABLE`, `ZOMBIE_SPAWN_X_MIN`, `ZOMBIE_SPAWN_X_MAX`, `trap_cluster_group`, `trap_cluster_remaining`
-- `src/main.zig` — `spawnZombie`, `selectZombieType`, `getSpawnWeights`, `getNameWeights`, `getSpeedMultiplier`
+- `src/main.zig` — `spawnZombie`, `spawnZombieInZone`, `selectZombieType`, `getSpawnWeights`, `getNameWeights`, `getSpeedMultiplier`
 - `src/name_lists.zig` — `PrimaryNames`, `CompoundNames`, `TrapGroups`, `selectName`
 
 **Dependencies.** Relies on `name_lists.zig` for name selection (F-03 for rendering), `std.heap.page_allocator`, and the `!is_game_over and !is_transitioning and !is_dying` guard. Zombie type determines visual tint (F-28) and fall speed (F-04).
@@ -263,9 +264,9 @@ graph TB
 **System behavior.**
 - Executed inside `drawZombies()` for every active zombie.
 - `text_pos.y = pos.y - 20.0`.
-- `raylib.DrawText(zomb.name, …, 20, CRT_ACCENT)`.
+- `drawText(zomb.name, …, 20, CRT_ACCENT)` — a wrapper around `raylib.DrawTextEx(game_font, …)` with `FONT_SPACING = 1.0`.
 - The name pointer is passed directly; no copy is made because `[*:0]const u8` is compatible with raylib's C string parameter.
-- The hyphen character in compound names is rendered natively by raylib's `DrawText`.
+- The hyphen character in compound names is rendered natively by the game font.
 
 **Key source references.**
 - `src/main.zig` — `name: [*:0]const u8` field in `Zombie` struct
@@ -278,7 +279,7 @@ graph TB
 
 ### F-04 Falling Motion
 
-**Description.** Every frame during the update phase, each active zombie's `y` coordinate is incremented by its `speed` value. Speed is set at spawn time as `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` and is never mutated after spawn. Standard zombies use the wave's base `fall_speed` (0.5–2.0 px/frame); runners move at 1.8× the base speed; tanks move at 0.5× the base speed.
+**Description.** Every frame during the update phase, each active zombie's `y` coordinate is incremented by its `speed` value. Speed is set at spawn time as `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` and is never mutated after spawn. Standard zombies use the wave's base `fall_speed`; runners move at 1.3× the base speed; tanks move at 0.5× the base speed.
 
 **User-facing behavior.** Zombies descend at a constant per-wave speed, falling faster in higher waves.
 
@@ -512,31 +513,27 @@ graph TB
 
 ---
 
-### F-14 WPM-Driven Wave Scaling
+### F-14 Wave Difficulty Scaling
 
-**Description.** Each wave is authored with only two knobs in `WAVE_TABLE`: `target_wpm` and `pool_size`. The `spawn_delay` and `fall_speed` are **derived** from `target_wpm` (and `screen_height`) so the displayed challenge always matches reality — a player typing exactly at `target_wpm` keeps up with no slack. Waves 16+ use a scaling formula (`target_wpm = 110`, growing `pool_size`) and the same derivation. The game has no hard end — it continues indefinitely with growing zombie pools at the same maxed-out target WPM.
+**Description.** Each wave is governed by a **two-lever difficulty model**. Lever 1 controls **readability** via time-on-screen (which drives `fall_speed`); Lever 2 controls **density** via `burst_size` and `spawn_delay`. The two levers scale independently, preventing the game from becoming unreadable at high waves while still raising pressure through density.
 
-**User-facing behavior.** Wave 1 (`target_wpm = 15`) is approachable for novice typists; later waves demand sustained typing at the displayed WPM. After wave 15 the WPM target plateaus at 110 and only the pool size keeps growing, creating an endurance test.
+**User-facing behavior.** Wave 1 (`target_wpm = 15`) is approachable for novice typists; zombies fall slowly and arrive one at a time. By wave 9, three zombies arrive simultaneously. Fall speed increases gradually until wave 25 where it reaches a floor of 2.5 seconds on-screen, keeping names legible regardless of wave. After wave 15 the WPM target continues growing (capped at 250 WPM at wave 45) and only the burst size and pool keep growing, creating a sustained density challenge.
 
 **System behavior.**
-- `deriveWaveTiming(target_wpm) -> { spawn_delay, fall_speed }` computes:
-  - `chars_per_sec = target_wpm × CHARS_PER_WORD / SECONDS_PER_MINUTE`
-  - `time_to_type = AVG_NAME_CHARS (6.0) / chars_per_sec`
-  - `spawn_delay = time_to_type` — one zombie per type-cycle.
-  - `fall_speed = screen_height / (time_to_type × FALL_GRACE_FACTOR (2.0) × FRAMES_PER_SECOND (60.0))` — a zombie on screen for twice the type-time.
 - `getWaveConfig(wave: u32) WaveConfig`:
-  - For waves 1–15: looks up `WAVE_TABLE[wave - 1]` (a `WaveAuthoring{ target_wpm, pool_size }`).
-  - For waves 16+: builds `WaveAuthoring{ target_wpm = 110, pool_size = min(33 + 2 × (wave - 15), MAX_ZOMBIES) }`.
-  - Then runs `deriveWaveTiming` and returns a full `WaveConfig`.
-- `WAVE_TABLE` is a compile-time `[15]WaveAuthoring` constant — only `target_wpm` and `pool_size` are authored.
-- Per-type multipliers (`runner ×1.8`, `tank ×0.5`) and per-type name-length filters (runners ≤5 chars, tanks ≥8 chars) layer on top of the derived `fall_speed`, so runners are tighter than baseline and tanks are looser.
+  - For waves 1–15: looks up `WAVE_TABLE[wave - 1]` (`WaveAuthoring{ target_wpm, pool_size }`).
+  - For waves 16+: `target_wpm = min(250, 100 + (wave - 15) × 5)`, `pool_size = min(33 + 2 × (wave - 15), MAX_ZOMBIES)`.
+  - **Fall speed (Lever 1):** `time_on_screen = clamp(6.0 - 0.15 × (wave - 1), MIN_TIME_ON_SCREEN (2.5), 6.0)`, then `fall_speed = screen_height / (time_on_screen × FRAMES_PER_SECOND (60.0))`.
+  - **Burst size (Lever 2):** `burst_size = ceil(wave / 4)` — 1 at waves 1–4, 2 at waves 5–8, 3 at waves 9–12, etc.
+  - **Spawn delay:** `spawn_delay = (72.0 × burst_size) / target_wpm` — a burst arrives every time the pool collectively types one "round".
+- `WAVE_TABLE` is a compile-time `[15]WaveAuthoring` constant — only `target_wpm` and `pool_size` are authored; timing is derived.
+- Per-type multipliers (`runner ×1.3`, `tank ×0.5`) and per-type name-length filters (runners ≤5 chars, tanks ≥8 chars) layer on top of the derived `fall_speed`.
 
 **Key source references.**
 - `src/main.zig` — `WAVE_TABLE` compile-time array (`WaveAuthoring` entries for waves 1–15).
-- `src/main.zig` — `deriveWaveTiming` and `getWaveConfig` functions.
-- `src/main.zig` — `AVG_NAME_CHARS`, `FALL_GRACE_FACTOR`, `FRAMES_PER_SECOND` constants.
+- `src/main.zig` — `getWaveConfig` function; `MIN_TIME_ON_SCREEN`, `FRAMES_PER_SECOND` constants.
 
-**Dependencies.** F-01 (spawn uses derived `spawn_delay` and authored `pool_size`), F-04 (fall speed from derived `fall_speed`), F-12 (HUD reads `target_wpm`), F-13 (transition shows next wave WPM).
+**Dependencies.** F-01 (spawn uses `burst_size`, `spawn_delay`, and `pool_size`), F-04 (fall speed from `fall_speed`), F-12 (HUD reads `target_wpm`), F-13 (transition shows next wave WPM).
 
 ---
 
@@ -840,11 +837,11 @@ graph TB
 
 **Description.** Regular zombies are categorized into three types — Standard, Runner, and Tank — each with a distinct color tint, speed multiplier, and preferred name length. Type is selected at spawn time using wave-weighted probabilities from `SPAWN_WEIGHT_TABLE`; visual differentiation requires no additional sprite assets.
 
-**User-facing behavior.** Standard zombies appear with a violet tint (`CRT_FG`, #d48aff) and fall at the wave's normal speed. Runner zombies appear with an amber tint (`CRT_WARN`, #ffb13a) and fall 1.8× faster than normal, bearing short names (≤5 characters). Tank zombies appear with a deep violet tint (`CRT_DIM`, #3a1a5a) and fall at 0.5× the normal speed, bearing longer names (≥8 characters). In waves 1–3, all zombies are Standard. Runners appear from wave 4; Tanks from wave 7. During the dying pause, the responsible regular zombie is always tinted `CRT_ERR` (rose-red, #ff5a8a) regardless of its type.
+**User-facing behavior.** Standard zombies appear with a violet tint (`CRT_FG`, #d48aff) and fall at the wave's normal speed. Runner zombies appear with an amber tint (`CRT_WARN`, #ffb13a) and fall 1.3× faster than normal, bearing short names (≤5 characters). Tank zombies appear with a deep violet tint (`CRT_DIM`, #3a1a5a) and fall at 0.5× the normal speed, bearing longer names (≥8 characters). In waves 1–3, all zombies are Standard. Runners appear from wave 4; Tanks from wave 7. During the dying pause, the responsible regular zombie is always tinted `CRT_ERR` (rose-red, #ff5a8a) regardless of its type.
 
 **System behavior.**
 - `selectZombieType(getSpawnWeights(wave), rng)` rolls a value in [0, 99] against cumulative weight thresholds from `SPAWN_WEIGHT_TABLE`.
-- `getSpeedMultiplier(zombie_type)` returns `1.0` (standard), `1.8` (runner), or `0.5` (tank).
+- `getSpeedMultiplier(zombie_type)` returns `1.0` (standard), `1.3` (runner), or `0.5` (tank).
 - `getZombieTint(zombie_type)` returns `CRT_FG`, `CRT_WARN`, or `CRT_DIM`.
 - `drawZombies` applies the tint via `raylib.DrawTexturePro`; the `CRT_ERR` dying-state override takes priority.
 - Spawn weight table (waves 1–3 / 4–6 / 7–10 / 11+): standard 100/70/50/40, runner 0/20/30/30, tank 0/10/20/30.

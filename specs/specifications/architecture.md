@@ -113,7 +113,7 @@ This codebase does not use a traditional layered architecture. All concerns coll
 | **Presentation / Rendering** | `src/main.zig` (`drawZombies`, `drawBoss`, `drawCrtOverlay`, inline draw calls) | Clears background (`CRT_BG`), draws text input box, blinking cursor, zombie sprites (tinted with `CRT_*` palette), boss sprite, boss phrase text, boss health bar, zombie names, game-over overlay, CRT post-processing overlay (scanlines, vignette, bezel) |
 | **Input** | `src/main.zig` | Mouse hit-test against text box; `GetCharPressed` loop (limit via `getCurrentMaxInput()`); backspace handling; `KEY_ENTER` restart |
 | **Gameplay State** | `src/main.zig` (`updateZombies`, `updateBoss`, `spawnZombie`, `spawnBoss`, `resetZombies`, `resetBoss`; module-level globals) | Zombie and boss y-position advance, game-over detection, name/phrase-match comparison, spawn timer, pool management, boss priority, wave completion gate |
-| **Resources** | `src/main.zig`; `assets/` directory | Load/unload `zombie-hit.wav`, `z_spritesheet.png`, 22 typing/error/power-up WAV files, and `nightmare-pulse.wav` music stream once at startup; all paired with `defer Unload…` |
+| **Resources** | `src/main.zig`; `assets/` directory | Load/unload `zombie-hit.wav`, `z_spritesheet.png`, `JetBrainsMonoNerdFont-Thin.ttf`, 22 typing/error/power-up WAV files, and `nightmare-pulse.wav` music stream once at startup; all paired with `defer Unload…` |
 | **Sound Persistence** | `src/sound_config.zig` | `SoundConfig` struct + `TypingPack`/`ErrorPack` enums; `load()`/`save()` dispatching to `std.c.fopen` native backend (`soundconfig.dat`) or Emscripten `localStorage` (`"death-note.soundconfig"`) depending on `comptime is_web` |
 | **C Interop** | `src/raylib.zig` (lines 1–5) | Single `pub const c = @cImport(…)` aggregating `raylib.h`, `raymath.h`, `rlgl.h`; all raylib symbols are re-exported from this module |
 | **Name Data** | `src/name_lists.zig` | Compile-time arrays `PrimaryNames` (349+), `CompoundNames` (31), `TrapGroups` (15); `selectName` function with wave-weighted category selection, type-based length filtering, and anti-doublon retry; test blocks for data validity |
@@ -171,7 +171,7 @@ const FALL_GRACE_FACTOR: f32 = 2.0;  // input to deriveWaveTiming()
 const FRAMES_PER_SECOND: f32 = 60.0; // input to deriveWaveTiming()
 ```
 
-Wave-specific `spawn_delay` and `fall_speed` are **not** authored — they are derived per call from `target_wpm` (and `screen_height`) by `deriveWaveTiming()`, so changing the screen height or the average name length automatically re-tunes every wave.
+Wave-specific `spawn_delay`, `fall_speed`, and `burst_size` are **not** authored — they are derived per call by `getWaveConfig()` from two independent levers: fall speed is derived from a per-wave `time_on_screen` formula (clamped to `MIN_TIME_ON_SCREEN = 2.5`), and spawn delay is derived from `burst_size` and `target_wpm`. Changing `screen_height` automatically re-tunes `fall_speed` for every wave.
 
 There is no runtime configuration file, no environment variable reading, and no command-line argument parsing.
 

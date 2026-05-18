@@ -25,7 +25,7 @@ pub const PowerUpType = enum {
 
 pub const POWER_UP_DROP_CHANCE: u8 = 10;
 
-pub const RUNNER_SPEED_MULTIPLIER: f32 = 1.8;
+pub const RUNNER_SPEED_MULTIPLIER: f32 = 1.3;
 pub const TANK_SPEED_MULTIPLIER: f32 = 0.5;
 pub const RUNNER_MAX_NAME_LEN: usize = 5;
 pub const TANK_MIN_NAME_LEN: usize = 8;
