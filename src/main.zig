@@ -34,7 +34,10 @@ const BOSS_HEALTH_BAR_HEIGHT: c_int = 8;
 const BOSS_DARK_RED = raylib.Color{ .r = 139, .g = 0, .b = 0, .a = 255 };
 
 const CRT_FG = raylib.Color{ .r = 212, .g = 138, .b = 255, .a = 255 };
+// CRT_DIM is fill-only (text-box backgrounds, boss health bar). It is too dark
+// on CRT_BG to read as text — use CRT_DIM_TEXT for secondary/unselected labels.
 const CRT_DIM = raylib.Color{ .r = 58, .g = 26, .b = 90, .a = 255 };
+const CRT_DIM_TEXT = raylib.Color{ .r = 154, .g = 106, .b = 204, .a = 255 };
 const CRT_BG = raylib.Color{ .r = 8, .g = 2, .b = 10, .a = 255 };
 const CRT_ACCENT = raylib.Color{ .r = 240, .g = 200, .b = 255, .a = 255 };
 const CRT_WARN = raylib.Color{ .r = 255, .g = 177, .b = 58, .a = 255 };
@@ -259,7 +262,6 @@ var zombies: [MAX_ZOMBIES]?*Zombie = [_]?*Zombie{null} ** MAX_ZOMBIES;
 
 var zombie_texture: raylib.Texture2D = undefined;
 var zombie_kill_sound: raylib.Sound = undefined;
-var game_font: raylib.Font = undefined;
 
 const CLICK_SAMPLE_COUNT: u8 = 3;
 const TYPEWRITER_SAMPLE_COUNT: u8 = 6;
@@ -683,7 +685,7 @@ fn frame(ctx: *FrameContext) void {
                 drawText("_", @as(c_int, @intFromFloat(ctx.text_box.x)) + 8 + measureText(&name, 40), @as(c_int, @intFromFloat(ctx.text_box.y)) + 12, 40, CRT_ACCENT);
             }
             if (ctx.mouse_on_text and letter_count >= getCurrentMaxInput()) {
-                drawCenteredText("Press BACKSPACE to delete chars...", 905, 18, CRT_DIM);
+                drawCenteredText("Press BACKSPACE to delete chars...", 905, 18, CRT_DIM_TEXT);
             }
         },
         .paused => {
@@ -781,14 +783,14 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
 
 fn drawMenu() void {
     drawCenteredTextShadow("DEATH NOTE", 200, 60, CRT_FG);
-    drawCenteredText("- TYPING GAME -", 270, 22, CRT_DIM);
+    drawCenteredText("- TYPING GAME -", 270, 22, CRT_DIM_TEXT);
 
     const menu_start_y: c_int = 400;
     const menu_spacing: c_int = 60;
 
     for (MENU_ITEMS, 0..) |item, i| {
         const y = menu_start_y + @as(c_int, @intCast(i)) * menu_spacing;
-        const color = if (i == menu_selection) CRT_ACCENT else CRT_DIM;
+        const color = if (i == menu_selection) CRT_ACCENT else CRT_DIM_TEXT;
         var buf: [32]u8 = undefined;
         const prefix: []const u8 = if (i == menu_selection) "> " else "  ";
         const text = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ prefix, item }) catch "???";
@@ -801,7 +803,7 @@ fn drawMenu() void {
         std.fmt.bufPrintZ(&hs_buf, "BEST: {d} WPM - {d}% ACC", .{ menu_best.wpm, menu_best.accuracy }) catch "BEST: ---"
     else
         std.fmt.bufPrintZ(&hs_buf, "BEST: {d:0>6} - WAVE {d}", .{ menu_best.score, menu_best.wave }) catch "BEST: ---";
-    drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM);
+    drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM_TEXT);
 }
 
 fn updateWpmSelect(allocator: *std.mem.Allocator) void {
@@ -829,7 +831,7 @@ fn drawWpmSelect() void {
 
     for (ZEN_WPM_TIERS, 0..) |tier, i| {
         const y = start_y + @as(c_int, @intCast(i)) * spacing;
-        const color = if (i == zen_wpm_selection) CRT_ACCENT else CRT_DIM;
+        const color = if (i == zen_wpm_selection) CRT_ACCENT else CRT_DIM_TEXT;
         var buf: [32]u8 = undefined;
         const prefix: []const u8 = if (i == zen_wpm_selection) "> " else "  ";
         const text = std.fmt.bufPrintZ(&buf, "{s}{d} WPM", .{ prefix, tier }) catch "???";
@@ -1003,7 +1005,7 @@ fn drawSoundSettings() void {
     for (labels, 0..) |label, i| {
         const y = SOUND_SETTINGS_ITEM_START_Y + @as(c_int, @intCast(i)) * SOUND_SETTINGS_ITEM_SPACING;
         const selected = (i == sound_menu_selection);
-        const color = if (selected) CRT_ACCENT else CRT_DIM;
+        const color = if (selected) CRT_ACCENT else CRT_DIM_TEXT;
 
         var label_buf: [48]u8 = undefined;
         const prefix: []const u8 = if (selected) "> " else "  ";
@@ -1027,7 +1029,7 @@ fn drawSoundSettings() void {
         drawText(val_text, screen_width - SOUND_SETTINGS_VALUE_RIGHT_OFFSET, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
     }
 
-    drawCenteredText("ESC: BACK", screen_height - SOUND_SETTINGS_HINT_Y_OFFSET, SOUND_SETTINGS_HINT_SIZE, CRT_DIM);
+    drawCenteredText("ESC: BACK", screen_height - SOUND_SETTINGS_HINT_Y_OFFSET, SOUND_SETTINGS_HINT_SIZE, CRT_DIM_TEXT);
 }
 
 fn formatVolumeBar(buf: *[48]u8, level: u8) [*:0]const u8 {
@@ -1052,7 +1054,7 @@ fn drawPauseOverlay() void {
 
     for (PAUSE_ITEMS, 0..) |item, i| {
         const y = pause_start_y + @as(c_int, @intCast(i)) * pause_spacing;
-        const color = if (i == pause_selection) CRT_ACCENT else CRT_DIM;
+        const color = if (i == pause_selection) CRT_ACCENT else CRT_DIM_TEXT;
         var buf: [32]u8 = undefined;
         const prefix: []const u8 = if (i == pause_selection) "> " else "  ";
         const text = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ prefix, item }) catch "???";
@@ -1251,7 +1253,6 @@ fn frame_c_callback(arg: ?*anyopaque) callconv(.c) void {
 // it is the cleanest available hook for any controlled teardown the runtime offers.
 fn cleanup_on_exit() callconv(.c) void {
     raylib.UnloadTexture(zombie_texture);
-    raylib.UnloadFont(game_font);
     // Skip audio unloads when audio init failed — handles are zeroed and unloading them is UB.
     if (audio_ready) {
         raylib.UnloadSound(zombie_kill_sound);
@@ -1336,10 +1337,6 @@ pub fn main() !void {
 
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
-
-    game_font = raylib.LoadFontEx("assets/JetBrainsMonoNerdFont-Thin.ttf", 64, null, 0);
-    defer raylib.UnloadFont(game_font);
-    raylib.SetTextureFilter(game_font.texture, raylib.TEXTURE_FILTER_BILINEAR);
 
     raylib.SetTargetFPS(60);
 
@@ -1619,15 +1616,12 @@ fn spawnZombieInZone(allocator: *std.mem.Allocator, rng: std.Random, zone_x_min:
     return false;
 }
 
-const FONT_SPACING: f32 = 1.0;
-
 fn drawText(text: [*c]const u8, x: c_int, y: c_int, size: c_int, color: raylib.Color) void {
-    raylib.DrawTextEx(game_font, text, raylib.Vector2{ .x = @floatFromInt(x), .y = @floatFromInt(y) }, @floatFromInt(size), FONT_SPACING, color);
+    raylib.DrawText(text, x, y, size, color);
 }
 
 fn measureText(text: [*c]const u8, size: c_int) c_int {
-    const v = raylib.MeasureTextEx(game_font, text, @floatFromInt(size), FONT_SPACING);
-    return @intFromFloat(@ceil(v.x));
+    return raylib.MeasureText(text, size);
 }
 
 fn drawCenteredText(text: [*:0]const u8, y: c_int, size: c_int, color: raylib.Color) void {
