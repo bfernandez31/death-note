@@ -90,6 +90,16 @@ const AVG_NAME_CHARS: f32 = 6.0;
 const FALL_GRACE_FACTOR: f32 = 2.0;
 const FRAMES_PER_SECOND: f32 = 60.0;
 
+// Two-lever wave-difficulty bounds: on-screen time decays linearly per wave
+// from MAX_TIME_ON_SCREEN, never dipping below MIN_TIME_ON_SCREEN.
+const MIN_TIME_ON_SCREEN: f32 = 2.5;
+const MAX_TIME_ON_SCREEN: f32 = 6.0;
+const TIME_ON_SCREEN_DECAY_PER_WAVE: f32 = 0.15;
+// spawn_delay = TIME_TO_TYPE_NUMERATOR * burst_size / target_wpm; the numerator
+// folds AVG_NAME_CHARS * SECONDS_PER_MINUTE / CHARS_PER_WORD (6 * 60 / 5 = 72)
+// into a single compile-time constant so the cadence formula stays one line.
+const TIME_TO_TYPE_NUMERATOR: f32 = AVG_NAME_CHARS * SECONDS_PER_MINUTE / CHARS_PER_WORD;
+
 const DYING_DURATION: f32 = 1.0;
 const STATS_TITLE_Y: c_int = 80;
 const STATS_TITLE_SIZE: c_int = 56;
@@ -120,8 +130,9 @@ const WaveAuthoring = struct {
 };
 
 // Only target_wpm and pool_size are authored; spawn_delay and fall_speed are derived
-// from target_wpm via deriveWaveTiming() at runtime so the gameplay rhythm always
-// matches the displayed challenge.
+// in getWaveConfig from the two-lever formula (time_on_screen drives fall_speed;
+// burst_size/target_wpm drives spawn_delay). deriveWaveTiming() is now only used
+// by zen mode, where wpm is held constant rather than read from the table.
 const WAVE_TABLE = [_]WaveAuthoring{
     .{ .target_wpm = 15, .pool_size = 5 },
     .{ .target_wpm = 18, .pool_size = 7 },
@@ -518,7 +529,9 @@ fn frame(ctx: *FrameContext) void {
                             var burst_i: u32 = 0;
                             while (burst_i < burst) : (burst_i += 1) {
                                 const zone_min = ZOMBIE_SPAWN_X_MIN + @as(c_int, @intCast(burst_i)) * zone_width;
-                                const zone_max = if (burst_i == burst - 1) ZOMBIE_SPAWN_X_MAX else zone_min + zone_width;
+                                // Half-open boundary: adjacent zones share no x coordinate, so
+                                // two zombies in the same burst can't sample the identical lane.
+                                const zone_max = if (burst_i == burst - 1) ZOMBIE_SPAWN_X_MAX else zone_min + zone_width - 1;
                                 const spawned = spawnZombieInZone(ctx.allocator, prng.random(), zone_min, zone_max) catch false;
                                 if (spawned) {
                                     wave_spawned += 1;
@@ -1238,6 +1251,7 @@ fn frame_c_callback(arg: ?*anyopaque) callconv(.c) void {
 // it is the cleanest available hook for any controlled teardown the runtime offers.
 fn cleanup_on_exit() callconv(.c) void {
     raylib.UnloadTexture(zombie_texture);
+    raylib.UnloadFont(game_font);
     // Skip audio unloads when audio init failed — handles are zeroed and unloading them is UB.
     if (audio_ready) {
         raylib.UnloadSound(zombie_kill_sound);
@@ -1540,6 +1554,9 @@ fn spawnZombieInZone(allocator: *std.mem.Allocator, rng: std.Random, zone_x_min:
                 forced_group,
                 rng,
             ) orelse {
+                // Tick the cluster counter down even on selection failure: an exhausted
+                // trap group would otherwise stall the spawner into retrying the same
+                // forced group on every subsequent call.
                 if (trap_cluster_remaining > 0) {
                     trap_cluster_remaining -= 1;
                     if (trap_cluster_remaining == 0) trap_cluster_group = null;
@@ -1561,8 +1578,17 @@ fn spawnZombieInZone(allocator: *std.mem.Allocator, rng: std.Random, zone_x_min:
             const name_width = measureText(selection.name, 20);
             const sprite_width: c_int = screen_width - ZOMBIE_SPAWN_X_MAX;
             const required = @max(name_width, sprite_width);
-            const dynamic_x_max = @max(zone_x_min, zone_x_max - required - 5);
-            const x: f32 = @floatFromInt(raylib.GetRandomValue(zone_x_min, dynamic_x_max));
+            // Hard screen-edge protection: x can never sit so far right that the rendered
+            // name overflows past screen_width - 5. The zone fits inside this safe band.
+            const screen_safe_max = @max(ZOMBIE_SPAWN_X_MIN, screen_width - required - 5);
+            const zone_safe_max = @min(zone_x_max - required - 5, screen_safe_max);
+            // Prefer the assigned burst zone for distribution. If the zone is narrower
+            // than the rendered name, fall back to the full safe range so every spawn
+            // in that zone doesn't stack on zone_x_min.
+            const x: f32 = if (zone_safe_max >= zone_x_min)
+                @floatFromInt(raylib.GetRandomValue(zone_x_min, zone_safe_max))
+            else
+                @floatFromInt(raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, screen_safe_max));
 
             var carrier_power_up: ?PowerUpType = null;
             if (game_mode == .survival) {
@@ -1629,8 +1655,6 @@ fn drawStatCell(label: [*:0]const u8, value: [*:0]const u8, cx: c_int, label_y: 
     drawColumnCenteredText(value, cx, value_y, STATS_GRID_VALUE_SIZE, CRT_FG);
 }
 
-const MIN_TIME_ON_SCREEN: f32 = 2.5;
-
 fn deriveWaveTiming(target_wpm: u32) struct { spawn_delay: f32, fall_speed: f32 } {
     const chars_per_sec = @as(f32, @floatFromInt(target_wpm)) * CHARS_PER_WORD / SECONDS_PER_MINUTE;
     const time_to_type = AVG_NAME_CHARS / chars_per_sec;
@@ -1653,8 +1677,8 @@ fn getWaveConfig(wave: u32) WaveConfig {
     };
 
     const wave_f: f32 = @floatFromInt(wave);
-    const time_on_screen_raw = 6.0 - 0.15 * (wave_f - 1.0);
-    const time_on_screen = @max(MIN_TIME_ON_SCREEN, @min(6.0, time_on_screen_raw));
+    const time_on_screen_raw = MAX_TIME_ON_SCREEN - TIME_ON_SCREEN_DECAY_PER_WAVE * (wave_f - 1.0);
+    const time_on_screen = @max(MIN_TIME_ON_SCREEN, @min(MAX_TIME_ON_SCREEN, time_on_screen_raw));
 
     const sh: f32 = @floatFromInt(screen_height);
     const fall_speed = sh / (time_on_screen * FRAMES_PER_SECOND);
@@ -1663,7 +1687,7 @@ fn getWaveConfig(wave: u32) WaveConfig {
 
     const burst_f: f32 = @floatFromInt(burst_size);
     const wpm_f: f32 = @floatFromInt(authoring.target_wpm);
-    const spawn_delay = (72.0 * burst_f) / wpm_f;
+    const spawn_delay = (TIME_TO_TYPE_NUMERATOR * burst_f) / wpm_f;
 
     return WaveConfig{
         .target_wpm = authoring.target_wpm,
