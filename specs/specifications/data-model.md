@@ -186,6 +186,7 @@ erDiagram
         f32 spawn_delay
         f32 fall_speed
         u32 pool_size
+        u32 burst_size
     }
 
     GAME_STATE ||--|| INPUT_BUFFER : "controls input into"
@@ -239,7 +240,7 @@ const Zombie = struct {
 |---|---|---|---|
 | `x` | `f32` | Horizontal screen position (pixels from left edge) | Set at spawn via `raylib.GetRandomValue(ZOMBIE_SPAWN_X_MIN, ZOMBIE_SPAWN_X_MAX)` → [10, 749]; never mutated after spawn |
 | `y` | `f32` | Vertical screen position (pixels from top edge) | Initialised to `0.0`; incremented by `speed` every frame in `updateZombies` |
-| `speed` | `f32` | Pixels per frame the zombie descends | Set once at spawn: `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` — standard×1.0, runner×1.8, tank×0.5; never mutated after spawn |
+| `speed` | `f32` | Pixels per frame the zombie descends | Set once at spawn: `getWaveConfig(current_wave).fall_speed × getSpeedMultiplier(zombie_type)` — standard×1.0, runner×1.3, tank×0.5; never mutated after spawn |
 | `name` | `[*:0]const u8` | Pointer to a null-terminated C string from `name_lists.zig` | Never copied; points into `PrimaryNames`, `CompoundNames`, or a `TrapGroup` entry; never null |
 | `is_active` | `bool` | Whether the zombie is alive and should be updated/drawn | `true` at spawn; set to `false` when the player types the matching name; **heap memory freed immediately on kill** (`allocator.destroy`; slot set to `null`) |
 | `frame` | `f32` | Current animation frame index (0–16) | Incremented in `drawZombies` every 0.1 s; wraps to `0` when it reaches `ZOMBIE_FRAME_COUNT` (17) |
@@ -407,6 +408,7 @@ These variables collectively represent the running state of the game session.
 |---|---|---|
 | `zombie_texture` | `raylib.Texture2D` | GPU texture handle for the zombie spritesheet, loaded once from `assets/z_spritesheet.png` |
 | `zombie_kill_sound` | `raylib.Sound` | Audio handle loaded once from `assets/zombie-hit.wav`; played via `playKillSound()` on zombie kill |
+| `game_font` | `raylib.Font` | TTF font handle loaded once from `assets/JetBrainsMonoNerdFont-Thin.ttf` at size 64 with bilinear filtering; used by all `drawText()` / `measureText()` calls |
 | `click_sounds` | `[3]raylib.Sound` | Typing pack: 3 click WAV samples from `assets/sounds/click/` |
 | `typewriter_sounds` | `[6]raylib.Sound` | Typing pack: 6 typewriter WAV samples from `assets/sounds/typewriter/` |
 | `hitmarker_sounds` | `[3]raylib.Sound` | Typing pack: 3 hitmarker WAV samples from `assets/sounds/hitmarker/` |
@@ -435,12 +437,13 @@ const WaveAuthoring = struct {
     pool_size: u32,
 };
 
-// Full runtime config — spawn_delay and fall_speed are derived from target_wpm.
+// Full runtime config — spawn_delay, fall_speed, and burst_size are derived.
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
     fall_speed: f32,
     pool_size: u32,
+    burst_size: u32,
 };
 ```
 
@@ -448,28 +451,33 @@ Both types are value types — never heap-allocated. `WaveConfig` is returned by
 
 | Field | Type | Meaning | Range |
 |---|---|---|---|
-| `target_wpm` | `u32` | Target typing speed for the wave in words per minute | 15 (wave 1) – 110 (wave 16+) |
-| `spawn_delay` | `f32` | Seconds between zombie spawns — **derived** from `target_wpm` | ≈ 4.80s (wave 1, target 15) – ≈ 0.66s (wave 16+, target 110) |
-| `fall_speed` | `f32` | Pixels per frame each zombie descends — **derived** from `target_wpm` and `screen_height` | ≈ 1.74 (wave 1) – ≈ 11.6 (wave 16+) at `screen_height = 1000` |
+| `target_wpm` | `u32` | Target typing speed for the wave in words per minute | 15 (wave 1) – 250 (wave 45+) |
+| `spawn_delay` | `f32` | Seconds between bursts — **derived** from `burst_size` and `target_wpm` | ≈ 4.80s (wave 1) decreasing with higher burst/WPM |
+| `fall_speed` | `f32` | Pixels per frame each zombie descends — **derived** from `time_on_screen` and `screen_height` | floor at `screen_height / (MIN_TIME_ON_SCREEN × 60.0)` |
 | `pool_size` | `u32` | Total zombies to spawn in the wave | 5 (wave 1) – 33+2*(wave-15) (wave 16+), capped at `MAX_ZOMBIES` |
+| `burst_size` | `u32` | Number of zombies spawned simultaneously per burst — **derived** as `ceil(wave / 4)` | 1 (waves 1–4) – grows without cap |
 
-**Derivation formula (`deriveWaveTiming`):**
+**Derivation formulas (inside `getWaveConfig`):**
 
+**Lever 1 — readability (fall speed):**
 ```
-chars_per_sec = target_wpm × CHARS_PER_WORD / SECONDS_PER_MINUTE
-time_to_type  = AVG_NAME_CHARS / chars_per_sec       // seconds to type an average name at target WPM
-spawn_delay   = time_to_type                          // one zombie per type-cycle → sustained WPM pressure
-fall_speed    = screen_height / (time_to_type × FALL_GRACE_FACTOR × FRAMES_PER_SECOND)
+time_on_screen = clamp(6.0 - 0.15 × (wave - 1), MIN_TIME_ON_SCREEN (2.5), 6.0)
+fall_speed     = screen_height / (time_on_screen × FRAMES_PER_SECOND (60.0))
+```
+
+**Lever 2 — density (burst spawning):**
+```
+burst_size  = ceil(wave / 4)                              // 1 at wave 1, 2 at wave 5, etc.
+spawn_delay = (72.0 × burst_size) / target_wpm            // burst interval in seconds
 ```
 
 Constants (compile-time):
-- `AVG_NAME_CHARS = 6.0` — average name length across all zombie types.
-- `FALL_GRACE_FACTOR = 2.0` — a player typing exactly at `target_wpm` reaches each zombie with one full type-cycle of grace before it lands.
+- `MIN_TIME_ON_SCREEN = 2.5` — fall-time floor; ensures names stay legible at high waves.
 - `FRAMES_PER_SECOND = 60.0`.
 
-The per-type speed multipliers (`runner ×1.8`, `tank ×0.5`) and per-type name-length filters (runners ≤5 chars, tanks ≥8 chars) layer **on top** of the derived `fall_speed`, so runners are tighter than baseline and tanks are looser.
+The per-type speed multipliers (`runner ×1.3`, `tank ×0.5`) and per-type name-length filters (runners ≤5 chars, tanks ≥8 chars) layer **on top** of the derived `fall_speed`, so runners are tighter than baseline and tanks are looser.
 
-**Lookup:** `fn getWaveConfig(wave: u32) WaveConfig` reads the authoring tuple — `WAVE_TABLE[wave - 1]` for waves 1–15, or a scaling formula clamped to `MAX_ZOMBIES` for waves 16+ — and runs `deriveWaveTiming` to produce the full config.
+**Lookup:** `fn getWaveConfig(wave: u32) WaveConfig` reads the authoring tuple — `WAVE_TABLE[wave - 1]` for waves 1–15, or `{ target_wpm = min(250, 100 + (wave-15)×5), pool_size = min(33+2×(wave-15), MAX_ZOMBIES) }` for waves 16+ — then derives `fall_speed`, `burst_size`, and `spawn_delay`.
 
 **Storage:** `WAVE_TABLE` is a `[15]WaveAuthoring` compile-time constant array (`target_wpm` + `pool_size` only). No runtime allocation occurs.
 
@@ -687,7 +695,7 @@ pub const ZombieType = enum { standard, runner, tank };
 | Value | Speed multiplier | Color tint | Name length rule |
 |---|---|---|---|
 | `.standard` | 1.0× base `fall_speed` | WHITE (no tint) | Any length |
-| `.runner` | 1.8× base `fall_speed` | GREEN | ≤ 5 characters preferred |
+| `.runner` | 1.3× base `fall_speed` | GREEN | ≤ 5 characters preferred |
 | `.tank` | 0.5× base `fall_speed` | BLUE | ≥ 8 characters preferred |
 
 #### GameMode (`src/zombie_types.zig`)
@@ -760,7 +768,7 @@ All other constants are compile-time `const` values declared at module scope in 
 |---|---|---|---|
 | `MAX_ZOMBIES` | `100` | `comptime_int` | Size of the `zombies` fixed pool array; also the maximum number of simultaneously live zombies |
 | `MAX_INPUT_CHARS` | `20` | `comptime_int` | Maximum characters the player can type during normal play; raised from 9 to accommodate compound names up to 20 characters |
-| `RUNNER_SPEED_MULTIPLIER` | `1.8` | `f32` | Speed multiplier for Runner zombie type; applied to `fall_speed` at spawn |
+| `RUNNER_SPEED_MULTIPLIER` | `1.3` | `f32` | Speed multiplier for Runner zombie type; applied to `fall_speed` at spawn |
 | `TANK_SPEED_MULTIPLIER` | `0.5` | `f32` | Speed multiplier for Tank zombie type; applied to `fall_speed` at spawn |
 | `RUNNER_MAX_NAME_LEN` | `5` | `usize` | Maximum name length (inclusive) preferred for Runner zombies; `selectName` filters by this threshold |
 | `TANK_MIN_NAME_LEN` | `8` | `usize` | Minimum name length (inclusive) preferred for Tank zombies; `selectName` filters by this threshold |
@@ -773,9 +781,10 @@ All other constants are compile-time `const` values declared at module scope in 
 | `ZOMBIE_FRAME_COUNT` | `17` | `comptime_int` | Number of horizontal animation frames in `z_spritesheet.png`; used to compute `frame_width` and to wrap the animation counter |
 | `ZOMBIE_ANIMATION_FRAME_DURATION` | `0.1` | `f32` | Seconds between animation frame advances in `drawZombies` |
 | `WAVE_TRANSITION_DURATION` | `3.0` | `f32` | Seconds the inter-wave countdown lasts before the next wave begins |
-| `WAVE_TABLE` | `[15]WaveAuthoring` | compile-time array | Authored `target_wpm` + `pool_size` for waves 1–15; `spawn_delay`/`fall_speed` are derived from `target_wpm` |
-| `AVG_NAME_CHARS` | `6.0` | `f32` | Average name length used in the WPM-driven timing formula |
-| `FALL_GRACE_FACTOR` | `2.0` | `f32` | On-screen time = `time_to_type × FALL_GRACE_FACTOR`; at 2.0 a player at target WPM has one full type-cycle of grace before a zombie lands |
+| `WAVE_TABLE` | `[15]WaveAuthoring` | compile-time array | Authored `target_wpm` + `pool_size` for waves 1–15; `spawn_delay`, `fall_speed`, and `burst_size` are derived |
+| `MIN_TIME_ON_SCREEN` | `2.5` | `f32` | Floor for zombie time-on-screen in seconds; prevents names from scrolling past too quickly at high waves |
+| `AVG_NAME_CHARS` | `6.0` | `f32` | Average name length used in the legacy `deriveWaveTiming` helper (still referenced for fallback WPM calculation) |
+| `FALL_GRACE_FACTOR` | `2.0` | `f32` | Used in `deriveWaveTiming` (legacy helper); the two-lever model in `getWaveConfig` uses `MIN_TIME_ON_SCREEN` directly |
 | `FRAMES_PER_SECOND` | `60.0` | `f32` | Frame-rate reference used to convert seconds into the per-frame `fall_speed` |
 | `ZOMBIE_SPAWN_X_MIN` | `10` | `c_int` | Left boundary for random zombie spawn x position (pixels from left edge) |
 | `ZOMBIE_SPAWN_X_MAX` | `749` | `c_int` | Right boundary for random zombie spawn x position (screen_width - 51) |

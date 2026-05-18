@@ -35,13 +35,17 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Approximately 98 `test "..." {}` blocks exist, distributed as `src/main.zig` (67), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3) — all reachable from the `test_step` root because each is either directly inside `src/main.zig` or `@import`-ed transitively. The list below catalogs the historically documented blocks; many newer additions (sound system, per-mode high scores, power-ups, shield wave-kill counting) are not enumerated here but follow the same conventions:
+**Current state**: Approximately 106 `test "..." {}` blocks exist, distributed as `src/main.zig` (~75), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3) — all reachable from the `test_step` root because each is either directly inside `src/main.zig` or `@import`-ed transitively. The list below catalogs the historically documented blocks; many newer additions (sound system, per-mode high scores, power-ups, shield wave-kill counting) are not enumerated here but follow the same conventions:
 - `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
 - `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
-- `test "getWaveConfig returns correct values for wave 1"` — verifies wave 1 difficulty parameters
-- `test "getWaveConfig returns correct values for wave 15"` — verifies wave 15 (last explicit) parameters
+- `test "getWaveConfig wave 1 density model"` — verifies wave 1 burst size (1), fall speed, spawn delay, and pool size under the two-lever model
+- `test "getWaveConfig wave 15 density model"` — verifies wave 15 burst size (4) and derived timing
 - `test "wave completes when kills equals pool size"` — asserts wave completion condition logic
-- `test "getWaveConfig scales correctly for wave 16+"` — verifies endless scaling formula (waves 16, 20, 100)
+- `test "getWaveConfig scales correctly for wave 16+"` — verifies wave 16 target WPM (105), pool growth, and MAX_ZOMBIES cap
+- `test "target WPM caps at 250"` — verifies `target_wpm` reaches 250 at wave 45 and stays there
+- `test "fall time floor is 2.5s at wave 25+"` — verifies `time_on_screen >= MIN_TIME_ON_SCREEN` for high waves
+- `test "burst size equals ceil(wave/4)"` — spot-checks burst size at waves 1, 4, 5, 8, 9, 25
+- `test "runner fall time stays above 1.9s at all waves"` — iterates waves 1–100, verifies runner fall time never drops below 1.9 s
 - `test "frame index wraps after ZOMBIE_FRAME_COUNT"` — covers animation-frame wrap-around arithmetic
 - `test "boss wave detection"` — verifies `wave % 5 == 0` is true for waves 5, 10, 15, 20 and false for waves 1, 4, 6, 14
 - `test "boss spawn threshold calculation"` — verifies `(pool_size + 1) / 2` yields correct threshold for waves 5, 10, 20
@@ -64,7 +68,7 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 - `test "smoothing convergence toward target WPM"` — sets `displayed_wpm = 0.0`, simulates multiple `updateMetrics`-style interpolation steps with a fixed target of `72.0`, verifies display value increases by 20% of the remaining gap each step
 
 Additional tests added in `src/main.zig` (DEATHN-13):
-- `test "ZombieType speed multipliers"` — verifies `getSpeedMultiplier` returns 1.0, 1.8, and 0.5 for standard, runner, tank
+- `test "ZombieType speed multipliers"` — verifies `getSpeedMultiplier` returns 1.0, 1.3, and 0.5 for standard, runner, tank
 - `test "spawn weight table wave brackets"` — verifies `getSpawnWeights` returns correct weights for wave ranges 1–3, 4–6, 7–10, and 11+
 - `test "name weight table wave brackets"` — verifies `getNameWeights` returns correct weights for wave ranges 1–3, 4–7, 8–12, and 13+
 - `test "selectZombieType distribution"` — seeds PRNG deterministically, verifies type selection follows weight distribution over N iterations
@@ -96,7 +100,7 @@ graph TB
     CMD["zig build test"]
     ADD_TEST["b.addTest\nroot_source_file = src/main.zig"]
     RUN_ARTIFACT["b.addRunArtifact\ntest binary"]
-    UNIT_MAIN["Unit tests\nsrc/main.zig\n(67 blocks — name match, input bounds (20 chars), wave config, frame wrap,\nboss wave detection, boss threshold, boss input limit, boss phrase validity,\nwave completion gate, calculateScore cases, combo multiplier tiers, mismatch\ndetection, popup pool, score/combo reset, circular buffer wrap, resetMetricsState,\nWPM sliding window/early game/zero, accuracy 100/4 and zero, smoothing convergence,\nZombieType speed multipliers, spawn/name weight brackets, type selection distribution,\ntint colors, hyphen input, trap cluster reset, plus DEATHN-26 sound integration tests\nand power-up / per-mode high-score coverage)"]
+    UNIT_MAIN["Unit tests\nsrc/main.zig\n(~75 blocks — name match, input bounds (20 chars), wave config (density model),\nburst size formula, fall-time floor, WPM cap, runner fall time, frame wrap,\nboss wave detection, boss threshold, boss input limit, boss phrase validity,\nwave completion gate, calculateScore cases, combo multiplier tiers, mismatch\ndetection, popup pool, score/combo reset, circular buffer wrap, resetMetricsState,\nWPM sliding window/early game/zero, accuracy 100/4 and zero, smoothing convergence,\nZombieType speed multipliers (1.0/1.3/0.5), spawn/name weight brackets, type selection,\ntint colors, hyphen input, trap cluster reset, plus DEATHN-26 sound integration tests\nand power-up / per-mode high-score coverage)"]
     UNIT_NAMELISTS["Unit tests\nsrc/name_lists.zig\n(12 blocks — primary list size, all-ASCII, compound validity,\ntrap group sizes, runner/tank name counts, anti-doublon,\nlength filtering, trap group preference, weight table sum validation)"]
     UNIT_SOUNDCFG["Unit tests\nsrc/sound_config.zig\n(10 blocks — DISK_SIZE, default values, TypingPack/ErrorPack variant counts,\nvolume clamping at 0/20/25/255, invalid-enum fallback, load/save signatures)"]
     UNIT_HIGHSCORE["Unit tests\nsrc/highscore.zig\n(6 blocks — record size, filename/key per GameMode, mode-specific persistence paths)"]
@@ -127,7 +131,7 @@ All paths through the automated test system flow through `zig build test` → `b
 
 | Test Type | Directory | Framework | Count | Purpose |
 |---|---|---|---|---|
-| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | ~98 | Pure-logic tests distributed across `src/main.zig` (67), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3). Coverage includes name-match equality, input-buffer bounds (20 chars), wave config, wave completion, frame wrap-around, boss detection, score/combo/WPM/accuracy, ZombieType speed multipliers, spawn/name weight tables, type selection distribution, tint colors, hyphen input, trap cluster reset, primary list size, ASCII validation, compound name validity, trap group sizes, runner/tank name count minimums, anti-doublon, length filtering, trap group preference, weight sum validation, sound config defaults / clamping / pack-enum cycling / load+save signatures, per-mode high-score filenames and keys, and zombie type weight-table well-formedness. |
+| Unit tests | `src/` (inline `test "..." {}` blocks) | zig test | ~106 | Pure-logic tests distributed across `src/main.zig` (~75), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3). Coverage includes name-match equality, input-buffer bounds (20 chars), wave config (two-lever density model), burst size formula, fall-time floor, WPM cap at 250, runner fall time floor, wave completion, frame wrap-around, boss detection, score/combo/WPM/accuracy, ZombieType speed multipliers (1.0/1.3/0.5), spawn/name weight tables, type selection distribution, tint colors, hyphen input, trap cluster reset, primary list size, ASCII validation, compound name validity, trap group sizes, runner/tank name count minimums, anti-doublon, length filtering, trap group preference, weight sum validation, sound config defaults / clamping / pack-enum cycling / load+save signatures, per-mode high-score filenames and keys, and zombie type weight-table well-formedness. |
 | Integration tests | — | — | 0 | Not feasible without a raylib mock; `InitWindow` and `InitAudioDevice` require a real display and audio device |
 | E2E / GUI tests | — | — | 0 | Manual `zig build run` only; no automated harness exists or is planned |
 

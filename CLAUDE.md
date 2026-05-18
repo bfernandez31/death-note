@@ -50,7 +50,7 @@ There are no lint or type-check commands wired up separately — `zig build` com
 1. `main()` seeds a `std.Random.DefaultPrng` from `std.c.clock_gettime(.REALTIME, …)` (`std.time.milliTimestamp` was removed in Zig 0.16), then initializes the raylib window and audio device (both paired with `defer` for teardown).
 2. Assets are loaded once up-front via `raylib.LoadSound` / `raylib.LoadTexture`, also paired with `defer Unload…`.
 3. The main loop (`while (!raylib.WindowShouldClose())`) is split into an **update** phase (gated by `!is_game_over`) and an always-on **draw** phase inside `BeginDrawing`/`EndDrawing`.
-4. `spawnZombie` selects a `ZombieType` (standard/runner/tank) via wave-weighted probabilities, then calls `name_lists.selectName()` to pick a name from PrimaryNames, CompoundNames, or TrapGroups (enforcing anti-doublon and trap-cluster logic). Allocates a new `Zombie` from `std.heap.page_allocator` and stores its pointer in a fixed-size `[MAX_ZOMBIES]?*Zombie` slot. On kill, the zombie is freed immediately (`allocator.destroy`) and the slot set to `null`. `resetZombies` clears any remaining slots on wave transition or restart.
+4. When `spawn_timer >= wave_cfg.spawn_delay`, a burst of `wave_cfg.burst_size` zombies fires simultaneously via `spawnZombieInZone`, distributing zombies across equal-width screen zones. `spawnZombie` is a thin wrapper around `spawnZombieInZone` for single-zombie use. Each spawn selects a `ZombieType` (standard/runner/tank) via wave-weighted probabilities and calls `name_lists.selectName()`. Allocates each `Zombie` from `std.heap.page_allocator`; freed immediately on kill; `resetZombies` clears remaining slots on wave transition or restart.
 5. `updateZombies` advances each active zombie's `y`, triggers game-over when one passes `screen_height`, and kills a zombie when the typed input buffer matches its name byte-for-byte (`std.mem.eql(u8, …)`).
 6. `drawZombies` animates the shared spritesheet by slicing a horizontal strip (`ZOMBIE_FRAME_COUNT = 17` frames), scales each zombie by `0.2`, and applies a color tint based on `zombie_type`: `CRT_FG` (#d48aff, violet) for standard, `CRT_WARN` (#ffb13a, amber) for runner, `CRT_DIM` (#3a1a5a, deep violet) for tank (`CRT_ERR` #ff5a8a overrides all during the dying state). A `drawCrtOverlay()` call at the end of `frame()` composites scanlines, corner vignette, and a double bezel border over the final frame.
 
@@ -69,7 +69,7 @@ There are no lint or type-check commands wired up separately — `zig build` com
 - `is_transitioning: bool` / `transition_timer: f32` — 3-second inter-wave countdown state.
 - `best_score: HighScoreRecord` — persisted best performance; loaded at startup, preserved across restarts.
 - `is_new_high_score: bool` — set when current session score exceeds `best_score.score`; controls "NEW HIGH SCORE!" display.
-- `zombie_texture: raylib.Texture2D`, `zombie_kill_sound: raylib.Sound` — loaded once, reused.
+- `zombie_texture: raylib.Texture2D`, `zombie_kill_sound: raylib.Sound`, `game_font: raylib.Font` — loaded once, reused. `game_font` is `JetBrainsMonoNerdFont-Thin.ttf` loaded at size 64 with bilinear filtering; all text rendering goes through `drawText()` / `measureText()` wrappers (not bare `raylib.DrawText`/`MeasureText`).
 
 ## Data Models
 
@@ -79,7 +79,7 @@ No database or ORM. The key data shapes in `src/main.zig` are:
 const Zombie = struct {
     x: f32,
     y: f32,
-    speed: f32,                        // fall_speed * type multiplier (1.0x/1.8x/0.5x)
+    speed: f32,                        // fall_speed * type multiplier (1.0x/1.3x/0.5x)
     name: [*:0]const u8,               // pointer into name_lists arrays, zero-terminated
     is_active: bool,
     frame: f32,
@@ -92,6 +92,7 @@ const WaveConfig = struct {
     spawn_delay: f32,
     fall_speed: f32,
     pool_size: u32,
+    burst_size: u32,
 };
 
 const HighScoreRecord = struct {
@@ -102,7 +103,7 @@ const HighScoreRecord = struct {
 };
 ```
 
-`WaveConfig` values come from the compile-time `WAVE_TABLE` (waves 1–15) or a scaling formula (waves 16+) via `getWaveConfig(wave: u32)`. Names come from `name_lists.zig` — `PrimaryNames` (349+ first names), `CompoundNames` (31 hyphenated names, e.g. `"Jean-Pierre"`), and `TrapGroups` (15 groups of 3–5 visually similar names). `spawnZombie` calls `name_lists.selectName()` which applies wave-weighted category selection, type-appropriate length filtering (runners ≤5 chars, tanks ≥8 chars), and anti-doublon retry (up to 10 attempts). Name pointers are never copied, only referenced. `src/zombie_names.zig` still exists but is no longer the active spawn source — its 49 names are included in `PrimaryNames`.
+`WaveConfig` values come from the compile-time `WAVE_TABLE` (waves 1–15) or a scaling formula (`target_wpm = min(250, 100 + (wave-15)×5)`, waves 16+) via `getWaveConfig(wave: u32)`. The two-lever model derives `fall_speed` from `time_on_screen = clamp(6.0 - 0.15×(wave-1), 2.5, 6.0)` and `spawn_delay` from `burst_size = ceil(wave/4)` and `target_wpm`. Names come from `name_lists.zig` — `PrimaryNames` (349+ first names), `CompoundNames` (31 hyphenated names, e.g. `"Jean-Pierre"`), and `TrapGroups` (15 groups of 3–5 visually similar names). Name pointers are never copied, only referenced. `src/zombie_names.zig` still exists but is no longer the active spawn source — its 49 names are included in `PrimaryNames`.
 
 `HighScoreRecord` is persisted as a 17-byte binary file (`highscore.dat`) on native builds using `std.c.fopen`/`fread`/`fwrite` (use `std.c` for file I/O — `std.fs` was removed in Zig 0.16). On web (Emscripten) builds it is stored in `localStorage` under `"death-note.highscore"` as JSON, accessed via `emscripten_run_script_int` / `emscripten_run_script`.
 
@@ -124,7 +125,8 @@ Observed across `src/main.zig`, `src/zombie_names.zig`, and `build.zig`:
 - **Error handling**: functions that allocate return `!T` and are called with `try`. Allocation sites use `errdefer allocator.destroy(new_zombie)` to avoid leaks on partial failure. Prefer `errdefer` over manual cleanup branches.
 - **Allocator**: `std.heap.page_allocator` is the sole allocator today. Pass it through as `*std.mem.Allocator` parameters rather than re-fetching it inside helpers.
 - **Optional pointers**: zombies are stored as `?*Zombie` and unwrapped with `if (zombie) |zomb| { … }`. Follow this pattern instead of `.?` force-unwrapping.
-- **C-string interop**: names kept as `[*:0]const u8` (null-terminated) so they can be passed straight to `raylib.DrawText`. When comparing to the input buffer, compute length with a terminator scan and use `std.mem.eql(u8, typed, zomb_name_slice)`.
+- **C-string interop**: names kept as `[*:0]const u8` (null-terminated) so they can be passed straight to `drawText()` (the `game_font`-backed wrapper). When comparing to the input buffer, compute length with a terminator scan and use `std.mem.eql(u8, typed, zomb_name_slice)`.
+- **Text rendering**: never call `raylib.DrawText` or `raylib.MeasureText` directly in game code — always use `drawText()` / `measureText()` which dispatch through `game_font` via `DrawTextEx` / `MeasureTextEx` with `FONT_SPACING = 1.0`.
 - **Magic numbers**: gameplay tunables (`MAX_ZOMBIES`, `MAX_INPUT_CHARS`, `ZOMBIE_FRAME_COUNT`, `WAVE_TRANSITION_DURATION`, `WAVE_TABLE`, `screen_width`, `screen_height`) are declared as module-level `const`/`var` at the top of `src/main.zig`. Add new tunables alongside them rather than inlining.
 - **Color palette**: all render colors use named `CRT_*` semantic constants (`CRT_FG`, `CRT_DIM`, `CRT_BG`, `CRT_ACCENT`, `CRT_WARN`, `CRT_ERR`, `CRT_BEZEL_OUTER`, `CRT_BEZEL_INNER`, `CRT_SCANLINE`, `CRT_VIGNETTE_OUTER`, `CRT_VIGNETTE_INNER`) declared at the top of `src/main.zig`. Never use raw raylib color names (`WHITE`, `RED`, `DARKGRAY`, etc.) for game rendering — always pick the appropriate `CRT_*` constant.
 - **Assets**: loaded by relative path from the working directory (`"assets/zombie-hit.wav"`, `"assets/z_spritesheet.png"`). The game therefore must be run from the repo root, or `zig build run` (which runs from the install directory) with assets copied — keep this in mind when adding new asset loads.
