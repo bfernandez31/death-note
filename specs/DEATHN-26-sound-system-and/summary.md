@@ -9,7 +9,7 @@ Implemented complete audio layer: keystroke feedback (3 selectable packs with ro
 
 ## Key Decisions
 
-Used `audio_ready` guard flag instead of null-checking music handles — simpler than wrapping every raylib call in optional checks, and prevents test crashes from uninitialized audio state. Replaced `std.meta.intToEnum` (removed in Zig 0.16) with explicit switch-based enum conversion functions `toTypingPack`/`toErrorPack`. Settings save on every individual change (no explicit Save button), matching the immediate-feedback UX pattern.
+Used `audio_ready` guard flag instead of null-checking music handles — simpler than wrapping every raylib call in optional checks, and prevents test crashes from uninitialized audio state. Replaced `std.meta.intToEnum` (removed in Zig 0.16) with explicit switch-based enum conversion functions `toTypingPack`/`toErrorPack`. Settings save once when the player exits the Sound settings screen via Escape (single write per session), avoiding redundant disk/localStorage I/O on each toggle/slider step while still preserving every change.
 
 ## Files Modified
 

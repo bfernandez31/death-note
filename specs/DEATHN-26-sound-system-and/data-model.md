@@ -220,16 +220,16 @@ On load failure (file not found, wrong size, invalid enum value), return `SoundC
       │
       └── Missing / corrupt ───► Use SoundConfig{} defaults
       
-  Settings change (any toggle/slider/pack)
+  Player presses ESC in Sound settings
       │
       ▼
   sound_config.save(config)
       │
-      ├── Native: write soundconfig.dat
+      ├── Native: write soundconfig.dat (atomic via tmp + rename)
       └── Web: localStorage.setItem(...)
 ```
 
-Save triggers: every individual settings change (toggle, slider step, pack switch) writes immediately. No "apply" or "save" button.
+Save trigger: a single write occurs when the player exits the Sound settings screen via Escape. Toggles, slider steps, and pack switches mutate the in-memory `sound_cfg` only; the disk/localStorage write happens once per session at the back-out point. No "apply" or "save" button.
 
 ## Relationships
 

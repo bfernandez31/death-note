@@ -95,8 +95,8 @@ fn loadNative() !SoundConfig {
 }
 
 fn saveNative(cfg: SoundConfig) !void {
-    const fp = std.c.fopen("soundconfig.dat", "wb") orelse return error.AccessDenied;
-    defer _ = std.c.fclose(fp);
+    // Write to a temp file and rename into place so an interrupted write (crash, disk full)
+    // cannot leave a truncated 0-byte soundconfig.dat that would reset all settings on next load.
     var buf: [DISK_SIZE]u8 = undefined;
     buf[0] = if (cfg.keystrokes_enabled) 1 else 0;
     buf[1] = if (cfg.errors_enabled) 1 else 0;
@@ -108,8 +108,23 @@ fn saveNative(cfg: SoundConfig) !void {
     buf[7] = cfg.typing_volume;
     buf[8] = cfg.effects_volume;
     buf[9] = cfg.music_volume;
-    const written = std.c.fwrite(&buf, 1, DISK_SIZE, fp);
-    if (written != DISK_SIZE) return error.InputOutput;
+
+    const tmp_path = "soundconfig.dat.tmp";
+    const final_path = "soundconfig.dat";
+    {
+        const fp = std.c.fopen(tmp_path, "wb") orelse return error.AccessDenied;
+        defer _ = std.c.fclose(fp);
+        const written = std.c.fwrite(&buf, 1, DISK_SIZE, fp);
+        if (written != DISK_SIZE) return error.InputOutput;
+    }
+    if (std.c.rename(tmp_path, final_path) != 0) return error.InputOutput;
+}
+
+fn webEntryExists() bool {
+    const js: [*:0]const u8 = "(function(){try{var s=localStorage.getItem('death-note.soundconfig');if(!s)return '0';var d=JSON.parse(s);return (d&&typeof d==='object')?'1':'0';}catch(e){return '0'}})()";
+    const cstr = raylib.emscripten_run_script_string(js) orelse return false;
+    const span = std.mem.span(cstr);
+    return span.len > 0 and span[0] == '1';
 }
 
 fn readWebField(field: []const u8) u64 {
@@ -124,6 +139,10 @@ fn readWebField(field: []const u8) u64 {
 }
 
 fn loadWeb() SoundConfig {
+    // No saved entry → return SoundConfig{} defaults instead of letting every absent field
+    // collapse to 0, which would silently disable all sound and zero every volume on first launch.
+    if (!webEntryExists()) return SoundConfig{};
+
     const ks = readWebField("keystrokes");
     const er = readWebField("errors");
     const kl = readWebField("kills");

@@ -274,6 +274,9 @@ var sound_menu_selection: u8 = 0;
 var sound_menu_return_screen: GameScreen = .paused;
 const SOUND_MENU_ITEM_COUNT: u8 = 10;
 
+// Tracks the currently-playing preview so a new pack focus interrupts the previous sample (ARD-5).
+var last_preview_sound: ?*raylib.Sound = null;
+
 const screen_width = 800;
 const screen_height = 1000;
 
@@ -290,9 +293,25 @@ const FrameContext = struct {
     frames_counter: usize,
 };
 
-// 20-step volume sliders map linearly to raylib's 0.0–1.0 range (20 * 0.05 = 1.0).
+// 20-step volume sliders map linearly to raylib's 0.0–1.0 range (20 * VOLUME_STEP = 1.0).
+const VOLUME_STEP: f32 = 0.05;
+// Pack preview plays at half the typing volume, with a floor so a near-muted slider can still audition packs.
+const PREVIEW_VOL_FACTOR: f32 = 0.5;
+const PREVIEW_VOL_FLOOR: f32 = 0.30;
+// Sound settings screen layout.
+const SOUND_SETTINGS_TITLE_Y: c_int = 60;
+const SOUND_SETTINGS_TITLE_SIZE: c_int = 40;
+const SOUND_SETTINGS_ITEM_START_Y: c_int = 160;
+const SOUND_SETTINGS_ITEM_SPACING: c_int = 75;
+const SOUND_SETTINGS_ITEM_LEFT_X: c_int = 40;
+const SOUND_SETTINGS_ITEM_FONT_SIZE: c_int = 22;
+const SOUND_SETTINGS_VALUE_RIGHT_OFFSET: c_int = 300;
+const SOUND_SETTINGS_HINT_Y_OFFSET: c_int = 50;
+const SOUND_SETTINGS_HINT_SIZE: c_int = 18;
+const VOLUME_BAR_SEGMENTS: u8 = 10;
+
 fn volumeToFloat(level: u8) f32 {
-    return @as(f32, @floatFromInt(level)) * 0.05;
+    return @as(f32, @floatFromInt(level)) * VOLUME_STEP;
 }
 
 fn cyclePackEnum(comptime T: type, current: T, forward: bool) T {
@@ -852,11 +871,14 @@ fn updateSoundSettings() void {
                     if (!sound_cfg.music_enabled) {
                         raylib.StopMusicStream(music);
                     } else if (sound_menu_return_screen == .paused) {
-                        // Only resume immediately when coming from an active session; from main menu
-                        // there's nothing to hear yet — music will start when a mode is chosen.
+                        // Coming from an active (paused) session: prime the stream so the game's
+                        // resume flow has something to ResumeMusicStream, but pause it immediately
+                        // so music does not audibly play on the pause screen.
                         raylib.SetMusicVolume(music, volumeToFloat(sound_cfg.music_volume));
                         raylib.PlayMusicStream(music);
+                        raylib.PauseMusicStream(music);
                     }
+                    // From main menu: there's nothing to hear yet — music starts when a mode is chosen.
                 }
             },
             else => {},
@@ -881,17 +903,23 @@ fn updateSoundSettings() void {
             2 => {
                 if (right and sound_cfg.typing_volume < 20) sound_cfg.typing_volume += 1;
                 if (left and sound_cfg.typing_volume > 0) sound_cfg.typing_volume -|= 1;
-                playTypingSound();
+                // Use the always-on preview so the player hears the level even if keystroke sounds are toggled off.
+                const tsounds = getTypingSounds();
+                playVolumePreview(tsounds[typing_round_robin], sound_cfg.typing_volume);
+                typing_round_robin = (typing_round_robin + 1) % getTypingSampleCount();
             },
             7 => {
                 if (right and sound_cfg.effects_volume < 20) sound_cfg.effects_volume += 1;
                 if (left and sound_cfg.effects_volume > 0) sound_cfg.effects_volume -|= 1;
-                playKillSound();
+                playVolumePreview(zombie_kill_sound, sound_cfg.effects_volume);
             },
             9 => {
                 if (right and sound_cfg.music_volume < 20) sound_cfg.music_volume += 1;
                 if (left and sound_cfg.music_volume > 0) sound_cfg.music_volume -|= 1;
                 if (audio_ready) raylib.SetMusicVolume(music, volumeToFloat(sound_cfg.music_volume));
+                // FR-014 calibration: the music stream is usually paused/stopped on this screen, so the
+                // kill sound stands in as a short representative sample at the music slider's level.
+                playVolumePreview(zombie_kill_sound, sound_cfg.music_volume);
             },
             else => {},
         }
@@ -909,20 +937,28 @@ fn updateSoundSettings() void {
 fn playPackPreview(is_typing: bool) void {
     if (!audio_ready) return;
     const sounds = if (is_typing) getTypingSounds() else getErrorSounds();
-    // Preview is half-volume, with a 0.30 floor so a near-muted slider can still audition packs.
     const vol = volumeToFloat(sound_cfg.typing_volume);
-    const preview_vol = if (vol < 0.30) @as(f32, 0.30) else vol * 0.5;
+    const preview_vol = if (vol < PREVIEW_VOL_FLOOR) PREVIEW_VOL_FLOOR else vol * PREVIEW_VOL_FACTOR;
+    if (last_preview_sound) |prev| raylib.StopSound(prev.*);
     raylib.SetSoundVolume(sounds[0], preview_vol);
     raylib.PlaySound(sounds[0]);
+    last_preview_sound = &sounds[0];
+}
+
+// Always-on volume calibration preview that bypasses the category toggle — when adjusting a
+// volume slider, the player needs audible feedback even if the matching category is disabled.
+fn playVolumePreview(snd: raylib.Sound, level: u8) void {
+    if (!audio_ready) return;
+    if (last_preview_sound) |prev| raylib.StopSound(prev.*);
+    raylib.SetSoundVolume(snd, volumeToFloat(level));
+    raylib.PlaySound(snd);
+    last_preview_sound = null;
 }
 
 fn drawSoundSettings() void {
     raylib.DrawRectangle(0, 0, screen_width, screen_height, CRT_BG);
 
-    drawCenteredTextShadow("SOUND SETTINGS", 60, 40, CRT_FG);
-
-    const start_y: c_int = 160;
-    const spacing: c_int = 75;
+    drawCenteredTextShadow("SOUND SETTINGS", SOUND_SETTINGS_TITLE_Y, SOUND_SETTINGS_TITLE_SIZE, CRT_FG);
 
     const labels = [SOUND_MENU_ITEM_COUNT][]const u8{
         "KEYSTROKE SOUNDS",
@@ -938,14 +974,14 @@ fn drawSoundSettings() void {
     };
 
     for (labels, 0..) |label, i| {
-        const y = start_y + @as(c_int, @intCast(i)) * spacing;
+        const y = SOUND_SETTINGS_ITEM_START_Y + @as(c_int, @intCast(i)) * SOUND_SETTINGS_ITEM_SPACING;
         const selected = (i == sound_menu_selection);
         const color = if (selected) CRT_ACCENT else CRT_DIM;
 
         var label_buf: [48]u8 = undefined;
         const prefix: []const u8 = if (selected) "> " else "  ";
         const label_text = std.fmt.bufPrintZ(&label_buf, "{s}{s}", .{ prefix, label }) catch "???";
-        raylib.DrawText(label_text.ptr, 40, y, 22, color);
+        raylib.DrawText(label_text.ptr, SOUND_SETTINGS_ITEM_LEFT_X, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
 
         var val_buf: [48]u8 = undefined;
         const val_text: [*:0]const u8 = switch (@as(u8, @intCast(i))) {
@@ -961,15 +997,23 @@ fn drawSoundSettings() void {
             9 => formatVolumeBar(&val_buf, sound_cfg.music_volume),
             else => "???",
         };
-        raylib.DrawText(val_text, screen_width - 300, y, 22, color);
+        raylib.DrawText(val_text, screen_width - SOUND_SETTINGS_VALUE_RIGHT_OFFSET, y, SOUND_SETTINGS_ITEM_FONT_SIZE, color);
     }
 
-    drawCenteredText("ESC: BACK", screen_height - 50, 18, CRT_DIM);
+    drawCenteredText("ESC: BACK", screen_height - SOUND_SETTINGS_HINT_Y_OFFSET, SOUND_SETTINGS_HINT_SIZE, CRT_DIM);
 }
 
 fn formatVolumeBar(buf: *[48]u8, level: u8) [*:0]const u8 {
+    const filled: u8 = @intCast(@as(u16, level) * VOLUME_BAR_SEGMENTS / 20);
+    var bar: [VOLUME_BAR_SEGMENTS + 2]u8 = undefined;
+    bar[0] = '[';
+    var i: u8 = 0;
+    while (i < VOLUME_BAR_SEGMENTS) : (i += 1) {
+        bar[i + 1] = if (i < filled) '#' else '-';
+    }
+    bar[VOLUME_BAR_SEGMENTS + 1] = ']';
     const pct = @as(u32, level) * 5;
-    return std.fmt.bufPrintZ(buf, "{d:>3}%", .{pct}) catch "???";
+    return std.fmt.bufPrintZ(buf, "{s} {d:>3}%", .{ bar, pct }) catch "???";
 }
 
 fn drawPauseOverlay() void {
@@ -1180,18 +1224,21 @@ fn frame_c_callback(arg: ?*anyopaque) callconv(.c) void {
 // it is the cleanest available hook for any controlled teardown the runtime offers.
 fn cleanup_on_exit() callconv(.c) void {
     raylib.UnloadTexture(zombie_texture);
-    raylib.UnloadSound(zombie_kill_sound);
-    for (&click_sounds) |*s| raylib.UnloadSound(s.*);
-    for (&typewriter_sounds) |*s| raylib.UnloadSound(s.*);
-    for (&hitmarker_sounds) |*s| raylib.UnloadSound(s.*);
-    for (&damage_sounds) |*s| raylib.UnloadSound(s.*);
-    for (&square_sounds) |*s| raylib.UnloadSound(s.*);
-    for (&missed_punch_sounds) |*s| raylib.UnloadSound(s.*);
-    raylib.UnloadSound(bomb_sound);
-    raylib.UnloadSound(freeze_sound);
-    raylib.UnloadSound(shield_sound);
-    raylib.UnloadMusicStream(music);
-    raylib.CloseAudioDevice();
+    // Skip audio unloads when audio init failed — handles are zeroed and unloading them is UB.
+    if (audio_ready) {
+        raylib.UnloadSound(zombie_kill_sound);
+        for (&click_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&typewriter_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&hitmarker_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&damage_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&square_sounds) |*s| raylib.UnloadSound(s.*);
+        for (&missed_punch_sounds) |*s| raylib.UnloadSound(s.*);
+        raylib.UnloadSound(bomb_sound);
+        raylib.UnloadSound(freeze_sound);
+        raylib.UnloadSound(shield_sound);
+        raylib.UnloadMusicStream(music);
+        raylib.CloseAudioDevice();
+    }
     raylib.CloseWindow();
 }
 
@@ -1255,7 +1302,9 @@ pub fn main() !void {
     music = raylib.LoadMusicStream("assets/music/nightmare-pulse.wav");
     defer raylib.UnloadMusicStream(music);
     music.looping = true;
-    audio_ready = true;
+    // Detect headless / driver-less environments so subsequent PlaySound/UpdateMusicStream
+    // calls become no-ops instead of operating on zeroed handles.
+    audio_ready = raylib.IsAudioDeviceReady();
 
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);

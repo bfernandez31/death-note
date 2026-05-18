@@ -24,6 +24,10 @@ GNU General Public License v3.0 (GPL-3.0).
     assets/sounds/hitmarker/1.wav
     assets/sounds/hitmarker/2.wav
     assets/sounds/hitmarker/3.wav
+    assets/sounds/damage/1.wav
+    assets/sounds/square/1.wav
+    assets/sounds/missed-punch/1.wav
+    assets/sounds/missed-punch/2.wav
 
   License: GPL-3.0 (https://www.gnu.org/licenses/gpl-3.0.en.html)
   Source: https://github.com/monkeytypegame/monkeytype

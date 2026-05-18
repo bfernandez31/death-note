@@ -66,7 +66,7 @@ A player types letters to kill zombies and hears audio feedback on every correct
 
 1. **Given** the game is running with keystroke sounds enabled and the "typewriter" pack selected, **When** the player types a letter that extends a valid prefix on any active zombie, **Then** a typewriter sound sample plays immediately, cycling through the 6 available samples in round-robin order.
 2. **Given** the game is running with error sounds enabled and the "damage" pack selected, **When** the player types a letter that does not match any active zombie prefix, **Then** the damage error sound plays immediately.
-3. **Given** keystroke sounds are toggled off in settings, **When** the player types any letter, **Then** no keystroke or error sound plays regardless of pack selection.
+3. **Given** keystroke sounds are toggled off in settings, **When** the player types a correctly matching letter, **Then** no typing-pack sound plays. The independent error-sounds toggle still governs error feedback (FR-008): mistyped letters play the error pack sound only if errors are also enabled.
 4. **Given** the player is typing rapidly (multiple keys per frame), **When** several correct keystrokes register in quick succession, **Then** each keystroke triggers its own sound without audio glitches or dropped frames.
 
 ---

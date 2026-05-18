@@ -652,14 +652,14 @@ pub const SoundConfig = struct {
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 byte | `keystrokes_enabled` (u8: 0 or 1) |
-| 1 | 1 byte | `typing_pack` (u8 ordinal: click=0, typewriter=1, hitmarker=2) |
-| 2 | 1 byte | `typing_volume` (u8, clamped 0–20) |
-| 3 | 1 byte | `errors_enabled` (u8: 0 or 1) |
-| 4 | 1 byte | `error_pack` (u8 ordinal: damage=0, square=1, missed_punch=2) |
-| 5 | 1 byte | `kills_enabled` (u8: 0 or 1) |
-| 6 | 1 byte | `power_ups_enabled` (u8: 0 or 1) |
-| 7 | 1 byte | `effects_volume` (u8, clamped 0–20) |
-| 8 | 1 byte | `music_enabled` (u8: 0 or 1) |
+| 1 | 1 byte | `errors_enabled` (u8: 0 or 1) |
+| 2 | 1 byte | `kills_enabled` (u8: 0 or 1) |
+| 3 | 1 byte | `power_ups_enabled` (u8: 0 or 1) |
+| 4 | 1 byte | `music_enabled` (u8: 0 or 1) |
+| 5 | 1 byte | `typing_pack` (u8 ordinal: click=0, typewriter=1, hitmarker=2) |
+| 6 | 1 byte | `error_pack` (u8 ordinal: damage=0, square=1, missed_punch=2) |
+| 7 | 1 byte | `typing_volume` (u8, clamped 0–20) |
+| 8 | 1 byte | `effects_volume` (u8, clamped 0–20) |
 | 9 | 1 byte | `music_volume` (u8, clamped 0–20) |
 
 Total: `DISK_SIZE` = 10 bytes. Written and read via `std.c.fopen`/`fwrite`/`fread`. On load, volume fields outside 0–20 are clamped; invalid enum ordinals fall back to default values. A missing or corrupt file returns `SoundConfig{}` (all defaults).
