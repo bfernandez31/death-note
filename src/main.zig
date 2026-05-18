@@ -3011,6 +3011,9 @@ test "startGame sets current_screen to playing" {
     var alloc = std.testing.allocator;
     current_screen = .main_menu;
     startGame(.survival, @ptrCast(&alloc));
+    // startGame front-loads a starter pack; clean it up so the testing
+    // allocator's leak detector stays quiet under CI's DebugAllocator.
+    defer resetZombies(@ptrCast(&alloc));
     try std.testing.expect(current_screen == .playing);
     try std.testing.expect(game_mode == .survival);
     try std.testing.expectEqual(@as(u32, 1), current_wave);
