@@ -22,10 +22,10 @@
 
 **Purpose**: Add all bot state variables and constants to `src/main.zig` so subsequent phases can reference them.
 
-- [ ] T001 Add bot constants (`BOT_REACTION_DELAY = 0.2`) near existing timing constants (~line 62) in `src/main.zig`
-- [ ] T002 Add bot state variables (`bot_active`, `bot_tainted`, `bot_target_index`, `bot_targeting_boss`, `bot_char_index`, `bot_type_timer`, `bot_reaction_timer`) as module-level vars after `game_mode` (~line 232) in `src/main.zig`
-- [ ] T003 Add `resetBotState()` function that clears all bot variables to defaults, following the `resetSessionState()` pattern (~line 1951) in `src/main.zig`
-- [ ] T004 Wire `resetBotState()` into `startGame()` (~line 1223) alongside existing reset calls, and clear `bot_tainted` there (new session = clean slate) in `src/main.zig`
+- [x] T001 Add bot constants (`BOT_REACTION_DELAY = 0.2`) near existing timing constants (~line 62) in `src/main.zig`
+- [x] T002 Add bot state variables (`bot_active`, `bot_tainted`, `bot_target_index`, `bot_targeting_boss`, `bot_char_index`, `bot_type_timer`, `bot_reaction_timer`) as module-level vars after `game_mode` (~line 232) in `src/main.zig`
+- [x] T003 Add `resetBotState()` function that clears all bot variables to defaults, following the `resetSessionState()` pattern (~line 1951) in `src/main.zig`
+- [x] T004 Wire `resetBotState()` into `startGame()` (~line 1223) alongside existing reset calls, and clear `bot_tainted` there (new session = clean slate) in `src/main.zig`
 
 **Checkpoint**: Bot state variables exist and are reset on game start. No functional behavior yet.
 
@@ -37,10 +37,10 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T005 Implement `selectBotTarget()` function that scans `zombies` array for highest-Y active zombie, tie-breaks by shortest name then lowest X, and sets `bot_target_index`; when `boss != null`, set `bot_targeting_boss = true` instead in `src/main.zig`
-- [ ] T006 Implement `updateBot()` function: gate on `bot_active and !is_transitioning and !is_dying and current_screen == .playing`; handle reaction delay countdown; call `selectBotTarget()` when no target; accumulate `bot_type_timer` and inject characters into shared `name` buffer at `target_wpm / 12.0` chars/sec; call `typedMatchesAnyEnemy()`, `recordCorrectTimestamp()`, `playTypingSound()` for metrics/sound side effects; reset bot state on target kill in `src/main.zig`
-- [ ] T007 Wire `updateBot()` into the game loop inside the `.playing` screen case, after the `!is_transitioning and !is_dying` block; when `bot_active`, skip the human `GetCharPressed` loop and backspace handler in `src/main.zig`
-- [ ] T008 Add bot-aware high-score gating: guard `highscore.save(.survival, ...)` at line 605 with `and !bot_tainted`; guard `highscore.save(.zen, ...)` at line 1219 with `and !bot_tainted` in `src/main.zig`
+- [x] T005 Implement `selectBotTarget()` function that scans `zombies` array for highest-Y active zombie, tie-breaks by shortest name then lowest X, and sets `bot_target_index`; when `boss != null`, set `bot_targeting_boss = true` instead in `src/main.zig`
+- [x] T006 Implement `updateBot()` function: gate on `bot_active and !is_transitioning and !is_dying and current_screen == .playing`; handle reaction delay countdown; call `selectBotTarget()` when no target; accumulate `bot_type_timer` and inject characters into shared `name` buffer at `target_wpm / 12.0` chars/sec; call `typedMatchesAnyEnemy()`, `recordCorrectTimestamp()`, `playTypingSound()` for metrics/sound side effects; reset bot state on target kill in `src/main.zig`
+- [x] T007 Wire `updateBot()` into the game loop inside the `.playing` screen case, after the `!is_transitioning and !is_dying` block; when `bot_active`, skip the human `GetCharPressed` loop and backspace handler in `src/main.zig`
+- [x] T008 Add bot-aware high-score gating: guard `highscore.save(.survival, ...)` at line 605 with `and !bot_tainted`; guard `highscore.save(.zen, ...)` at line 1219 with `and !bot_tainted` in `src/main.zig`
 
 **Checkpoint**: Bot can type zombie names at the correct cadence when `bot_active` is set programmatically. High scores are blocked when tainted. No UI entry point yet.
 
@@ -56,21 +56,21 @@
 **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 **RULE (constitution): Extend existing test blocks in `src/main.zig` (74 tests already present at ~line 2108). No new test file needed.**
 
-- [ ] T009 [P] [US1] Extend tests in `src/main.zig`: add `test "bot reaction delay constant is 0.2"` verifying `BOT_REACTION_DELAY == 0.2`
-- [ ] T010 [P] [US1] Extend tests in `src/main.zig`: add `test "bot chars per second at wave 1"` verifying `20 * 5.0 / 60.0` equals ~1.667 chars/sec
-- [ ] T011 [P] [US1] Extend tests in `src/main.zig`: add `test "bot chars per second at max wave"` verifying formula at 250 WPM yields ~20.83 chars/sec
-- [ ] T012 [P] [US1] Extend tests in `src/main.zig`: add `test "bot state reset clears all fields"` verifying `resetBotState()` sets all bot vars to defaults
-- [ ] T013 [P] [US1] Extend tests in `src/main.zig`: add `test "menu has 5 items with BOT at index 2"` verifying `MENU_ITEMS[2]` is `"BOT"` and `MENU_ITEM_COUNT == 5`
-- [ ] T014 [P] [US1] Extend tests in `src/main.zig`: add `test "bot_tainted blocks high score save"` verifying the gating condition `!bot_tainted` is checked before save calls
-- [ ] T015 [P] [US1] Extend tests in `src/main.zig`: add `test "bot_tainted cleared on startGame"` verifying `bot_tainted` resets to false on new session
+- [x] T009 [P] [US1] Extend tests in `src/main.zig`: add `test "bot reaction delay constant is 0.2"` verifying `BOT_REACTION_DELAY == 0.2`
+- [x] T010 [P] [US1] Extend tests in `src/main.zig`: add `test "bot chars per second at wave 1"` verifying `20 * 5.0 / 60.0` equals ~1.667 chars/sec
+- [x] T011 [P] [US1] Extend tests in `src/main.zig`: add `test "bot chars per second at max wave"` verifying formula at 250 WPM yields ~20.83 chars/sec
+- [x] T012 [P] [US1] Extend tests in `src/main.zig`: add `test "bot state reset clears all fields"` verifying `resetBotState()` sets all bot vars to defaults
+- [x] T013 [P] [US1] Extend tests in `src/main.zig`: add `test "menu has 5 items with BOT at index 2"` verifying `MENU_ITEMS[2]` is `"BOT"` and `MENU_ITEM_COUNT == 5`
+- [x] T014 [P] [US1] Extend tests in `src/main.zig`: add `test "bot_tainted blocks high score save"` verifying the gating condition `!bot_tainted` is checked before save calls
+- [x] T015 [P] [US1] Extend tests in `src/main.zig`: add `test "bot_tainted cleared on startGame"` verifying `bot_tainted` resets to false on new session
 
 ### Implementation for User Story 1
 
-- [ ] T016 [US1] Update `MENU_ITEMS` array to `{ "SURVIVAL", "ZEN", "BOT", "SOUND", "QUIT" }` and `MENU_ITEM_COUNT` to 5 at line 756-757 in `src/main.zig`
-- [ ] T017 [US1] Update the menu Enter handler switch: add case 2 for BOT (`bot_active = true; bot_tainted = true; startGame(.survival, allocator);`), shift SOUND to case 3 and QUIT to case 4 in `src/main.zig`
-- [ ] T018 [US1] Update existing menu wrap-around tests to expect `MENU_ITEM_COUNT == 5` (adjust values at ~line 2961-2963) in `src/main.zig`
-- [ ] T019 [US1] Suppress player keyboard input when bot active: wrap the `GetCharPressed` loop and backspace handler (~line 490-523) in `if (!bot_active) { ... }` in `src/main.zig`
-- [ ] T020 [US1] Suppress power-up activation when bot active: guard Space key activation (~line 485) with `and !bot_active` per FR-008 in `src/main.zig`
+- [x] T016 [US1] Update `MENU_ITEMS` array to `{ "SURVIVAL", "ZEN", "BOT", "SOUND", "QUIT" }` and `MENU_ITEM_COUNT` to 5 at line 756-757 in `src/main.zig`
+- [x] T017 [US1] Update the menu Enter handler switch: add case 2 for BOT (`bot_active = true; bot_tainted = true; startGame(.survival, allocator);`), shift SOUND to case 3 and QUIT to case 4 in `src/main.zig`
+- [x] T018 [US1] Update existing menu wrap-around tests to expect `MENU_ITEM_COUNT == 5` (adjust values at ~line 2961-2963) in `src/main.zig`
+- [x] T019 [US1] Suppress player keyboard input when bot active: wrap the `GetCharPressed` loop and backspace handler (~line 490-523) in `if (!bot_active) { ... }` in `src/main.zig`
+- [x] T020 [US1] Suppress power-up activation when bot active: guard Space key activation (~line 485) with `and !bot_active` per FR-008 in `src/main.zig`
 
 **Checkpoint**: BOT menu entry works, bot plays wave 1 autonomously at correct cadence, high scores not persisted. US1 is fully functional and testable independently.
 
@@ -85,15 +85,15 @@
 ### Tests for User Story 2
 **RULE (constitution): Extend existing test blocks in `src/main.zig`.**
 
-- [ ] T021 [P] [US2] Extend tests in `src/main.zig`: add `test "bot_tainted persists through F2 toggle off"` — set tainted via activation, toggle bot off, verify tainted still true
-- [ ] T022 [P] [US2] Extend tests in `src/main.zig`: add `test "bot does not type during transition"` — verify `updateBot()` gate respects `is_transitioning`
-- [ ] T023 [P] [US2] Extend tests in `src/main.zig`: add `test "bot does not type during dying"` — verify `updateBot()` gate respects `is_dying`
+- [x] T021 [P] [US2] Extend tests in `src/main.zig`: add `test "bot_tainted persists through F2 toggle off"` — set tainted via activation, toggle bot off, verify tainted still true
+- [x] T022 [P] [US2] Extend tests in `src/main.zig`: add `test "bot does not type during transition"` — verify `updateBot()` gate respects `is_transitioning`
+- [x] T023 [P] [US2] Extend tests in `src/main.zig`: add `test "bot does not type during dying"` — verify `updateBot()` gate respects `is_dying`
 
 ### Implementation for User Story 2
 
-- [ ] T024 [US2] Add F2 toggle in the `.playing` screen update: `if (raylib.IsKeyPressed(raylib.KEY_F2) and !is_dying and game_mode == .survival)` toggles `bot_active`, sets `bot_tainted = true` on activation, clears input buffer on activation, starts reaction delay in `src/main.zig`
-- [ ] T025 [US2] On F2 deactivation: leave input buffer as-is so player resumes from current state; clear `bot_target_index` and `bot_char_index` in `src/main.zig`
-- [ ] T026 [US2] Ensure F2 is a no-op when `current_screen != .playing` (pause, game-over, menu) and when `game_mode == .zen` per FR-016 in `src/main.zig`
+- [x] T024 [US2] Add F2 toggle in the `.playing` screen update: `if (raylib.IsKeyPressed(raylib.KEY_F2) and !is_dying and game_mode == .survival)` toggles `bot_active`, sets `bot_tainted = true` on activation, clears input buffer on activation, starts reaction delay in `src/main.zig`
+- [x] T025 [US2] On F2 deactivation: leave input buffer as-is so player resumes from current state; clear `bot_target_index` and `bot_char_index` in `src/main.zig`
+- [x] T026 [US2] Ensure F2 is a no-op when `current_screen != .playing` (pause, game-over, menu) and when `game_mode == .zen` per FR-016 in `src/main.zig`
 
 **Checkpoint**: F2 toggle works mid-game, bot-tainted flag persists. US1 and US2 both work independently.
 
@@ -108,12 +108,12 @@
 ### Tests for User Story 3
 **RULE (constitution): Extend existing test blocks in `src/main.zig`.**
 
-- [ ] T027 [P] [US3] Extend tests in `src/main.zig`: add `test "bot target selection picks boss when present"` — verify `selectBotTarget()` sets `bot_targeting_boss = true` when boss exists
+- [x] T027 [P] [US3] Extend tests in `src/main.zig`: add `test "bot target selection picks boss when present"` — verify `selectBotTarget()` sets `bot_targeting_boss = true` when boss exists
 
 ### Implementation for User Story 3
 
-- [ ] T028 [US3] Ensure `selectBotTarget()` prioritizes boss: when `boss != null`, set `bot_targeting_boss = true` and `bot_target_index = null`; bot types boss phrase characters (including spaces) via the same input buffer path in `src/main.zig`
-- [ ] T029 [US3] Ensure `updateBot()` reads from boss phrase (up to `MAX_BOSS_INPUT_CHARS = 35`) when `bot_targeting_boss == true`, and resets boss targeting state when boss is killed in `src/main.zig`
+- [x] T028 [US3] Ensure `selectBotTarget()` prioritizes boss: when `boss != null`, set `bot_targeting_boss = true` and `bot_target_index = null`; bot types boss phrase characters (including spaces) via the same input buffer path in `src/main.zig`
+- [x] T029 [US3] Ensure `updateBot()` reads from boss phrase (up to `MAX_BOSS_INPUT_CHARS = 35`) when `bot_targeting_boss == true`, and resets boss targeting state when boss is killed in `src/main.zig`
 
 **Checkpoint**: Bot handles boss waves correctly. US1, US2, and US3 all work independently.
 
@@ -128,11 +128,11 @@
 ### Tests for User Story 4
 **RULE (constitution): Extend existing test blocks in `src/main.zig`.**
 
-- [ ] T030 [P] [US4] Extend tests in `src/main.zig`: add `test "bot never activates power-ups"` — verify Space key activation is gated by `!bot_active`
+- [x] T030 [P] [US4] Extend tests in `src/main.zig`: add `test "bot never activates power-ups"` — verify Space key activation is gated by `!bot_active`
 
 ### Implementation for User Story 4
 
-- [ ] T031 [US4] Verify that T020 (Space key guard with `!bot_active`) covers FR-008 completely — bot cannot issue Space key input since it only injects name characters into the buffer; confirm no additional code path triggers power-up activation in `src/main.zig`
+- [x] T031 [US4] Verify that T020 (Space key guard with `!bot_active`) covers FR-008 completely — bot cannot issue Space key input since it only injects name characters into the buffer; confirm no additional code path triggers power-up activation in `src/main.zig`
 
 **Checkpoint**: Bot plays through carrier waves without activating power-ups. All US1–US4 work independently.
 
@@ -147,11 +147,11 @@
 ### Tests for User Story 5
 **RULE (constitution): Extend existing test blocks in `src/main.zig`.**
 
-- [ ] T032 [P] [US5] Extend tests in `src/main.zig`: add `test "bot badge uses CRT_WARN tint"` — verify the badge color constant matches `CRT_WARN`
+- [x] T032 [P] [US5] Extend tests in `src/main.zig`: add `test "bot badge uses CRT_WARN tint"` — verify the badge color constant matches `CRT_WARN`
 
 ### Implementation for User Story 5
 
-- [ ] T033 [US5] Draw "BOT" badge in `drawPlayingHud()` (~line 1083) when `bot_active == true`: use `drawText()` with `CRT_WARN` color, positioned top-center (e.g., y=35, x centered), visible during both gameplay and transitions in `src/main.zig`
+- [x] T033 [US5] Draw "BOT" badge in `drawPlayingHud()` (~line 1083) when `bot_active == true`: use `drawText()` with `CRT_WARN` color, positioned top-center (e.g., y=35, x centered), visible during both gameplay and transitions in `src/main.zig`
 
 **Checkpoint**: BOT badge appears/disappears correctly. All user stories (US1–US5) work independently.
 
@@ -161,13 +161,13 @@
 
 **Purpose**: Edge case handling and robustness across all user stories.
 
-- [ ] T034 Clear `bot_target_index` and `bot_char_index` when `is_transitioning` becomes true (wave transition resets bot targeting state) in `src/main.zig`
-- [ ] T035 In `updateBot()`, validate target zombie still exists before typing — if `zombies[bot_target_index.?]` is `null` (killed by bomb), clear target, clear partial input, start reaction delay in `src/main.zig`
-- [ ] T036 [P] Extend tests in `src/main.zig`: add `test "bot target selection picks highest Y"` — create test scenarios with zombies at different Y positions
-- [ ] T037 [P] Extend tests in `src/main.zig`: add `test "bot target tie-break: shortest name then leftmost"` — equidistant zombies with varying name lengths and X positions
-- [ ] T038 Ensure `startGame()` sets `bot_active = true` and `bot_tainted = true` AFTER `resetBotState()` when called from the BOT menu entry (order matters: reset clears, then menu re-sets) in `src/main.zig`
-- [ ] T039 Run `zig build test` to confirm all new and existing tests pass
-- [ ] T040 Run `zig build` to confirm the project compiles without errors for native target
+- [x] T034 Clear `bot_target_index` and `bot_char_index` when `is_transitioning` becomes true (wave transition resets bot targeting state) in `src/main.zig`
+- [x] T035 In `updateBot()`, validate target zombie still exists before typing — if `zombies[bot_target_index.?]` is `null` (killed by bomb), clear target, clear partial input, start reaction delay in `src/main.zig`
+- [x] T036 [P] Extend tests in `src/main.zig`: add `test "bot target selection picks highest Y"` — create test scenarios with zombies at different Y positions
+- [x] T037 [P] Extend tests in `src/main.zig`: add `test "bot target tie-break: shortest name then leftmost"` — equidistant zombies with varying name lengths and X positions
+- [x] T038 Ensure `startGame()` sets `bot_active = true` and `bot_tainted = true` AFTER `resetBotState()` when called from the BOT menu entry (order matters: reset clears, then menu re-sets) in `src/main.zig`
+- [x] T039 Run `zig build test` to confirm all new and existing tests pass
+- [x] T040 Run `zig build` to confirm the project compiles without errors for native target
 
 ---
 

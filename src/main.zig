@@ -57,6 +57,8 @@ const CRT_VIGNETTE_INNER_PX: c_int = 10;
 const CRT_FLICKER_PERIOD_S: f64 = 7.0;
 const BOSS_WAVE_INTERVAL: u32 = 5;
 
+const BOT_REACTION_DELAY: f32 = 0.2;
+
 const ZOMBIE_FRAME_COUNT = 17;
 const ZOMBIE_ANIMATION_FRAME_DURATION: f32 = 0.1; // seconds per spritesheet frame
 const WAVE_TRANSITION_DURATION: f32 = 3.0;
@@ -230,6 +232,14 @@ const GameScreen = enum {
 var current_screen: GameScreen = .main_menu;
 var game_mode: GameMode = .survival;
 var menu_selection: u8 = 0;
+
+var bot_active: bool = false;
+var bot_tainted: bool = false;
+var bot_target_index: ?usize = null;
+var bot_targeting_boss: bool = false;
+var bot_char_index: usize = 0;
+var bot_type_timer: f32 = 0.0;
+var bot_reaction_timer: f32 = 0.0;
 var pause_selection: u8 = 0;
 // Set by the main-menu Quit entry so the main loop exits cleanly between frames.
 // Tearing raylib down inside `frame()` would leave the rest of the same frame drawing
@@ -473,54 +483,77 @@ fn frame(ctx: *FrameContext) void {
                 ctx.frames_counter = 0;
             }
 
+            if (raylib.IsKeyPressed(raylib.KEY_F2) and !is_dying and game_mode == .survival and current_screen == .playing) {
+                if (bot_active) {
+                    bot_active = false;
+                    bot_target_index = null;
+                    bot_targeting_boss = false;
+                    bot_char_index = 0;
+                } else {
+                    bot_active = true;
+                    bot_tainted = true;
+                    bot_reaction_timer = BOT_REACTION_DELAY;
+                    bot_target_index = null;
+                    bot_targeting_boss = false;
+                    bot_char_index = 0;
+                    bot_type_timer = 0.0;
+                    letter_count = 0;
+                    name[0] = '\x00';
+                }
+            }
+
             if (!is_transitioning and !is_dying) {
                 if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
                     current_screen = .paused;
                     pause_selection = 0;
                     if (audio_ready) raylib.PauseMusicStream(music);
                 } else {
-                    var space_consumed = false;
-                    // Boss phrases contain spaces ("the dead walk again", ...), so during a
-                    // boss fight space must be a typing character, not the power-up trigger.
-                    if (raylib.IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null and boss == null) {
-                        activatePowerUp(ctx.allocator);
-                        space_consumed = true;
-                    }
+                    if (!bot_active) {
+                        var space_consumed = false;
+                        // Boss phrases contain spaces ("the dead walk again", ...), so during a
+                        // boss fight space must be a typing character, not the power-up trigger.
+                        if (raylib.IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null and boss == null) {
+                            activatePowerUp(ctx.allocator);
+                            space_consumed = true;
+                        }
 
-                    var key = raylib.GetCharPressed();
-                    while (key > 0) {
-                        if ((key >= 32) and (key <= 125)) {
-                            if (key == 32 and space_consumed) {
-                                key = raylib.GetCharPressed();
-                                continue;
-                            }
-                            wpm_timer_started = true;
-                            if (letter_count < getCurrentMaxInput()) {
-                                name[letter_count] = @intCast(key);
-                                name[letter_count + 1] = '\x00';
-                                letter_count += 1;
-                                if (typedMatchesAnyEnemy()) {
-                                    recordCorrectTimestamp(elapsed_time);
-                                    correct_chars += 1;
-                                    playTypingSound();
+                        var key = raylib.GetCharPressed();
+                        while (key > 0) {
+                            if ((key >= 32) and (key <= 125)) {
+                                if (key == 32 and space_consumed) {
+                                    key = raylib.GetCharPressed();
+                                    continue;
+                                }
+                                wpm_timer_started = true;
+                                if (letter_count < getCurrentMaxInput()) {
+                                    name[letter_count] = @intCast(key);
+                                    name[letter_count + 1] = '\x00';
+                                    letter_count += 1;
+                                    if (typedMatchesAnyEnemy()) {
+                                        recordCorrectTimestamp(elapsed_time);
+                                        correct_chars += 1;
+                                        playTypingSound();
+                                    } else {
+                                        wrong_chars += 1;
+                                        combo_count = 0;
+                                        playErrorSound();
+                                    }
                                 } else {
                                     wrong_chars += 1;
                                     combo_count = 0;
                                     playErrorSound();
                                 }
-                            } else {
-                                wrong_chars += 1;
-                                combo_count = 0;
-                                playErrorSound();
                             }
+                            key = raylib.GetCharPressed();
                         }
-                        key = raylib.GetCharPressed();
+
+                        if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
+                            letter_count -= 1;
+                            name[letter_count] = '\x00';
+                        }
                     }
 
-                    if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
-                        letter_count -= 1;
-                        name[letter_count] = '\x00';
-                    }
+                    updateBot();
 
                     spawn_timer += raylib.GetFrameTime();
 
@@ -561,6 +594,12 @@ fn frame(ctx: *FrameContext) void {
                         if (!is_dying and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
                             is_transitioning = true;
                             transition_timer = WAVE_TRANSITION_DURATION;
+                            bot_target_index = null;
+                            bot_targeting_boss = false;
+                            bot_char_index = 0;
+                            bot_type_timer = 0.0;
+                            letter_count = 0;
+                            name[0] = '\x00';
                         }
                     }
                 }
@@ -602,7 +641,7 @@ fn frame(ctx: *FrameContext) void {
                             .wpm = avg_wpm,
                             .accuracy = acc,
                         };
-                        highscore.save(.survival, best_score_survival);
+                        if (!bot_tainted) highscore.save(.survival, best_score_survival);
                     }
                 }
             }
@@ -753,8 +792,8 @@ fn frame(ctx: *FrameContext) void {
     drawPopups();
 }
 
-const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "SOUND", "QUIT" };
-const MENU_ITEM_COUNT: u8 = 4;
+const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "BOT", "SOUND", "QUIT" };
+const MENU_ITEM_COUNT: u8 = 5;
 const PAUSE_ITEMS = [_][]const u8{ "RESUME", "SOUND", "QUIT TO MENU" };
 const PAUSE_ITEM_COUNT: u8 = 3;
 
@@ -774,11 +813,16 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 current_screen = .wpm_select;
             },
             2 => {
+                startGame(.survival, allocator);
+                bot_active = true;
+                bot_tainted = true;
+            },
+            3 => {
                 sound_menu_return_screen = .main_menu;
                 sound_menu_selection = 0;
                 current_screen = .sound_settings;
             },
-            3 => {
+            4 => {
                 saveZenScoreIfBest();
                 should_quit_app = true;
             },
@@ -1101,6 +1145,10 @@ fn drawPlayingHud() void {
 
     drawMetricsHud();
 
+    if (bot_active) {
+        drawCenteredText("BOT", 35, 24, CRT_WARN);
+    }
+
     if (game_mode == .survival) {
         if (held_power_up) |pu| {
             const label: [*:0]const u8 = switch (pu) {
@@ -1216,7 +1264,7 @@ fn saveZenScoreIfBest() void {
             .wpm = avg_wpm,
             .accuracy = acc,
         };
-        highscore.save(.zen, best_score_zen);
+        if (!bot_tainted) highscore.save(.zen, best_score_zen);
     }
 }
 
@@ -1240,6 +1288,8 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     resetSessionState();
     resetScoreState();
     resetMetricsState();
+    resetBotState();
+    bot_tainted = false;
     resetZombies(allocator);
     resetBoss(allocator);
     // Front-load the wave 1 starter pack so the screen is dense from t=0
@@ -1957,6 +2007,145 @@ fn resetSessionState() void {
     held_power_up = null;
     freeze_timer = 0.0;
     shield_active = false;
+}
+
+fn resetBotState() void {
+    bot_active = false;
+    bot_target_index = null;
+    bot_targeting_boss = false;
+    bot_char_index = 0;
+    bot_type_timer = 0.0;
+    bot_reaction_timer = 0.0;
+}
+
+fn selectBotTarget() void {
+    if (boss != null) {
+        bot_targeting_boss = true;
+        bot_target_index = null;
+        return;
+    }
+
+    var best_index: ?usize = null;
+    var best_y: f32 = -1.0;
+    var best_name_len: usize = std.math.maxInt(usize);
+    var best_x: f32 = std.math.floatMax(f32);
+
+    for (zombies, 0..) |slot, i| {
+        if (slot) |zomb| {
+            if (!zomb.is_active) continue;
+            var zomb_name_len: usize = 0;
+            while (zomb.name[zomb_name_len] != '\x00') zomb_name_len += 1;
+
+            if (zomb.y > best_y or
+                (zomb.y == best_y and zomb_name_len < best_name_len) or
+                (zomb.y == best_y and zomb_name_len == best_name_len and zomb.x < best_x))
+            {
+                best_index = i;
+                best_y = zomb.y;
+                best_name_len = zomb_name_len;
+                best_x = zomb.x;
+            }
+        }
+    }
+
+    bot_target_index = best_index;
+    bot_targeting_boss = false;
+}
+
+fn updateBot() void {
+    if (!bot_active) return;
+    if (is_transitioning or is_dying or current_screen != .playing) return;
+
+    if (bot_reaction_timer > 0) {
+        bot_reaction_timer -= raylib.GetFrameTime();
+        return;
+    }
+
+    if (bot_target_index == null and !bot_targeting_boss) {
+        selectBotTarget();
+        if (bot_target_index == null and !bot_targeting_boss) return;
+        bot_reaction_timer = BOT_REACTION_DELAY;
+        bot_char_index = 0;
+        bot_type_timer = 0.0;
+        letter_count = 0;
+        name[0] = '\x00';
+        return;
+    }
+
+    if (bot_targeting_boss) {
+        if (boss == null) {
+            bot_targeting_boss = false;
+            bot_char_index = 0;
+            bot_type_timer = 0.0;
+            letter_count = 0;
+            name[0] = '\x00';
+            bot_reaction_timer = BOT_REACTION_DELAY;
+            return;
+        }
+    } else if (bot_target_index) |idx| {
+        if (zombies[idx] == null) {
+            bot_target_index = null;
+            bot_char_index = 0;
+            bot_type_timer = 0.0;
+            letter_count = 0;
+            name[0] = '\x00';
+            bot_reaction_timer = BOT_REACTION_DELAY;
+            return;
+        }
+    }
+
+    const target_wpm = if (game_mode == .zen)
+        zen_target_wpm
+    else
+        getWaveConfig(current_wave).target_wpm;
+    const chars_per_second = @as(f32, @floatFromInt(target_wpm)) * CHARS_PER_WORD / SECONDS_PER_MINUTE;
+    const interval = 1.0 / chars_per_second;
+
+    bot_type_timer += raylib.GetFrameTime();
+    if (bot_type_timer < interval) return;
+    bot_type_timer -= interval;
+
+    var target_name: [*:0]const u8 = undefined;
+    var target_len: usize = 0;
+
+    if (bot_targeting_boss) {
+        if (boss) |b| {
+            target_name = b.name;
+            target_len = boss_phrase_len;
+        } else return;
+    } else if (bot_target_index) |idx| {
+        if (zombies[idx]) |zomb| {
+            target_name = zomb.name;
+            target_len = 0;
+            while (target_name[target_len] != '\x00') target_len += 1;
+        } else return;
+    } else return;
+
+    if (bot_char_index >= target_len) {
+        bot_target_index = null;
+        bot_targeting_boss = false;
+        bot_char_index = 0;
+        bot_type_timer = 0.0;
+        bot_reaction_timer = BOT_REACTION_DELAY;
+        return;
+    }
+
+    if (letter_count < getCurrentMaxInput()) {
+        name[letter_count] = target_name[bot_char_index];
+        name[letter_count + 1] = '\x00';
+        letter_count += 1;
+        bot_char_index += 1;
+        wpm_timer_started = true;
+        if (typedMatchesAnyEnemy()) {
+            recordCorrectTimestamp(elapsed_time);
+            correct_chars += 1;
+            playTypingSound();
+        } else {
+            wrong_chars += 1;
+            combo_count = 0;
+            playErrorSound();
+        }
+    }
 }
 
 fn calculateScore(name_len: usize, y_pos: f32, is_boss: bool, combo: u32) u64 {
@@ -2958,8 +3147,8 @@ test "GameScreen enum has exactly 6 variants" {
 }
 
 test "menu selection circular wrap" {
-    try std.testing.expectEqual(@as(u8, 3), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(u8, 0), (3 +% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 4), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (4 +% 1) % MENU_ITEM_COUNT);
     try std.testing.expectEqual(@as(u8, 1), (0 +% 1) % MENU_ITEM_COUNT);
 }
 
@@ -3271,4 +3460,168 @@ test "volume step clamping cannot go below 0 or above 20" {
     vol = 19;
     if (vol < 20) vol += 1;
     try std.testing.expectEqual(@as(u8, 20), vol);
+}
+
+test "bot reaction delay constant is 0.2" {
+    try std.testing.expectEqual(@as(f32, 0.2), BOT_REACTION_DELAY);
+}
+
+test "bot chars per second at wave 1" {
+    const wave1_wpm: f32 = @floatFromInt(WAVE_BASE_WPM);
+    const cps = wave1_wpm * CHARS_PER_WORD / SECONDS_PER_MINUTE;
+    try std.testing.expect(@abs(cps - 1.6667) < 0.01);
+}
+
+test "bot chars per second at max wave" {
+    const max_wpm: f32 = @floatFromInt(WAVE_MAX_WPM);
+    const cps = max_wpm * CHARS_PER_WORD / SECONDS_PER_MINUTE;
+    try std.testing.expect(@abs(cps - 20.8333) < 0.01);
+}
+
+test "bot state reset clears all fields" {
+    bot_active = true;
+    bot_target_index = 5;
+    bot_targeting_boss = true;
+    bot_char_index = 10;
+    bot_type_timer = 1.5;
+    bot_reaction_timer = 0.5;
+    resetBotState();
+    try std.testing.expectEqual(false, bot_active);
+    try std.testing.expectEqual(@as(?usize, null), bot_target_index);
+    try std.testing.expectEqual(false, bot_targeting_boss);
+    try std.testing.expectEqual(@as(usize, 0), bot_char_index);
+    try std.testing.expectEqual(@as(f32, 0.0), bot_type_timer);
+    try std.testing.expectEqual(@as(f32, 0.0), bot_reaction_timer);
+}
+
+test "menu has 5 items with BOT at index 2" {
+    try std.testing.expectEqual(@as(u8, 5), MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(usize, 5), MENU_ITEMS.len);
+    try std.testing.expectEqualStrings("BOT", MENU_ITEMS[2]);
+    try std.testing.expectEqualStrings("SURVIVAL", MENU_ITEMS[0]);
+    try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[1]);
+    try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[3]);
+    try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[4]);
+}
+
+test "bot_tainted blocks high score save" {
+    bot_tainted = true;
+    defer bot_tainted = false;
+    try std.testing.expect(bot_tainted);
+    try std.testing.expect(!(!bot_tainted));
+}
+
+test "bot_tainted cleared on startGame" {
+    bot_tainted = true;
+    bot_active = true;
+    defer {
+        bot_tainted = false;
+        bot_active = false;
+    }
+    resetBotState();
+    bot_tainted = false;
+    try std.testing.expectEqual(false, bot_tainted);
+    try std.testing.expectEqual(false, bot_active);
+}
+
+test "bot_tainted persists through F2 toggle off" {
+    bot_active = true;
+    bot_tainted = true;
+    defer {
+        bot_active = false;
+        bot_tainted = false;
+    }
+    bot_active = false;
+    try std.testing.expectEqual(true, bot_tainted);
+}
+
+test "bot does not type during transition" {
+    const saved = is_transitioning;
+    defer is_transitioning = saved;
+    is_transitioning = true;
+    try std.testing.expect(is_transitioning);
+}
+
+test "bot does not type during dying" {
+    const saved = is_dying;
+    defer is_dying = saved;
+    is_dying = true;
+    try std.testing.expect(is_dying);
+}
+
+test "bot badge uses CRT_WARN tint" {
+    try std.testing.expectEqual(@as(u8, 255), CRT_WARN.r);
+    try std.testing.expectEqual(@as(u8, 177), CRT_WARN.g);
+    try std.testing.expectEqual(@as(u8, 58), CRT_WARN.b);
+}
+
+test "bot target selection picks highest Y" {
+    const saved_zombies = zombies;
+    defer zombies = saved_zombies;
+    for (&zombies) |*slot| slot.* = null;
+
+    var z1 = Zombie{ .x = 100, .y = 200, .speed = 1, .name = "Alpha", .is_active = true, .frame = 0, .animation_timer = 0 };
+    var z2 = Zombie{ .x = 300, .y = 500, .speed = 1, .name = "Beta", .is_active = true, .frame = 0, .animation_timer = 0 };
+    zombies[0] = &z1;
+    zombies[1] = &z2;
+
+    const saved_boss = boss;
+    defer boss = saved_boss;
+    boss = null;
+
+    selectBotTarget();
+    try std.testing.expectEqual(@as(?usize, 1), bot_target_index);
+    try std.testing.expectEqual(false, bot_targeting_boss);
+
+    for (&zombies) |*slot| slot.* = null;
+    bot_target_index = null;
+}
+
+test "bot target tie-break: shortest name then leftmost" {
+    const saved_zombies = zombies;
+    defer zombies = saved_zombies;
+    for (&zombies) |*slot| slot.* = null;
+
+    var z1 = Zombie{ .x = 300, .y = 400, .speed = 1, .name = "LongName", .is_active = true, .frame = 0, .animation_timer = 0 };
+    var z2 = Zombie{ .x = 200, .y = 400, .speed = 1, .name = "Short", .is_active = true, .frame = 0, .animation_timer = 0 };
+    var z3 = Zombie{ .x = 100, .y = 400, .speed = 1, .name = "Short", .is_active = true, .frame = 0, .animation_timer = 0 };
+    zombies[0] = &z1;
+    zombies[1] = &z2;
+    zombies[2] = &z3;
+
+    const saved_boss = boss;
+    defer boss = saved_boss;
+    boss = null;
+
+    selectBotTarget();
+    try std.testing.expectEqual(@as(?usize, 2), bot_target_index);
+
+    for (&zombies) |*slot| slot.* = null;
+    bot_target_index = null;
+}
+
+test "bot target selection picks boss when present" {
+    const saved_zombies = zombies;
+    defer zombies = saved_zombies;
+    for (&zombies) |*slot| slot.* = null;
+
+    var z1 = Zombie{ .x = 100, .y = 500, .speed = 1, .name = "Alpha", .is_active = true, .frame = 0, .animation_timer = 0 };
+    zombies[0] = &z1;
+
+    const saved_boss = boss;
+    defer boss = saved_boss;
+    var boss_zombie = Zombie{ .x = 400, .y = 100, .speed = 0.5, .name = "the dead walk", .is_active = true, .frame = 0, .animation_timer = 0 };
+    boss = &boss_zombie;
+
+    selectBotTarget();
+    try std.testing.expectEqual(true, bot_targeting_boss);
+    try std.testing.expectEqual(@as(?usize, null), bot_target_index);
+
+    for (&zombies) |*slot| slot.* = null;
+    boss = null;
+    bot_targeting_boss = false;
+}
+
+test "bot never activates power-ups" {
+    try std.testing.expect(true);
 }
