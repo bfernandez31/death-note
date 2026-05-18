@@ -454,7 +454,9 @@ fn frame(ctx: *FrameContext) void {
                     if (audio_ready) raylib.PauseMusicStream(music);
                 } else {
                     var space_consumed = false;
-                    if (raylib.IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null) {
+                    // Boss phrases contain spaces ("the dead walk again", ...), so during a
+                    // boss fight space must be a typing character, not the power-up trigger.
+                    if (raylib.IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null and boss == null) {
                         activatePowerUp(ctx.allocator);
                         space_consumed = true;
                     }
@@ -1377,6 +1379,10 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                     allocator.destroy(zomb);
                     slot.* = null;
                     shield_absorbed_any = true;
+                    // Count the absorbed zombie toward wave completion and the kill total;
+                    // otherwise the wave stalls because spawned > kills forever.
+                    wave_kills += 1;
+                    total_kills += 1;
                     continue;
                 }
                 is_dying = true;
