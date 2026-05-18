@@ -594,12 +594,7 @@ fn frame(ctx: *FrameContext) void {
                         if (!is_dying and wave_kills >= wave_cfg.pool_size and wave_spawned >= wave_cfg.pool_size and boss_done) {
                             is_transitioning = true;
                             transition_timer = WAVE_TRANSITION_DURATION;
-                            bot_target_index = null;
-                            bot_targeting_boss = false;
-                            bot_char_index = 0;
-                            bot_type_timer = 0.0;
-                            letter_count = 0;
-                            name[0] = '\x00';
+                            releaseBotTarget();
                         }
                     }
                 }
@@ -2018,6 +2013,18 @@ fn resetBotState() void {
     bot_reaction_timer = 0.0;
 }
 
+// Drops the current bot target (if any) and rearms the reaction delay so the
+// bot waits BOT_REACTION_DELAY before locking on to whatever it picks next.
+fn releaseBotTarget() void {
+    bot_target_index = null;
+    bot_targeting_boss = false;
+    bot_char_index = 0;
+    bot_type_timer = 0.0;
+    bot_reaction_timer = BOT_REACTION_DELAY;
+    letter_count = 0;
+    name[0] = '\x00';
+}
+
 fn selectBotTarget() void {
     if (boss != null) {
         bot_targeting_boss = true;
@@ -2064,9 +2071,10 @@ fn updateBot() void {
     if (bot_target_index == null and !bot_targeting_boss) {
         selectBotTarget();
         if (bot_target_index == null and !bot_targeting_boss) return;
-        bot_reaction_timer = BOT_REACTION_DELAY;
+        // Keep the target just acquired; reset only the typing progress + reaction delay.
         bot_char_index = 0;
         bot_type_timer = 0.0;
+        bot_reaction_timer = BOT_REACTION_DELAY;
         letter_count = 0;
         name[0] = '\x00';
         return;
@@ -2074,22 +2082,12 @@ fn updateBot() void {
 
     if (bot_targeting_boss) {
         if (boss == null) {
-            bot_targeting_boss = false;
-            bot_char_index = 0;
-            bot_type_timer = 0.0;
-            letter_count = 0;
-            name[0] = '\x00';
-            bot_reaction_timer = BOT_REACTION_DELAY;
+            releaseBotTarget();
             return;
         }
     } else if (bot_target_index) |idx| {
         if (zombies[idx] == null) {
-            bot_target_index = null;
-            bot_char_index = 0;
-            bot_type_timer = 0.0;
-            letter_count = 0;
-            name[0] = '\x00';
-            bot_reaction_timer = BOT_REACTION_DELAY;
+            releaseBotTarget();
             return;
         }
     }
@@ -2122,11 +2120,7 @@ fn updateBot() void {
     } else return;
 
     if (bot_char_index >= target_len) {
-        bot_target_index = null;
-        bot_targeting_boss = false;
-        bot_char_index = 0;
-        bot_type_timer = 0.0;
-        bot_reaction_timer = BOT_REACTION_DELAY;
+        releaseBotTarget();
         return;
     }
 
