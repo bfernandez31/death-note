@@ -6,6 +6,7 @@ const BossPhrases = @import("boss_phrases.zig").BossPhrases;
 const name_lists = @import("name_lists.zig");
 const zt = @import("zombie_types.zig");
 const highscore = @import("highscore.zig");
+const sound_config = @import("sound_config.zig");
 
 // Aliases for the moved shared declarations (see src/zombie_types.zig). Kept at file
 // scope so the rest of main.zig and its tests keep their original identifiers.
@@ -188,6 +189,8 @@ var best_score_survival: highscore.Record = .{};
 var best_score_zen: highscore.Record = .{};
 var last_played_mode: GameMode = .survival;
 var is_new_high_score: bool = false;
+
+var sound_cfg: sound_config.SoundConfig = .{};
 
 var held_power_up: ?PowerUpType = null;
 var freeze_timer: f32 = 0.0;
@@ -907,6 +910,7 @@ pub fn main() !void {
 
     best_score_survival = highscore.load(.survival);
     best_score_zen = highscore.load(.zen);
+    sound_cfg = sound_config.load();
 
     // page_allocator uses posix.mmap, which has no backend on wasm32-emscripten —
     // every allocator.create(...) silently fails and zombies never spawn.

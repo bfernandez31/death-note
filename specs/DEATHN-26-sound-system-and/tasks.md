@@ -8,16 +8,16 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Create `src/sound_config.zig` with `TypingPack` enum (u8 backing: click=0, typewriter=1, hitmarker=2), `ErrorPack` enum (u8 backing: damage=0, square=1, missed_punch=2), `SoundConfig` struct with all default values per FR-018, and `DISK_SIZE = 10` constant
-- [ ] T002 Implement `loadNative() !SoundConfig` and `saveNative(cfg: SoundConfig) !void` in `src/sound_config.zig` using `std.c.fopen`/`fread`/`fwrite` with field-by-field little-endian serialization (10-byte binary format per data-model.md), following the pattern in `src/highscore.zig:55–79`
-- [ ] T003 Implement `loadWeb() SoundConfig` and `saveWeb(cfg: SoundConfig) void` in `src/sound_config.zig` using `emscripten_run_script` with `localStorage` JSON under key `"death-note.soundconfig"`, following the pattern in `src/highscore.zig:96–117`
-- [ ] T004 Implement public `load() SoundConfig` and `save(cfg: SoundConfig) void` dispatchers in `src/sound_config.zig` using `comptime is_web` to route to native/web backends, with validation: clamp volumes to 0..20, validate enum ordinals with fallback to defaults, return `SoundConfig{}` on any load failure
-- [ ] T005 Add `@import("sound_config.zig")` to `src/main.zig` (near line 8, alongside highscore import), declare `var sound_cfg: sound_config.SoundConfig = undefined;` as module-level global, and call `sound_cfg = sound_config.load();` in `main()` after highscore loads (after line 909)
+- [X] T001 Create `src/sound_config.zig` with `TypingPack` enum (u8 backing: click=0, typewriter=1, hitmarker=2), `ErrorPack` enum (u8 backing: damage=0, square=1, missed_punch=2), `SoundConfig` struct with all default values per FR-018, and `DISK_SIZE = 10` constant
+- [X] T002 Implement `loadNative() !SoundConfig` and `saveNative(cfg: SoundConfig) !void` in `src/sound_config.zig` using `std.c.fopen`/`fread`/`fwrite` with field-by-field little-endian serialization (10-byte binary format per data-model.md), following the pattern in `src/highscore.zig:55–79`
+- [X] T003 Implement `loadWeb() SoundConfig` and `saveWeb(cfg: SoundConfig) void` in `src/sound_config.zig` using `emscripten_run_script` with `localStorage` JSON under key `"death-note.soundconfig"`, following the pattern in `src/highscore.zig:96–117`
+- [X] T004 Implement public `load() SoundConfig` and `save(cfg: SoundConfig) void` dispatchers in `src/sound_config.zig` using `comptime is_web` to route to native/web backends, with validation: clamp volumes to 0..20, validate enum ordinals with fallback to defaults, return `SoundConfig{}` on any load failure
+- [X] T005 Add `@import("sound_config.zig")` to `src/main.zig` (near line 8, alongside highscore import), declare `var sound_cfg: sound_config.SoundConfig = undefined;` as module-level global, and call `sound_cfg = sound_config.load();` in `main()` after highscore loads (after line 909)
 
 ### Phase 1 Tests
 
-- [ ] T006 [P] Add tests in `src/sound_config.zig`: `DISK_SIZE` equals 10, default `SoundConfig{}` values match FR-018 (typewriter pack, damage pack, typing_volume=14, effects_volume=16, music_volume=10, all toggles true), `TypingPack` has 3 variants, `ErrorPack` has 3 variants
-- [ ] T007 [P] Add tests in `src/sound_config.zig`: volume clamping (value 25 clamps to 20, value 255 clamps to 20), invalid enum ordinal (e.g. ordinal 5) falls back to default, load/save function signatures stay wired (same pattern as `src/highscore.zig:123–126`)
+- [X] T006 [P] Add tests in `src/sound_config.zig`: `DISK_SIZE` equals 10, default `SoundConfig{}` values match FR-018 (typewriter pack, damage pack, typing_volume=14, effects_volume=16, music_volume=10, all toggles true), `TypingPack` has 3 variants, `ErrorPack` has 3 variants
+- [X] T007 [P] Add tests in `src/sound_config.zig`: volume clamping (value 25 clamps to 20, value 255 clamps to 20), invalid enum ordinal (e.g. ordinal 5) falls back to default, load/save function signatures stay wired (same pattern as `src/highscore.zig:123–126`)
 
 ## Phase 2: Foundational — Sound Asset Loading
 
