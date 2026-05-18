@@ -14,6 +14,7 @@
   - [3.7 ScorePopup](#37-scorepopup)
   - [3.8 HighScoreRecord](#38-highscorerecord)
   - [3.9 PowerUpInventory](#39-powerupinventory)
+- [3.10 SoundConfig](#310-soundconfig)
 - [4. Enums and Constants](#4-enums-and-constants)
 - [5. State Machines](#5-state-machines)
   - [5.1 Game State Machine](#51-game-state-machine)
@@ -40,8 +41,9 @@ The data containers in the project are:
 | `TrapGroups` | `src/name_lists.zig` (compile-time) | Read-only array of 15 `TrapGroup` structs, each containing 3–5 visually similar names |
 | `ZombieNames` | `src/zombie_names.zig` (compile-time) | Original 49-name array; superseded by `PrimaryNames` for spawning (still imported) |
 | `BossPhrases` | `src/boss_phrases.zig` (compile-time) | Read-only, compile-time array of 10 null-terminated multi-word phrase pointers |
+| `sound_cfg` | `src/main.zig` (runtime) | Single `SoundConfig` value loaded at startup by `sound_config.load()`; holds five toggles, two pack selections, and three volume levels |
 
-**Persistence layer.** The high score is the sole persisted state. Each game mode maintains its own record. Survival uses `highscore.dat` (native) / `death-note.highscore` (web). Zen uses `highscore-zen.dat` (native) / `death-note.highscore.zen` (web). Both are 17-byte little-endian binary files on native, JSON in localStorage on web. All persistence is handled by `src/highscore.zig` via `load(GameMode)` and `save(GameMode, Record)`. All other assets are unchanged.
+**Persistence layer.** Two types of data survive process exit. High scores are persisted per game mode: Survival uses `highscore.dat` (native) / `death-note.highscore` (web); Zen uses `highscore-zen.dat` (native) / `death-note.highscore.zen` (web); both are 17-byte little-endian binary files on native, JSON in localStorage on web; all high score persistence is handled by `src/highscore.zig`. Sound settings are persisted as a 10-byte binary file `soundconfig.dat` on native builds and as a JSON object under `"death-note.soundconfig"` in localStorage on web builds; all sound config persistence is handled by `src/sound_config.zig` via `load()` and `save(cfg: SoundConfig)`.
 
 ---
 
@@ -138,6 +140,20 @@ erDiagram
         enum playing
         enum paused
         enum game_over
+        enum sound_settings
+    }
+
+    SOUND_CONFIG {
+        bool keystrokes_enabled
+        bool errors_enabled
+        bool kills_enabled
+        bool power_ups_enabled
+        bool music_enabled
+        u8 typing_pack
+        u8 error_pack
+        u8 typing_volume
+        u8 effects_volume
+        u8 music_volume
     }
 
     GAME_MODE {
@@ -188,6 +204,7 @@ erDiagram
     ZOMBIE }o--o| BOSS_PHRASES : "name points into (boss)"
     WAVE_CONFIG ||--o{ ZOMBIE : "fall_speed set at spawn"
     POPUP_POOL ||--o{ SCORE_POPUP : "holds up to 32"
+    GAME_STATE ||--|| SOUND_CONFIG : "sound_cfg (loaded at startup)"
 ```
 
 ---
@@ -378,6 +395,9 @@ These variables collectively represent the running state of the game session.
 | `displayed_accuracy` | `f32` | `100.0` | `100.0` | Smoothed accuracy percentage shown in the HUD. Interpolates toward `calculateTargetAccuracy()` at rate `SMOOTHING_FACTOR = 0.2` per frame. Frozen on game-over. Reset to 100.0 by `resetMetricsState`. |
 | `frames_counter` | `usize` | `0` (in `FrameContext`) | — | Counts frames while the mouse is over the text input box. Drives the blink via `(frames_counter / 20) % 2 == 0`; reset to `0` when the mouse leaves. |
 | `mouse_on_text` | `bool` | `false` (in `FrameContext`) | — | `true` when the mouse cursor is over `text_box`. Controls cursor icon and the blinking-underscore overlay. |
+| `sound_cfg` | `sound_config.SoundConfig` | defaults from `sound_config.load()` | preserved | Player's full audio preference state. Loaded at startup; written to disk when the Sound settings screen is exited. |
+| `sound_menu_selection` | `u8` | `0` | — | Currently highlighted item index (0–9) in the Sound settings screen. |
+| `sound_menu_return_screen` | `GameScreen` | `.paused` | — | Screen to return to when Escape is pressed in Sound settings (`.main_menu` or `.paused`). |
 
 **Note on `frames_counter` and `mouse_on_text`:** These live on the `FrameContext` struct allocated in `main()`, not at module scope. They constitute observable game state, but their scoping differs from the other globals.
 
@@ -386,7 +406,19 @@ These variables collectively represent the running state of the game session.
 | Variable | Type | Meaning |
 |---|---|---|
 | `zombie_texture` | `raylib.Texture2D` | GPU texture handle for the zombie spritesheet, loaded once from `assets/z_spritesheet.png` |
-| `zombie_kill_sound` | `raylib.Sound` | Audio handle loaded once from `assets/zombie-hit.wav`; played via `raylib.PlaySound` on zombie kill |
+| `zombie_kill_sound` | `raylib.Sound` | Audio handle loaded once from `assets/zombie-hit.wav`; played via `playKillSound()` on zombie kill |
+| `click_sounds` | `[3]raylib.Sound` | Typing pack: 3 click WAV samples from `assets/sounds/click/` |
+| `typewriter_sounds` | `[6]raylib.Sound` | Typing pack: 6 typewriter WAV samples from `assets/sounds/typewriter/` |
+| `hitmarker_sounds` | `[3]raylib.Sound` | Typing pack: 3 hitmarker WAV samples from `assets/sounds/hitmarker/` |
+| `damage_sounds` | `[1]raylib.Sound` | Error pack: 1 damage WAV sample from `assets/sounds/damage/` |
+| `square_sounds` | `[1]raylib.Sound` | Error pack: 1 square WAV sample from `assets/sounds/square/` |
+| `missed_punch_sounds` | `[2]raylib.Sound` | Error pack: 2 missed-punch WAV samples from `assets/sounds/missed-punch/` |
+| `bomb_sound` | `raylib.Sound` | Power-up SFX for bomb activation from `assets/sounds/bomb/1.wav` |
+| `freeze_sound` | `raylib.Sound` | Power-up SFX for freeze activation from `assets/sounds/freeze/1.wav` |
+| `shield_sound` | `raylib.Sound` | Power-up SFX for shield activation from `assets/sounds/shield/1.wav` |
+| `music` | `raylib.Music` | Background music stream from `assets/music/nightmare-pulse.wav`; looping=true |
+| `typing_round_robin` | `u8` | Round-robin playback index for the active typing pack; wraps at sample count |
+| `error_round_robin` | `u8` | Round-robin playback index for the active error pack; wraps at sample count |
 
 ---
 
@@ -577,6 +609,71 @@ The three power-up types and their activation effects:
 
 ---
 
+### 3.10 SoundConfig
+
+**Source:** `src/sound_config.zig`
+
+**Definition:**
+
+```zig
+pub const SoundConfig = struct {
+    keystrokes_enabled: bool = true,
+    typing_pack: TypingPack = .typewriter,
+    typing_volume: u8 = 14,        // 70% (14 × 5%)
+    errors_enabled: bool = true,
+    error_pack: ErrorPack = .damage,
+    kills_enabled: bool = true,
+    power_ups_enabled: bool = true,
+    effects_volume: u8 = 16,       // 80% (16 × 5%)
+    music_enabled: bool = true,
+    music_volume: u8 = 10,         // 50% (10 × 5%)
+};
+```
+
+**Runtime instance:** `var sound_cfg: sound_config.SoundConfig` — a single value at module scope in `src/main.zig`, loaded once at startup via `sound_config.load()`. Mutated by `updateSoundSettings()` as the player navigates the Sound settings screen. Written to disk/localStorage when the player exits the sound settings screen via `sound_config.save(sound_cfg)`.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `keystrokes_enabled` | `bool` | `true` | When `false`, no typing sound plays on any keypress |
+| `typing_pack` | `TypingPack` | `.typewriter` | Active typing sound pack; selects which sample array `playTypingSound()` draws from |
+| `typing_volume` | `u8` | `14` | Volume for typing and error sounds; 0–20 steps (each step = 5%); 14 = 70% |
+| `errors_enabled` | `bool` | `true` | When `false`, no error sound plays on mistyped letters |
+| `error_pack` | `ErrorPack` | `.damage` | Active error sound pack; selects which sample array `playErrorSound()` draws from |
+| `kills_enabled` | `bool` | `true` | When `false`, the kill sound is suppressed on zombie/boss death |
+| `power_ups_enabled` | `bool` | `true` | When `false`, power-up activation sounds are suppressed |
+| `effects_volume` | `u8` | `16` | Volume for kill and power-up sounds; 0–20 steps; 16 = 80% |
+| `music_enabled` | `bool` | `true` | When `false`, background music does not play |
+| `music_volume` | `u8` | `10` | Volume for background music; 0–20 steps; 10 = 50% |
+
+**Volume conversion:** All volume fields store 0–20 integer steps. The float volume passed to `raylib.SetSoundVolume` / `raylib.SetMusicVolume` is `@as(f32, @floatFromInt(volume)) * 0.05`, mapping 0→0.0 and 20→1.0.
+
+**Native persistence (`soundconfig.dat`):**
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 byte | `keystrokes_enabled` (u8: 0 or 1) |
+| 1 | 1 byte | `typing_pack` (u8 ordinal: click=0, typewriter=1, hitmarker=2) |
+| 2 | 1 byte | `typing_volume` (u8, clamped 0–20) |
+| 3 | 1 byte | `errors_enabled` (u8: 0 or 1) |
+| 4 | 1 byte | `error_pack` (u8 ordinal: damage=0, square=1, missed_punch=2) |
+| 5 | 1 byte | `kills_enabled` (u8: 0 or 1) |
+| 6 | 1 byte | `power_ups_enabled` (u8: 0 or 1) |
+| 7 | 1 byte | `effects_volume` (u8, clamped 0–20) |
+| 8 | 1 byte | `music_enabled` (u8: 0 or 1) |
+| 9 | 1 byte | `music_volume` (u8, clamped 0–20) |
+
+Total: `DISK_SIZE` = 10 bytes. Written and read via `std.c.fopen`/`fwrite`/`fread`. On load, volume fields outside 0–20 are clamped; invalid enum ordinals fall back to default values. A missing or corrupt file returns `SoundConfig{}` (all defaults).
+
+**Web persistence (`localStorage`):**
+
+Key: `"death-note.soundconfig"`. Value: a JSON object with the ten fields. Field writes use `emscripten_run_script`; field reads use `emscripten_run_script_int`. On parse failure or missing key, all fields default to their `SoundConfig{}` defaults.
+
+**Relationships:**
+- `src/main.zig` holds `var sound_cfg: sound_config.SoundConfig` and reads it in every sound-trigger helper (`playTypingSound`, `playErrorSound`, `playKillSound`, `playPowerUpSound`) and in the music management calls.
+- `src/sound_config.zig` imports only `std` and `raylib.zig`; it does not import `main.zig`.
+
+---
+
 ## 4. Enums and Constants
 
 ### Enums
@@ -604,10 +701,10 @@ Determines which gameplay rules apply (power-ups, bosses, game-over, scoring).
 #### GameScreen (`src/main.zig`)
 
 ```zig
-const GameScreen = enum { main_menu, wpm_select, playing, paused, game_over };
+const GameScreen = enum { main_menu, wpm_select, playing, paused, game_over, sound_settings };
 ```
 
-Top-level UI state; gates which update and draw paths run each frame.
+Top-level UI state; gates which update and draw paths run each frame. `sound_settings` is entered from either the main menu or the pause menu via the "SOUND" item; `sound_menu_return_screen` records which screen to return to on Escape.
 
 #### PowerUpType (`src/zombie_types.zig`)
 
@@ -624,6 +721,34 @@ pub const NameCategory = enum { primary, compound, trap };
 ```
 
 Identifies which name list a spawned name was drawn from, used by `spawnZombie` to update trap cluster state.
+
+#### TypingPack (`src/sound_config.zig`)
+
+```zig
+pub const TypingPack = enum(u8) { click = 0, typewriter = 1, hitmarker = 2 };
+```
+
+Selects the typing sound sample array used by `playTypingSound()`. Default is `.typewriter`. Displayed in the Sound settings screen as `< click >`, `< typewriter >`, `< hitmarker >`.
+
+| Value | Sample count | Asset path prefix |
+|---|---|---|
+| `.click` | 3 | `assets/sounds/click/` |
+| `.typewriter` | 6 | `assets/sounds/typewriter/` |
+| `.hitmarker` | 3 | `assets/sounds/hitmarker/` |
+
+#### ErrorPack (`src/sound_config.zig`)
+
+```zig
+pub const ErrorPack = enum(u8) { damage = 0, square = 1, missed_punch = 2 };
+```
+
+Selects the error sound sample used by `playErrorSound()`. Default is `.damage`.
+
+| Value | Sample count | Asset path prefix |
+|---|---|---|
+| `.damage` | 1 | `assets/sounds/damage/` |
+| `.square` | 1 | `assets/sounds/square/` |
+| `.missed_punch` | 2 | `assets/sounds/missed-punch/` |
 
 ---
 
@@ -721,6 +846,10 @@ stateDiagram-v2
     Playing --> Paused : Escape pressed\n(current_screen=.paused)
     Paused --> Playing : Resume selected\n(current_screen=.playing)
     Paused --> MainMenu : Quit to Menu\n(session discarded, current_screen=.main_menu)
+    Paused --> SoundSettings : Sound selected\n(sound_menu_return_screen=.paused)
+    MainMenu --> SoundSettings : Sound selected\n(sound_menu_return_screen=.main_menu)
+    SoundSettings --> Paused : Escape\n(save config, return to return_screen if .paused)
+    SoundSettings --> MainMenu : Escape\n(save config, return to return_screen if .main_menu)
 
     Playing --> Dying : zombie.y >= screen_height\nAND game_mode==.survival\nAND !shield_active\n(is_dying=true, dying_timer=1.0)
     Dying --> GameOver : dying_timer <= 0\n(current_screen=.game_over,\nhigh score compared and saved)

@@ -42,6 +42,12 @@
   - [F-36 Bomb Power-up](#f-36-bomb-power-up)
   - [F-37 Shield Power-up](#f-37-shield-power-up)
   - [F-38 Per-Mode High Scores](#f-38-per-mode-high-scores)
+  - [F-39 Keystroke Audio Feedback](#f-39-keystroke-audio-feedback)
+  - [F-40 Error Audio Feedback](#f-40-error-audio-feedback)
+  - [F-41 Background Music](#f-41-background-music)
+  - [F-42 Power-Up Activation Sounds](#f-42-power-up-activation-sounds)
+  - [F-43 Kill Sound Volume System](#f-43-kill-sound-volume-system)
+  - [F-44 Sound Settings Screen](#f-44-sound-settings-screen)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -67,6 +73,15 @@ graph TB
         MainMenu["F-30 Main Menu"]
         PauseSystem["F-31 Pause System"]
         ZenMode["F-32 Zen Mode"]
+    end
+
+    subgraph Sound
+        KeystrokeSound["F-39 Keystroke Audio"]
+        ErrorSound["F-40 Error Audio"]
+        Music["F-41 Background Music"]
+        PowerUpSound["F-42 Power-up Sounds"]
+        KillSound["F-43 Kill Sound Volume"]
+        SoundMenu["F-44 Sound Settings Screen"]
     end
 
     subgraph PowerUps
@@ -168,6 +183,19 @@ graph TB
     Combo --> AccHUD
     Restart --> WpmHUD
     Restart --> AccHUD
+    Keyboard --> KeystrokeSound
+    Keyboard --> ErrorSound
+    Killing --> KillSound
+    FreezePU --> PowerUpSound
+    BombPU --> PowerUpSound
+    ShieldPU --> PowerUpSound
+    MainMenu --> SoundMenu
+    PauseSystem --> SoundMenu
+    SoundMenu --> KeystrokeSound
+    SoundMenu --> ErrorSound
+    SoundMenu --> Music
+    SoundMenu --> PowerUpSound
+    SoundMenu --> KillSound
 ```
 
 ---
@@ -1038,6 +1066,135 @@ graph TB
 - `src/main.zig` — `last_played_mode`, calls to `highscore.load`/`save`
 
 **Dependencies.** F-27 (per-mode replaces single-record persistence), F-30 (main menu shows mode-specific best), F-32 (Zen best saved on session end).
+
+---
+
+### F-39 Keystroke Audio Feedback
+
+**Description.** Each time the player types a letter that extends a valid prefix on at least one active zombie, a sound sample from the selected typing pack plays immediately. Samples are cycled in round-robin order to avoid repetitive playback. Three packs are available: `click` (3 samples), `typewriter` (6 samples), and `hitmarker` (3 samples). Typing can be toggled off globally via `keystrokes_enabled`.
+
+**User-facing behavior.** Every correct keystroke produces an audible click, typewriter clack, or hitmarker tick — whichever pack the player has selected. Rapid typing produces a rhythmic sequence of sounds cycling through the pack's samples. Toggling keystrokes off in Sound settings produces silence for all typing events.
+
+**System behavior.**
+- `playTypingSound()` is called after `correct_chars += 1` in the keystroke input loop.
+- Checks `sound_cfg.keystrokes_enabled`; returns immediately if `false`.
+- Selects the sound array for `sound_cfg.typing_pack` via `getTypingSounds()` and sample count via `getTypingSampleCount()`.
+- Calls `raylib.SetSoundVolume(sample, @as(f32, @floatFromInt(sound_cfg.typing_volume)) * 0.05)`.
+- Calls `raylib.PlaySound(sample)` on `typing_round_robin % count`.
+- Advances `typing_round_robin = (typing_round_robin + 1) % count`.
+
+**Key source references.**
+- `src/main.zig` — `playTypingSound`, `getTypingSounds`, `getTypingSampleCount`, `typing_round_robin`
+- `src/sound_config.zig` — `TypingPack`, `SoundConfig.keystrokes_enabled`, `SoundConfig.typing_volume`
+
+**Dependencies.** F-07 (keystroke detection feeds this feature), F-44 (Sound settings controls pack selection and toggle).
+
+---
+
+### F-40 Error Audio Feedback
+
+**Description.** Each time the player types a letter that does not extend a valid prefix on any active zombie, a sound sample from the selected error pack plays immediately. Three packs are available: `damage` (1 sample), `square` (1 sample), and `missed_punch` (2 samples). Error sound volume is controlled by the typing volume slider. Error sounds can be toggled off independently of keystroke sounds.
+
+**User-facing behavior.** Mistyped letters produce a distinct error sound (thud, square wave, or missed-punch), immediately distinguishable from the correct-keystroke sound. Toggling errors off in Sound settings produces silence on mistype while correct-keystroke sounds continue.
+
+**System behavior.**
+- `playErrorSound()` is called after `wrong_chars += 1` in the keystroke input loop.
+- Checks `sound_cfg.errors_enabled`; returns immediately if `false`.
+- Selects the sound array for `sound_cfg.error_pack` via `getErrorSounds()` and sample count via `getErrorSampleCount()`.
+- Volume set to `sound_cfg.typing_volume * 0.05` (shares the typing volume slider).
+- Advances `error_round_robin` with modular wrap.
+
+**Key source references.**
+- `src/main.zig` — `playErrorSound`, `getErrorSounds`, `getErrorSampleCount`, `error_round_robin`
+- `src/sound_config.zig` — `ErrorPack`, `SoundConfig.errors_enabled`
+
+**Dependencies.** F-07 (mistype detection feeds this feature), F-44 (Sound settings controls pack and toggle).
+
+---
+
+### F-41 Background Music
+
+**Description.** A 88-second dark synthwave track (`assets/music/nightmare-pulse.wav`) plays in a seamless loop during active gameplay. Music starts when a new game begins, pauses when the game is paused (Escape), resumes on unpause, and stops on game-over or quit-to-menu. Music does not play on the main menu, during wave transitions, or in the dying state. The music volume is independently controllable and can be toggled off.
+
+**User-facing behavior.** The player hears atmospheric music from the moment gameplay begins. The loop is seamless — no gap, click, or volume dip at the loop point. Pressing Escape pauses the music; resuming continues from the exact pause point. When the game ends the music stops. With the music toggle off, gameplay is silent apart from sound effects.
+
+**System behavior.**
+- `startGame()` calls `SetMusicVolume`, `StopMusicStream` (reset), `PlayMusicStream` when `sound_cfg.music_enabled`.
+- `raylib.UpdateMusicStream(music)` is called every frame in the `.playing` update path to feed the audio buffer and enable seamless looping (`music.looping = true`).
+- On Escape (transition to `.paused`): `raylib.PauseMusicStream(music)`.
+- On resume from pause: `raylib.ResumeMusicStream(music)`.
+- On `dying_timer` expiry (game-over) and on quit-to-menu: `raylib.StopMusicStream(music)`.
+- On new game start after game-over: `StopMusicStream` then `PlayMusicStream` restarts from the beginning.
+
+**Key source references.**
+- `src/main.zig` — `startGame`, `.playing` update phase, `updatePause` resume/quit branches, dying timer block
+- `src/sound_config.zig` — `SoundConfig.music_enabled`, `SoundConfig.music_volume`
+
+**Dependencies.** F-31 (pause/resume hooks), F-44 (Sound settings controls toggle and volume).
+
+---
+
+### F-42 Power-Up Activation Sounds
+
+**Description.** Each power-up type (Freeze, Bomb, Shield) plays a distinct activation sound when the player presses the activation key. The Bomb plays an explosion sound, Freeze plays an ice/frost sound, and Shield plays a deflection/barrier sound. Power-up sounds share the effects volume slider and can be toggled off independently.
+
+**User-facing behavior.** Activating a power-up produces an immediately recognizable sound distinct from typing feedback and the kill sound. Toggling power-up sounds off in settings silences activation sounds while all other sounds remain active.
+
+**System behavior.**
+- `playPowerUpSound(pu_type: PowerUpType)` is called at the top of `activatePowerUp()` before the type-specific branch.
+- Checks `sound_cfg.power_ups_enabled`; returns if `false`.
+- Volume: `SetSoundVolume(sound, sound_cfg.effects_volume * 0.05)`.
+- Type dispatch: `.freeze` → `freeze_sound`, `.bomb` → `bomb_sound`, `.shield` → `shield_sound`.
+
+**Key source references.**
+- `src/main.zig` — `playPowerUpSound`, `activatePowerUp`
+- `src/sound_config.zig` — `SoundConfig.power_ups_enabled`, `SoundConfig.effects_volume`
+
+**Dependencies.** F-34 (activation entry point), F-35/F-36/F-37 (one sound per type), F-44 (Sound settings controls toggle and volume).
+
+---
+
+### F-43 Kill Sound Volume System
+
+**Description.** The existing kill sound (`assets/zombie-hit.wav`) is routed through the sound settings system. It respects the `kills_enabled` toggle and the effects volume slider. The kill sound plays once on zombie kill (by typing or bomb) and once on boss kill.
+
+**User-facing behavior.** The kill sound volume can be independently adjusted via the effects slider. Toggling kill sounds off silences zombie and boss kills while all other sounds (typing, music) remain active. The Bomb power-up still plays one kill sound for the entire bomb activation, not one per zombie.
+
+**System behavior.**
+- `playKillSound()` wraps all `raylib.PlaySound(zombie_kill_sound)` call sites.
+- Checks `sound_cfg.kills_enabled`; returns if `false`.
+- `SetSoundVolume(zombie_kill_sound, sound_cfg.effects_volume * 0.05)` before play.
+- Called from: `updateZombies` (regular zombie kill), `updateBoss` (boss kill), `activatePowerUp` bomb branch (once for all bomb kills).
+
+**Key source references.**
+- `src/main.zig` — `playKillSound`, kill sites in `updateZombies`/`updateBoss`/`activatePowerUp`
+- `src/sound_config.zig` — `SoundConfig.kills_enabled`, `SoundConfig.effects_volume`
+
+**Dependencies.** F-10 (kill mechanic triggers sound), F-36 (bomb triggers once), F-44 (Sound settings controls toggle and volume).
+
+---
+
+### F-44 Sound Settings Screen
+
+**Description.** A dedicated Sound settings screen is accessible from both the main menu ("SOUND" item) and the pause menu ("SOUND" item). The screen presents 10 keyboard-navigable items: five on/off category toggles (keystrokes, errors, kills, power-ups, music), two pack selectors (typing pack, error pack), and three volume sliders (typing, effects, music). All settings take effect immediately on change and are persisted to `soundconfig.dat` / localStorage when the screen is exited via Escape.
+
+**User-facing behavior.** The player navigates the 10-item list with Up/Down arrows and activates each item with Enter (toggles) or Left/Right (pack cycling and volume adjustment). Pack selectors display `< pack-name >` with arrow keys cycling through the available packs, playing a preview sample on focus change. Volume sliders display as a filled/empty progress bar with a percentage label. Pressing Escape exits and saves — all changes are immediately effective upon return to gameplay.
+
+**System behavior.**
+- `GameScreen.sound_settings` is a new top-level screen state; `sound_menu_return_screen` records the originating screen (`.main_menu` or `.paused`).
+- `SOUND_MENU_ITEM_COUNT = 10`; items: [0] keystroke toggle, [1] typing pack selector, [2] typing volume slider, [3] error toggle, [4] error pack selector, [5] kill toggle, [6] power-up toggle, [7] effects volume slider, [8] music toggle, [9] music volume slider.
+- `updateSoundSettings()`: Up/Down navigate `sound_menu_selection` (0–9, wrapping); Enter toggles items 0, 3, 5, 6, 8; Left/Right cycle items 1, 4 (enums) and adjust items 2, 7, 9 (±1, clamped 0–20); Escape calls `sound_config.save(sound_cfg)` and sets `current_screen = sound_menu_return_screen`.
+- On pack change: reset corresponding round-robin index to 0; play preview sample at 50% of typing volume (minimum 30% volume if slider is at 0).
+- On slider adjustment completion (key released): play a representative sound at the new volume.
+- `drawSoundSettings()`: title `"SOUND SETTINGS"` in `CRT_FG`; item rows use `CRT_ACCENT` (selected) / `CRT_DIM` (unselected) following the existing `drawMenu` pattern; toggles show `[ON]` / `[OFF]`; sliders render as `[████░░░░░░░░░░░░░░░░] 70%` using `CRT_ACCENT` fill / `CRT_DIM` empty; footer `"ESC: BACK"` in `CRT_DIM`.
+- Main menu has 4 items: SURVIVAL, ZEN, SOUND, QUIT.
+- Pause menu has 3 items: RESUME, SOUND, QUIT TO MENU.
+
+**Key source references.**
+- `src/main.zig` — `GameScreen.sound_settings`, `updateSoundSettings`, `drawSoundSettings`, `SOUND_MENU_ITEM_COUNT`, `sound_menu_selection`, `sound_menu_return_screen`, `MENU_ITEMS`, `PAUSE_ITEMS`
+- `src/sound_config.zig` — `sound_config.save`
+
+**Dependencies.** F-30 (main menu entry point), F-31 (pause menu entry point), F-39–F-43 (settings control each sound category).
 
 ---
 
