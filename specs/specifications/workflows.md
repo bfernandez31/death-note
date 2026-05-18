@@ -75,7 +75,7 @@ These aliases are conventions for the ai-board agent harness and do not represen
 ### test
 
 - **Trigger**: `zig build test`
-- **Purpose**: Compile a test binary rooted at `src/main.zig` (using `b.addTest`) and execute it via `b.addRunArtifact`. The test runner discovers all `test "…" { … }` blocks reachable from `src/main.zig` (including transitively imported modules). Around 98 unit tests are currently defined across `src/main.zig` (67), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3), covering name-match equality, input-buffer bounds, wave config, boss mechanics, scoring, popup pool, WPM/accuracy metrics, sound config persistence, volume clamping, pack enum cycling, and more.
+- **Purpose**: Compile a test binary rooted at `src/main.zig` (using `b.addTest`) and execute it via `b.addRunArtifact`. The test runner discovers all `test "…" { … }` blocks reachable from `src/main.zig` (including transitively imported modules). Around 120 unit tests are currently defined across `src/main.zig` (89), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3), covering name-match equality, input-buffer bounds, wave config, boss mechanics, scoring, popup pool, WPM/accuracy metrics, sound config persistence, volume clamping, pack enum cycling, bot cadence/targeting/taint logic, and more.
 - **Key inputs**: `src/main.zig` (root source file for test artifact)
 - **Key outputs**: Pass/fail report printed to stdout; non-zero exit code on failure
 - **Source**: `build.zig` lines 72–84 (`b.addTest`, `b.addRunArtifact`, `b.step("test", …)`)
@@ -168,7 +168,7 @@ No shell scripts exist in this repository. All developer commands are `zig` CLI 
 | `zig build` | Build (install) the `death-note` executable | Output: `zig-out/bin/death-note`; default Debug mode |
 | `zig build run` | Build then execute the game | Runs from install dir; asset path caveat applies |
 | `zig build run -- <args>` | Build then execute with CLI args forwarded | Args passed to process but not consumed by `main.zig` |
-| `zig build test` | Run unit tests declared in `src/main.zig` | ~98 test blocks across main.zig, name_lists.zig, sound_config.zig, highscore.zig, zombie_types.zig — name match, input bounds, wave config, boss mechanics, scoring, popup pool, WPM/accuracy metrics, sound config persistence/clamping, pack enum cycling |
+| `zig build test` | Run unit tests declared in `src/main.zig` | ~120 test blocks across main.zig, name_lists.zig, sound_config.zig, highscore.zig, zombie_types.zig — name match, input bounds, wave config, boss mechanics, scoring, popup pool, WPM/accuracy metrics, sound config persistence/clamping, pack enum cycling, bot cadence/targeting/taint logic |
 | `zig build web` | Build the WASM + HTML bundle | Requires Emscripten SDK 3.1.64 on `PATH`; output: `zig-out/web/` |
 | `zig build web -Doptimize=ReleaseSmall` | Web release build (recommended for deploy) | Smaller WASM binary; suitable for GitHub Pages |
 | `python3 -m http.server 8000 --directory zig-out/web` | Serve the web bundle locally | Open `http://localhost:8000` to test the WASM build |
