@@ -104,9 +104,9 @@
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T044 Create `THIRD_PARTY_LICENSES` file at repo root documenting GPL-3.0 attribution for Monkeytype-sourced WAV files (click, typewriter, hitmarker packs) and Pixabay Content License for `assets/music/nightmare-pulse.wav`, with links to original sources (FR-021)
-- [ ] T045 Run `zig build test` — verify all existing and new unit tests pass in `src/main.zig` and `src/sound_config.zig`
-- [ ] T046 Run `zig build` — verify clean compile with no warnings
+- [X] T044 Create `THIRD_PARTY_LICENSES` file at repo root documenting GPL-3.0 attribution for Monkeytype-sourced WAV files (click, typewriter, hitmarker packs) and Pixabay Content License for `assets/music/nightmare-pulse.wav`, with links to original sources (FR-021)
+- [X] T045 Run `zig build test` — verify all existing and new unit tests pass in `src/main.zig` and `src/sound_config.zig`
+- [X] T046 Run `zig build` — verify clean compile with no warnings
 - [ ] T047 Manual integration test: verify keystroke sounds, error sounds, music loop (3+ loops), pause/resume, kill sounds, power-up sounds, settings menu navigation, persistence across restart, and 60 FPS under rapid input per the Manual Requirements in plan.md
 
 ## Dependencies
