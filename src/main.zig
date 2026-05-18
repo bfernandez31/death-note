@@ -512,19 +512,20 @@ fn frame(ctx: *FrameContext) void {
                         const wave_cfg = getWaveConfig(current_wave);
                         if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size and boss == null) {
                             const remaining = wave_cfg.pool_size - wave_spawned;
-                            const burst = if (wave_cfg.burst_size < remaining) wave_cfg.burst_size else remaining;
-                            var burst_spawned: u32 = 0;
+                            const burst = @min(wave_cfg.burst_size, remaining);
+                            const zone_width = @divTrunc(ZOMBIE_SPAWN_X_MAX - ZOMBIE_SPAWN_X_MIN, @as(c_int, @intCast(burst)));
+                            var any_spawned = false;
                             var burst_i: u32 = 0;
                             while (burst_i < burst) : (burst_i += 1) {
-                                const zone_min: c_int = ZOMBIE_SPAWN_X_MIN + @as(c_int, @intCast(burst_i)) * @divTrunc(ZOMBIE_SPAWN_X_MAX - ZOMBIE_SPAWN_X_MIN, @as(c_int, @intCast(burst)));
-                                const zone_max: c_int = if (burst_i == burst - 1) ZOMBIE_SPAWN_X_MAX else ZOMBIE_SPAWN_X_MIN + @as(c_int, @intCast(burst_i + 1)) * @divTrunc(ZOMBIE_SPAWN_X_MAX - ZOMBIE_SPAWN_X_MIN, @as(c_int, @intCast(burst)));
+                                const zone_min = ZOMBIE_SPAWN_X_MIN + @as(c_int, @intCast(burst_i)) * zone_width;
+                                const zone_max = if (burst_i == burst - 1) ZOMBIE_SPAWN_X_MAX else zone_min + zone_width;
                                 const spawned = spawnZombieInZone(ctx.allocator, prng.random(), zone_min, zone_max) catch false;
                                 if (spawned) {
                                     wave_spawned += 1;
-                                    burst_spawned += 1;
+                                    any_spawned = true;
                                 }
                             }
-                            if (burst_spawned > 0) spawn_timer = 0.0;
+                            if (any_spawned) spawn_timer = 0.0;
                         }
                     }
 
@@ -1559,11 +1560,9 @@ fn spawnZombieInZone(allocator: *std.mem.Allocator, rng: std.Random, zone_x_min:
 
             const name_width = measureText(selection.name, 20);
             const sprite_width: c_int = screen_width - ZOMBIE_SPAWN_X_MAX;
-            const required = if (name_width > sprite_width) name_width else sprite_width;
-            const dynamic_x_max_raw = zone_x_max - required - 5;
-            const effective_x_min = zone_x_min;
-            const effective_x_max = if (dynamic_x_max_raw < effective_x_min) effective_x_min else dynamic_x_max_raw;
-            const x = @as(f32, @floatFromInt(raylib.GetRandomValue(effective_x_min, effective_x_max)));
+            const required = @max(name_width, sprite_width);
+            const dynamic_x_max = @max(zone_x_min, zone_x_max - required - 5);
+            const x: f32 = @floatFromInt(raylib.GetRandomValue(zone_x_min, dynamic_x_max));
 
             var carrier_power_up: ?PowerUpType = null;
             if (game_mode == .survival) {
@@ -1647,12 +1646,9 @@ fn getWaveConfig(wave: u32) WaveConfig {
     const authoring = if (wave >= 1 and wave <= WAVE_TABLE.len) blk: {
         break :blk WAVE_TABLE[wave - 1];
     } else blk: {
-        const extra = (wave - 15) * 5;
-        const wpm: u32 = if (100 + extra > 250) 250 else 100 + extra;
-        const calculated: u32 = 33 + 2 * (wave - 15);
         break :blk WaveAuthoring{
-            .target_wpm = wpm,
-            .pool_size = if (calculated > MAX_ZOMBIES) MAX_ZOMBIES else calculated,
+            .target_wpm = @min(250, 100 + (wave - 15) * 5),
+            .pool_size = @min(MAX_ZOMBIES, 33 + 2 * (wave - 15)),
         };
     };
 
@@ -2097,10 +2093,6 @@ fn expectedTimeOnScreen(wave: u32) f32 {
 fn expectedFallSpeed(wave: u32) f32 {
     const sh: f32 = @floatFromInt(screen_height);
     return sh / (expectedTimeOnScreen(wave) * FRAMES_PER_SECOND);
-}
-
-fn expectedBurstSize(wave: u32) u32 {
-    return (wave + 3) / 4;
 }
 
 fn expectedSpawnDelay(target_wpm: u32, burst_size: u32) f32 {
