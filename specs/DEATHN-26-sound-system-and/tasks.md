@@ -87,20 +87,20 @@
 
 **Independent Test**: Open Sound from pause menu. Navigate all items. Toggle each category. Cycle packs with preview. Adjust sliders. ESC saves and returns. Quit and relaunch → settings preserved.
 
-- [ ] T033 [US4] Add `sound_settings` to `GameScreen` enum in `src/main.zig` (line 201–207)
-- [ ] T034 [US4] Add module-level state in `src/main.zig`: `var sound_menu_selection: u8 = 0;`, `var sound_menu_return_screen: GameScreen = .paused;`, and `const SOUND_MENU_ITEM_COUNT: u8 = 10;`
-- [ ] T035 [US4] Update `MENU_ITEMS` to `["SURVIVAL", "ZEN", "SOUND", "QUIT"]` and `MENU_ITEM_COUNT` to 4 in `src/main.zig` (line 582–583)
-- [ ] T036 [US4] Update `PAUSE_ITEMS` to `["RESUME", "SOUND", "QUIT TO MENU"]` and `PAUSE_ITEM_COUNT` to 3 in `src/main.zig` (line 584–585)
-- [ ] T037 [US4] Update `updateMenu()` switch indices in `src/main.zig` (line 594–611): 0=SURVIVAL, 1=ZEN, 2=set `sound_menu_return_screen = .main_menu` then `current_screen = .sound_settings`, 3=QUIT
-- [ ] T038 [US4] Update `updatePause()` switch indices in `src/main.zig` (line 679–693): 0=RESUME, 1=set `sound_menu_return_screen = .paused` then `current_screen = .sound_settings`, 2=QUIT TO MENU
-- [ ] T039 [US4] Create `fn updateSoundSettings()` in `src/main.zig`: UP/DOWN navigate `sound_menu_selection` (0..9 wrapping), ENTER toggles boolean items (indices 0,3,5,6,8), LEFT/RIGHT cycles pack selectors (indices 1,4) and adjusts volume sliders ±1 step clamped 0..20 (indices 2,7,9), ESCAPE saves via `sound_config.save(sound_cfg)` and returns to `sound_menu_return_screen`
-- [ ] T040 [US4] In `updateSoundSettings()`: on pack change reset corresponding round-robin to 0; on pack selector focus change play preview sample at 50% of typing volume (min 30% if slider is 0); on slider key release play representative sound at new volume (FR-014)
-- [ ] T041 [US4] Create `fn drawSoundSettings()` in `src/main.zig`: title "SOUND SETTINGS" in CRT_FG, 10 items with CRT_ACCENT/CRT_DIM selected/unselected pattern (matching `drawMenu` at line 621–628), toggles show `[ON]`/`[OFF]`, pack selectors show `< name >` arrows, volume sliders render as filled/empty bar with percentage, footer "ESC: BACK" in CRT_DIM
-- [ ] T042 [US4] Wire `updateSoundSettings()` and `drawSoundSettings()` into `frame()` of `src/main.zig`: add `.sound_settings` branches in both the update phase (after `.paused` at line 458) and draw phase (after `.paused` draw branch)
+- [X] T033 [US4] Add `sound_settings` to `GameScreen` enum in `src/main.zig` (line 201–207)
+- [X] T034 [US4] Add module-level state in `src/main.zig`: `var sound_menu_selection: u8 = 0;`, `var sound_menu_return_screen: GameScreen = .paused;`, and `const SOUND_MENU_ITEM_COUNT: u8 = 10;`
+- [X] T035 [US4] Update `MENU_ITEMS` to `["SURVIVAL", "ZEN", "SOUND", "QUIT"]` and `MENU_ITEM_COUNT` to 4 in `src/main.zig` (line 582–583)
+- [X] T036 [US4] Update `PAUSE_ITEMS` to `["RESUME", "SOUND", "QUIT TO MENU"]` and `PAUSE_ITEM_COUNT` to 3 in `src/main.zig` (line 584–585)
+- [X] T037 [US4] Update `updateMenu()` switch indices in `src/main.zig` (line 594–611): 0=SURVIVAL, 1=ZEN, 2=set `sound_menu_return_screen = .main_menu` then `current_screen = .sound_settings`, 3=QUIT
+- [X] T038 [US4] Update `updatePause()` switch indices in `src/main.zig` (line 679–693): 0=RESUME, 1=set `sound_menu_return_screen = .paused` then `current_screen = .sound_settings`, 2=QUIT TO MENU
+- [X] T039 [US4] Create `fn updateSoundSettings()` in `src/main.zig`: UP/DOWN navigate `sound_menu_selection` (0..9 wrapping), ENTER toggles boolean items (indices 0,3,5,6,8), LEFT/RIGHT cycles pack selectors (indices 1,4) and adjusts volume sliders ±1 step clamped 0..20 (indices 2,7,9), ESCAPE saves via `sound_config.save(sound_cfg)` and returns to `sound_menu_return_screen`
+- [X] T040 [US4] In `updateSoundSettings()`: on pack change reset corresponding round-robin to 0; on pack selector focus change play preview sample at 50% of typing volume (min 30% if slider is 0); on slider key release play representative sound at new volume (FR-014)
+- [X] T041 [US4] Create `fn drawSoundSettings()` in `src/main.zig`: title "SOUND SETTINGS" in CRT_FG, 10 items with CRT_ACCENT/CRT_DIM selected/unselected pattern (matching `drawMenu` at line 621–628), toggles show `[ON]`/`[OFF]`, pack selectors show `< name >` arrows, volume sliders render as filled/empty bar with percentage, footer "ESC: BACK" in CRT_DIM
+- [X] T042 [US4] Wire `updateSoundSettings()` and `drawSoundSettings()` into `frame()` of `src/main.zig`: add `.sound_settings` branches in both the update phase (after `.paused` at line 458) and draw phase (after `.paused` draw branch)
 
 ### Phase 7 Tests
 
-- [ ] T043 [P] [US4] Add tests in `src/main.zig`: sound menu selection wraps correctly (0 → 9 → 0 with modular arithmetic), volume step clamping (can't go below 0 or above 20)
+- [X] T043 [P] [US4] Add tests in `src/main.zig`: sound menu selection wraps correctly (0 → 9 → 0 with modular arithmetic), volume step clamping (can't go below 0 or above 20)
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
