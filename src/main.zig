@@ -267,6 +267,7 @@ var music: raylib.Music = undefined;
 
 var typing_round_robin: u8 = 0;
 var error_round_robin: u8 = 0;
+var audio_ready: bool = false;
 
 const screen_width = 800;
 const screen_height = 1000;
@@ -283,6 +284,56 @@ const FrameContext = struct {
     mouse_on_text: bool,
     frames_counter: usize,
 };
+
+fn getTypingSounds() []raylib.Sound {
+    return switch (sound_cfg.typing_pack) {
+        .click => &click_sounds,
+        .typewriter => &typewriter_sounds,
+        .hitmarker => &hitmarker_sounds,
+    };
+}
+
+fn getTypingSampleCount() u8 {
+    return switch (sound_cfg.typing_pack) {
+        .click => CLICK_SAMPLE_COUNT,
+        .typewriter => TYPEWRITER_SAMPLE_COUNT,
+        .hitmarker => HITMARKER_SAMPLE_COUNT,
+    };
+}
+
+fn playTypingSound() void {
+    if (!sound_cfg.keystrokes_enabled or !audio_ready) return;
+    const sounds = getTypingSounds();
+    const count = getTypingSampleCount();
+    raylib.SetSoundVolume(sounds[typing_round_robin], @as(f32, @floatFromInt(sound_cfg.typing_volume)) * 0.05);
+    raylib.PlaySound(sounds[typing_round_robin]);
+    typing_round_robin = (typing_round_robin + 1) % count;
+}
+
+fn getErrorSounds() []raylib.Sound {
+    return switch (sound_cfg.error_pack) {
+        .damage => &damage_sounds,
+        .square => &square_sounds,
+        .missed_punch => &missed_punch_sounds,
+    };
+}
+
+fn getErrorSampleCount() u8 {
+    return switch (sound_cfg.error_pack) {
+        .damage => DAMAGE_SAMPLE_COUNT,
+        .square => SQUARE_SAMPLE_COUNT,
+        .missed_punch => MISSED_PUNCH_SAMPLE_COUNT,
+    };
+}
+
+fn playErrorSound() void {
+    if (!sound_cfg.errors_enabled or !audio_ready) return;
+    const sounds = getErrorSounds();
+    const count = getErrorSampleCount();
+    raylib.SetSoundVolume(sounds[error_round_robin], @as(f32, @floatFromInt(sound_cfg.typing_volume)) * 0.05);
+    raylib.PlaySound(sounds[error_round_robin]);
+    error_round_robin = (error_round_robin + 1) % count;
+}
 
 fn getSpeedMultiplier(zombie_type: ZombieType) f32 {
     return switch (zombie_type) {
@@ -320,6 +371,8 @@ fn frame(ctx: *FrameContext) void {
             updateWpmSelect(ctx.allocator);
         },
         .playing => {
+            if (audio_ready) raylib.UpdateMusicStream(music);
+
             // Resize input box for boss mode
             if (boss != null) {
                 ctx.text_box.width = 700.0;
@@ -347,6 +400,7 @@ fn frame(ctx: *FrameContext) void {
                 if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
                     current_screen = .paused;
                     pause_selection = 0;
+                    if (audio_ready) raylib.PauseMusicStream(music);
                 } else {
                     var space_consumed = false;
                     if (raylib.IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null) {
@@ -369,13 +423,16 @@ fn frame(ctx: *FrameContext) void {
                                 if (typedMatchesAnyEnemy()) {
                                     recordCorrectTimestamp(elapsed_time);
                                     correct_chars += 1;
+                                    playTypingSound();
                                 } else {
                                     wrong_chars += 1;
                                     combo_count = 0;
+                                    playErrorSound();
                                 }
                             } else {
                                 wrong_chars += 1;
                                 combo_count = 0;
+                                playErrorSound();
                             }
                         }
                         key = raylib.GetCharPressed();
@@ -448,6 +505,7 @@ fn frame(ctx: *FrameContext) void {
                 if (dying_timer <= 0) {
                     current_screen = .game_over;
                     is_dying = false;
+                    if (audio_ready) raylib.StopMusicStream(music);
                     const avg_wpm = calculateAverageWpm();
                     const acc: u8 = @intCast(calculateStatsAccuracy());
                     if (score > best_score_survival.score) {
@@ -704,12 +762,14 @@ fn updatePause(allocator: *std.mem.Allocator) void {
         switch (pause_selection) {
             0 => {
                 current_screen = .playing;
+                if (audio_ready) raylib.ResumeMusicStream(music);
             },
             1 => {
                 // FR-020: survival sessions discarded from pause don't save; Zen WPM record is preserved.
                 saveZenScoreIfBest();
                 resetZombies(allocator);
                 resetBoss(allocator);
+                if (audio_ready) raylib.StopMusicStream(music);
                 current_screen = .main_menu;
             },
             else => {},
@@ -811,8 +871,26 @@ fn drawZenHud() void {
     drawMetricsHud();
 }
 
+fn playPowerUpSound(pu_type: PowerUpType) void {
+    if (!sound_cfg.power_ups_enabled or !audio_ready) return;
+    const snd = switch (pu_type) {
+        .freeze => freeze_sound,
+        .bomb => bomb_sound,
+        .shield => shield_sound,
+    };
+    raylib.SetSoundVolume(snd, @as(f32, @floatFromInt(sound_cfg.effects_volume)) * 0.05);
+    raylib.PlaySound(snd);
+}
+
+fn playKillSound() void {
+    if (!sound_cfg.kills_enabled or !audio_ready) return;
+    raylib.SetSoundVolume(zombie_kill_sound, @as(f32, @floatFromInt(sound_cfg.effects_volume)) * 0.05);
+    raylib.PlaySound(zombie_kill_sound);
+}
+
 fn activatePowerUp(allocator: *std.mem.Allocator) void {
     if (held_power_up) |pu| {
+        playPowerUpSound(pu);
         switch (pu) {
             .freeze => {
                 freeze_timer = FREEZE_DURATION;
@@ -838,7 +916,7 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
                         }
                     }
                 }
-                if (bomb_killed_any) raylib.PlaySound(zombie_kill_sound);
+                if (bomb_killed_any) playKillSound();
             },
             .shield => {
                 shield_active = true;
@@ -886,6 +964,11 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     resetMetricsState();
     resetZombies(allocator);
     resetBoss(allocator);
+    if (sound_cfg.music_enabled and audio_ready) {
+        raylib.SetMusicVolume(music, @as(f32, @floatFromInt(sound_cfg.music_volume)) * 0.05);
+        raylib.StopMusicStream(music);
+        raylib.PlayMusicStream(music);
+    }
 }
 
 // Emscripten C-callback trampoline; arg carries the FrameContext pointer
@@ -977,6 +1060,7 @@ pub fn main() !void {
     music = raylib.LoadMusicStream("assets/music/nightmare-pulse.wav");
     defer raylib.UnloadMusicStream(music);
     music.looping = true;
+    audio_ready = true;
 
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
@@ -1082,7 +1166,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                 name[letter_count] = '\x00';
                 wave_kills += 1;
                 total_kills += 1;
-                raylib.PlaySound(zombie_kill_sound);
+                playKillSound();
             }
         }
     }
@@ -1331,7 +1415,7 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
             // Give the player a full spawn_delay of breathing room before regular
             // zombies resume — typing the boss phrase is enough work for one beat.
             spawn_timer = 0.0;
-            raylib.PlaySound(zombie_kill_sound);
+            playKillSound();
         }
     }
 }
@@ -2697,4 +2781,40 @@ test "sample count constants match array sizes" {
     try std.testing.expectEqual(@as(usize, DAMAGE_SAMPLE_COUNT), damage_sounds.len);
     try std.testing.expectEqual(@as(usize, SQUARE_SAMPLE_COUNT), square_sounds.len);
     try std.testing.expectEqual(@as(usize, MISSED_PUNCH_SAMPLE_COUNT), missed_punch_sounds.len);
+}
+
+test "round-robin wrapping returns to 0 for each pack" {
+    const counts = [_]u8{ CLICK_SAMPLE_COUNT, TYPEWRITER_SAMPLE_COUNT, HITMARKER_SAMPLE_COUNT, DAMAGE_SAMPLE_COUNT, SQUARE_SAMPLE_COUNT, MISSED_PUNCH_SAMPLE_COUNT };
+    for (counts) |count| {
+        var idx: u8 = 0;
+        var i: u8 = 0;
+        while (i < count) : (i += 1) {
+            idx = (idx + 1) % count;
+        }
+        try std.testing.expectEqual(@as(u8, 0), idx);
+    }
+}
+
+test "getTypingSampleCount returns correct value for each pack" {
+    const saved = sound_cfg;
+    defer sound_cfg = saved;
+
+    sound_cfg.typing_pack = .click;
+    try std.testing.expectEqual(CLICK_SAMPLE_COUNT, getTypingSampleCount());
+    sound_cfg.typing_pack = .typewriter;
+    try std.testing.expectEqual(TYPEWRITER_SAMPLE_COUNT, getTypingSampleCount());
+    sound_cfg.typing_pack = .hitmarker;
+    try std.testing.expectEqual(HITMARKER_SAMPLE_COUNT, getTypingSampleCount());
+}
+
+test "getErrorSampleCount returns correct value for each pack" {
+    const saved = sound_cfg;
+    defer sound_cfg = saved;
+
+    sound_cfg.error_pack = .damage;
+    try std.testing.expectEqual(DAMAGE_SAMPLE_COUNT, getErrorSampleCount());
+    sound_cfg.error_pack = .square;
+    try std.testing.expectEqual(SQUARE_SAMPLE_COUNT, getErrorSampleCount());
+    sound_cfg.error_pack = .missed_punch;
+    try std.testing.expectEqual(MISSED_PUNCH_SAMPLE_COUNT, getErrorSampleCount());
 }

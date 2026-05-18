@@ -38,18 +38,18 @@
 
 **Independent Test**: Start a game with default settings. Type correct letters → hear typewriter clicks cycling. Type wrong letter → hear damage sound. Toggle sounds off → silence.
 
-- [ ] T015 [US1] Create helper `fn getTypingSounds() []raylib.Sound` in `src/main.zig` that returns the active pack's sound slice based on `sound_cfg.typing_pack` (click_sounds, typewriter_sounds, or hitmarker_sounds)
-- [ ] T016 [US1] Create helper `fn getTypingSampleCount() u8` in `src/main.zig` that returns the sample count for the active typing pack
-- [ ] T017 [US1] Create helper `fn playTypingSound()` in `src/main.zig` that checks `sound_cfg.keystrokes_enabled`, gets active pack sounds, calls `SetSoundVolume` with `sound_cfg.typing_volume * 0.05`, calls `PlaySound` on current round-robin sample, and advances `typing_round_robin` with modular wrap
-- [ ] T018 [US1] Create helper `fn getErrorSounds() []raylib.Sound` in `src/main.zig` that returns the active error pack's sound slice based on `sound_cfg.error_pack`
-- [ ] T019 [US1] Create helper `fn getErrorSampleCount() u8` in `src/main.zig` that returns the sample count for the active error pack
-- [ ] T020 [US1] Create helper `fn playErrorSound()` in `src/main.zig` that checks `sound_cfg.errors_enabled`, gets active error sounds, calls `SetSoundVolume` with `sound_cfg.typing_volume * 0.05`, calls `PlaySound`, and advances `error_round_robin` with modular wrap
-- [ ] T021 [US1] Wire `playTypingSound()` after `correct_chars += 1` (line 347) and `playErrorSound()` after both `wrong_chars += 1` sites (lines 349 and 353) in the keystroke input loop of `src/main.zig`
+- [X] T015 [US1] Create helper `fn getTypingSounds() []raylib.Sound` in `src/main.zig` that returns the active pack's sound slice based on `sound_cfg.typing_pack` (click_sounds, typewriter_sounds, or hitmarker_sounds)
+- [X] T016 [US1] Create helper `fn getTypingSampleCount() u8` in `src/main.zig` that returns the sample count for the active typing pack
+- [X] T017 [US1] Create helper `fn playTypingSound()` in `src/main.zig` that checks `sound_cfg.keystrokes_enabled`, gets active pack sounds, calls `SetSoundVolume` with `sound_cfg.typing_volume * 0.05`, calls `PlaySound` on current round-robin sample, and advances `typing_round_robin` with modular wrap
+- [X] T018 [US1] Create helper `fn getErrorSounds() []raylib.Sound` in `src/main.zig` that returns the active error pack's sound slice based on `sound_cfg.error_pack`
+- [X] T019 [US1] Create helper `fn getErrorSampleCount() u8` in `src/main.zig` that returns the sample count for the active error pack
+- [X] T020 [US1] Create helper `fn playErrorSound()` in `src/main.zig` that checks `sound_cfg.errors_enabled`, gets active error sounds, calls `SetSoundVolume` with `sound_cfg.typing_volume * 0.05`, calls `PlaySound`, and advances `error_round_robin` with modular wrap
+- [X] T021 [US1] Wire `playTypingSound()` after `correct_chars += 1` (line 347) and `playErrorSound()` after both `wrong_chars += 1` sites (lines 349 and 353) in the keystroke input loop of `src/main.zig`
 
 ### Phase 3 Tests
 
-- [ ] T022 [P] [US1] Add tests in `src/main.zig`: round-robin wrapping — verify `(index + 1) % count` returns to 0 for each pack sample count (3, 6, 3, 1, 1, 2)
-- [ ] T023 [P] [US1] Add tests in `src/main.zig`: `getTypingSampleCount()` returns correct value for each `TypingPack` variant, `getErrorSampleCount()` returns correct value for each `ErrorPack` variant
+- [X] T022 [P] [US1] Add tests in `src/main.zig`: round-robin wrapping — verify `(index + 1) % count` returns to 0 for each pack sample count (3, 6, 3, 1, 1, 2)
+- [X] T023 [P] [US1] Add tests in `src/main.zig`: `getTypingSampleCount()` returns correct value for each `TypingPack` variant, `getErrorSampleCount()` returns correct value for each `ErrorPack` variant
 
 ## Phase 4: User Story 2 — Background Music Loop (P1)
 
@@ -57,11 +57,11 @@
 
 **Independent Test**: Start a game. Music begins. Let it loop 3+ times — no gap. Pause → music pauses. Resume → music resumes. Game over → music stops.
 
-- [ ] T024 [US2] In `startGame()` (line 845) of `src/main.zig`, add: if `sound_cfg.music_enabled`, call `SetMusicVolume(music, sound_cfg.music_volume * 0.05)`, `StopMusicStream(music)` (reset), `PlayMusicStream(music)`
-- [ ] T025 [US2] In the `.playing` update phase (line 298) of `src/main.zig`, add `raylib.UpdateMusicStream(music)` call every frame to feed the audio buffer for seamless looping
-- [ ] T026 [US2] In `src/main.zig`, add `raylib.PauseMusicStream(music)` when transitioning to `.paused` (at the `KEY_ESCAPE` handler, line 323–325)
-- [ ] T027 [US2] In `updatePause()` of `src/main.zig`, add `raylib.ResumeMusicStream(music)` when resume is selected (line 682, the `0 =>` branch)
-- [ ] T028 [US2] In `src/main.zig`, add `raylib.StopMusicStream(music)` when dying_timer expires and transitions to game_over (line 424–425) and when quitting to menu from pause (line 684–689)
+- [X] T024 [US2] In `startGame()` (line 845) of `src/main.zig`, add: if `sound_cfg.music_enabled`, call `SetMusicVolume(music, sound_cfg.music_volume * 0.05)`, `StopMusicStream(music)` (reset), `PlayMusicStream(music)`
+- [X] T025 [US2] In the `.playing` update phase (line 298) of `src/main.zig`, add `raylib.UpdateMusicStream(music)` call every frame to feed the audio buffer for seamless looping
+- [X] T026 [US2] In `src/main.zig`, add `raylib.PauseMusicStream(music)` when transitioning to `.paused` (at the `KEY_ESCAPE` handler, line 323–325)
+- [X] T027 [US2] In `updatePause()` of `src/main.zig`, add `raylib.ResumeMusicStream(music)` when resume is selected (line 682, the `0 =>` branch)
+- [X] T028 [US2] In `src/main.zig`, add `raylib.StopMusicStream(music)` when dying_timer expires and transitions to game_over (line 424–425) and when quitting to menu from pause (line 684–689)
 
 ## Phase 5: User Story 3 — Power-Up Activation Sounds (P2)
 
@@ -69,8 +69,8 @@
 
 **Independent Test**: Collect each power-up and activate. Hear distinct sounds per type. Toggle off → silence.
 
-- [ ] T029 [US3] Create helper `fn playPowerUpSound(pu_type: PowerUpType)` in `src/main.zig` that checks `sound_cfg.power_ups_enabled`, sets volume via `SetSoundVolume` with `sound_cfg.effects_volume * 0.05`, and plays type-specific sound (freeze→freeze_sound, bomb→bomb_sound, shield→shield_sound)
-- [ ] T030 [US3] Wire `playPowerUpSound(pu)` at the top of `activatePowerUp()` in `src/main.zig` (line 791, before the switch statement), so it fires regardless of which power-up branch runs
+- [X] T029 [US3] Create helper `fn playPowerUpSound(pu_type: PowerUpType)` in `src/main.zig` that checks `sound_cfg.power_ups_enabled`, sets volume via `SetSoundVolume` with `sound_cfg.effects_volume * 0.05`, and plays type-specific sound (freeze→freeze_sound, bomb→bomb_sound, shield→shield_sound)
+- [X] T030 [US3] Wire `playPowerUpSound(pu)` at the top of `activatePowerUp()` in `src/main.zig` (line 791, before the switch statement), so it fires regardless of which power-up branch runs
 
 ## Phase 6: User Story 5 — Kill Sound Feedback (P3)
 
@@ -78,8 +78,8 @@
 
 **Independent Test**: Kill a zombie → hear kill sound. Toggle off → silence. Adjust effects volume → volume changes.
 
-- [ ] T031 [US5] Create helper `fn playKillSound()` in `src/main.zig` that checks `sound_cfg.kills_enabled`, calls `SetSoundVolume(zombie_kill_sound, sound_cfg.effects_volume * 0.05)`, and calls `PlaySound(zombie_kill_sound)`
-- [ ] T032 [US5] Replace all 3 existing `raylib.PlaySound(zombie_kill_sound)` calls in `src/main.zig` with `playKillSound()`: line 817 (bomb kills), line 1001 (standard zombie kill), line 1250 (boss kill)
+- [X] T031 [US5] Create helper `fn playKillSound()` in `src/main.zig` that checks `sound_cfg.kills_enabled`, calls `SetSoundVolume(zombie_kill_sound, sound_cfg.effects_volume * 0.05)`, and calls `PlaySound(zombie_kill_sound)`
+- [X] T032 [US5] Replace all 3 existing `raylib.PlaySound(zombie_kill_sound)` calls in `src/main.zig` with `playKillSound()`: line 817 (bomb kills), line 1001 (standard zombie kill), line 1250 (boss kill)
 
 ## Phase 7: User Story 4 — Sound Settings Menu (P2)
 
