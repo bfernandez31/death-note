@@ -93,15 +93,19 @@ const AVG_NAME_CHARS: f32 = 6.0;
 const FALL_GRACE_FACTOR: f32 = 2.0;
 const FRAMES_PER_SECOND: f32 = 60.0;
 
-// Two-lever wave-difficulty bounds: on-screen time decays linearly per wave
-// from MAX_TIME_ON_SCREEN, never dipping below MIN_TIME_ON_SCREEN.
-const MIN_TIME_ON_SCREEN: f32 = 2.5;
-const MAX_TIME_ON_SCREEN: f32 = 6.0;
-const TIME_ON_SCREEN_DECAY_PER_WAVE: f32 = 0.15;
-// spawn_delay = TIME_TO_TYPE_NUMERATOR * burst_size / target_wpm; the numerator
-// folds AVG_NAME_CHARS * SECONDS_PER_MINUTE / CHARS_PER_WORD (6 * 60 / 5 = 72)
-// into a single compile-time constant so the cadence formula stays one line.
+// Horde model: a typist at exactly target_wpm clears 1 zombie per spawn_delay,
+// so at steady state the screen holds target_density zombies. Slower than
+// target_wpm → the horde overflows target_density and one eventually lands.
+// Faster → the horde shrinks. target_wpm is therefore the survival floor for
+// the displayed horde.
+const TARGET_DENSITY_BASE: f32 = 5.0;
+const TARGET_DENSITY_INCREMENT_PER_WAVE: f32 = 0.1;
+const TARGET_DENSITY_CAP: f32 = 10.0;
+const MIN_TIME_ON_SCREEN: f32 = 4.0;
 const TIME_TO_TYPE_NUMERATOR: f32 = AVG_NAME_CHARS * SECONDS_PER_MINUTE / CHARS_PER_WORD;
+// Jitter around the WPM-locked spawn cadence so consecutive zombies don't
+// arrive on a perfect metronome. Mean preserved → target_wpm contract still holds.
+const SPAWN_DELAY_JITTER: f32 = 0.3;
 
 const DYING_DURATION: f32 = 1.0;
 const STATS_TITLE_Y: c_int = 80;
@@ -124,35 +128,14 @@ const WaveConfig = struct {
     spawn_delay: f32,
     fall_speed: f32,
     pool_size: u32,
-    burst_size: u32,
 };
 
-const WaveAuthoring = struct {
-    target_wpm: u32,
-    pool_size: u32,
-};
-
-// Only target_wpm and pool_size are authored; spawn_delay and fall_speed are derived
-// in getWaveConfig from the two-lever formula (time_on_screen drives fall_speed;
-// burst_size/target_wpm drives spawn_delay). deriveWaveTiming() is now only used
-// by zen mode, where wpm is held constant rather than read from the table.
-const WAVE_TABLE = [_]WaveAuthoring{
-    .{ .target_wpm = 15, .pool_size = 5 },
-    .{ .target_wpm = 18, .pool_size = 7 },
-    .{ .target_wpm = 22, .pool_size = 9 },
-    .{ .target_wpm = 26, .pool_size = 11 },
-    .{ .target_wpm = 30, .pool_size = 13 },
-    .{ .target_wpm = 35, .pool_size = 15 },
-    .{ .target_wpm = 40, .pool_size = 17 },
-    .{ .target_wpm = 45, .pool_size = 19 },
-    .{ .target_wpm = 50, .pool_size = 21 },
-    .{ .target_wpm = 55, .pool_size = 23 },
-    .{ .target_wpm = 60, .pool_size = 25 },
-    .{ .target_wpm = 70, .pool_size = 27 },
-    .{ .target_wpm = 80, .pool_size = 29 },
-    .{ .target_wpm = 90, .pool_size = 31 },
-    .{ .target_wpm = 100, .pool_size = 33 },
-};
+// Wave authoring is fully formula-driven. target_wpm ramps linearly; pool_size
+// is sized so each wave lasts ~WAVE_DURATION_TARGET_S at target_wpm.
+const WAVE_DURATION_TARGET_S: f32 = 45.0;
+const WAVE_BASE_WPM: u32 = 20;
+const WAVE_WPM_INCREMENT: u32 = 5;
+const WAVE_MAX_WPM: u32 = 250;
 
 // Input buffer for characters
 var name = [_]u8{0} ** (MAX_BOSS_INPUT_CHARS + 1);
@@ -524,23 +507,12 @@ fn frame(ctx: *FrameContext) void {
                     } else {
                         const wave_cfg = getWaveConfig(current_wave);
                         if (spawn_timer >= wave_cfg.spawn_delay and wave_spawned < wave_cfg.pool_size and boss == null) {
-                            const remaining = wave_cfg.pool_size - wave_spawned;
-                            const burst = @min(wave_cfg.burst_size, remaining);
-                            const zone_width = @divTrunc(ZOMBIE_SPAWN_X_MAX - ZOMBIE_SPAWN_X_MIN, @as(c_int, @intCast(burst)));
-                            var any_spawned = false;
-                            var burst_i: u32 = 0;
-                            while (burst_i < burst) : (burst_i += 1) {
-                                const zone_min = ZOMBIE_SPAWN_X_MIN + @as(c_int, @intCast(burst_i)) * zone_width;
-                                // Half-open boundary: adjacent zones share no x coordinate, so
-                                // two zombies in the same burst can't sample the identical lane.
-                                const zone_max = if (burst_i == burst - 1) ZOMBIE_SPAWN_X_MAX else zone_min + zone_width - 1;
-                                const spawned = spawnZombieInZone(ctx.allocator, prng.random(), zone_min, zone_max) catch false;
-                                if (spawned) {
-                                    wave_spawned += 1;
-                                    any_spawned = true;
-                                }
+                            const spawned = spawnZombie(ctx.allocator, prng.random()) catch false;
+                            if (spawned) {
+                                wave_spawned += 1;
+                                const j = (prng.random().float(f32) * 2.0 - 1.0) * SPAWN_DELAY_JITTER;
+                                spawn_timer = -wave_cfg.spawn_delay * j;
                             }
-                            if (any_spawned) spawn_timer = 0.0;
                         }
                     }
 
@@ -572,7 +544,10 @@ fn frame(ctx: *FrameContext) void {
                     current_wave += 1;
                     wave_kills = 0;
                     wave_spawned = 0;
-                    spawn_timer = 0.0;
+                    // Pre-load spawn_timer to the new wave's spawn_delay so the
+                    // first zombie arrives on the very next update tick instead
+                    // of after a full empty spawn_delay window.
+                    spawn_timer = getWaveConfig(current_wave).spawn_delay;
                     is_transitioning = false;
                     resetMetricsState();
                     resetZombies(ctx.allocator);
@@ -1176,7 +1151,9 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
                             combo_count += 1;
                             if (combo_count > max_combo) max_combo = combo_count;
                             spawnPopup(zomb.x, zomb.y, points);
-                            // F-36: wave_kills is NOT incremented for bomb kills (only typed kills count toward wave completion).
+                            // Bomb kills must tick wave_kills, else the wave stalls when the
+                            // bomb clears the last zombies before wave_spawned reaches pool_size.
+                            wave_kills += 1;
                             total_kills += 1;
                             allocator.destroy(zomb);
                             slot.* = null;
@@ -1221,8 +1198,10 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     current_screen = .playing;
     letter_count = 0;
     name[0] = '\x00';
-    spawn_timer = 0.0;
     current_wave = 1;
+    // Pre-load spawn_timer so the first zombie of wave 1 spawns on the first
+    // update tick instead of after a full empty spawn_delay (~3.6s at wave 1).
+    spawn_timer = getWaveConfig(current_wave).spawn_delay;
     wave_kills = 0;
     wave_spawned = 0;
     is_transitioning = false;
@@ -1661,34 +1640,34 @@ fn deriveWaveTiming(target_wpm: u32) struct { spawn_delay: f32, fall_speed: f32 
 }
 
 fn getWaveConfig(wave: u32) WaveConfig {
-    const authoring = if (wave >= 1 and wave <= WAVE_TABLE.len) blk: {
-        break :blk WAVE_TABLE[wave - 1];
-    } else blk: {
-        break :blk WaveAuthoring{
-            .target_wpm = @min(250, 100 + (wave - 15) * 5),
-            .pool_size = @min(MAX_ZOMBIES, 33 + 2 * (wave - 15)),
-        };
-    };
-
+    const target_wpm = @min(WAVE_MAX_WPM, WAVE_BASE_WPM + (wave - 1) * WAVE_WPM_INCREMENT);
     const wave_f: f32 = @floatFromInt(wave);
-    const time_on_screen_raw = MAX_TIME_ON_SCREEN - TIME_ON_SCREEN_DECAY_PER_WAVE * (wave_f - 1.0);
-    const time_on_screen = @max(MIN_TIME_ON_SCREEN, @min(MAX_TIME_ON_SCREEN, time_on_screen_raw));
+    const wpm_f: f32 = @floatFromInt(target_wpm);
+
+    // WPM-locked cadence: spawn_delay = 72/wpm makes target_wpm a real survival
+    // threshold (one zombie cleared per spawn at that typing speed).
+    const spawn_delay = TIME_TO_TYPE_NUMERATOR / wpm_f;
+
+    // time_on_screen = density × spawn_delay: a typist at target_wpm sees a
+    // stable horde of `target_density` zombies on screen. Density grows slowly
+    // with wave; the MIN floor keeps late-wave fall readable when spawn_delay
+    // shrinks (effective density rises above the cap once the floor clamps).
+    const target_density = @min(TARGET_DENSITY_CAP, TARGET_DENSITY_BASE + (wave_f - 1.0) * TARGET_DENSITY_INCREMENT_PER_WAVE);
+    const time_on_screen = @max(MIN_TIME_ON_SCREEN, target_density * spawn_delay);
 
     const sh: f32 = @floatFromInt(screen_height);
     const fall_speed = sh / (time_on_screen * FRAMES_PER_SECOND);
 
-    const burst_size: u32 = (wave + 3) / 4;
-
-    const burst_f: f32 = @floatFromInt(burst_size);
-    const wpm_f: f32 = @floatFromInt(authoring.target_wpm);
-    const spawn_delay = (TIME_TO_TYPE_NUMERATOR * burst_f) / wpm_f;
+    // Pool sized so the wave lasts ~WAVE_DURATION_TARGET_S when the player
+    // clears zombies as they arrive at target_wpm.
+    const pool_f = @round(WAVE_DURATION_TARGET_S * wpm_f / TIME_TO_TYPE_NUMERATOR);
+    const pool_size = @as(u32, @intFromFloat(pool_f));
 
     return WaveConfig{
-        .target_wpm = authoring.target_wpm,
+        .target_wpm = target_wpm,
         .spawn_delay = spawn_delay,
         .fall_speed = fall_speed,
-        .pool_size = authoring.pool_size,
-        .burst_size = burst_size,
+        .pool_size = pool_size,
     };
 }
 
@@ -2102,39 +2081,28 @@ test "input buffer bounds" {
     try std.testing.expectEqual(@as(u8, '\x00'), buf[count]);
 }
 
-fn expectedTimeOnScreen(wave: u32) f32 {
-    const wave_f: f32 = @floatFromInt(wave);
-    const raw = 6.0 - 0.15 * (wave_f - 1.0);
-    return @max(MIN_TIME_ON_SCREEN, @min(6.0, raw));
-}
-
 fn expectedFallSpeed(wave: u32) f32 {
-    const sh: f32 = @floatFromInt(screen_height);
-    return sh / (expectedTimeOnScreen(wave) * FRAMES_PER_SECOND);
+    return getWaveConfig(wave).fall_speed;
 }
 
-fn expectedSpawnDelay(target_wpm: u32, burst_size: u32) f32 {
-    const burst_f: f32 = @floatFromInt(burst_size);
-    const wpm_f: f32 = @floatFromInt(target_wpm);
-    return (72.0 * burst_f) / wpm_f;
+fn expectedSpawnDelay(target_wpm: u32) f32 {
+    return TIME_TO_TYPE_NUMERATOR / @as(f32, @floatFromInt(target_wpm));
 }
 
-test "getWaveConfig wave 1 density model" {
+test "getWaveConfig wave 1" {
     const cfg = getWaveConfig(1);
-    try std.testing.expectEqual(@as(u32, 15), cfg.target_wpm);
-    try std.testing.expectEqual(@as(u32, 1), cfg.burst_size);
-    try std.testing.expectApproxEqAbs(expectedFallSpeed(1), cfg.fall_speed, 0.01);
-    try std.testing.expectApproxEqAbs(expectedSpawnDelay(15, 1), cfg.spawn_delay, 0.01);
-    try std.testing.expectEqual(@as(u32, 5), cfg.pool_size);
+    try std.testing.expectEqual(@as(u32, 20), cfg.target_wpm);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(20), cfg.spawn_delay, 0.001);
+    // round(45 × 20 / 72) = 13
+    try std.testing.expectEqual(@as(u32, 13), cfg.pool_size);
 }
 
-test "getWaveConfig wave 15 density model" {
+test "getWaveConfig wave 15" {
     const cfg = getWaveConfig(15);
-    try std.testing.expectEqual(@as(u32, 100), cfg.target_wpm);
-    try std.testing.expectEqual(@as(u32, 4), cfg.burst_size);
-    try std.testing.expectApproxEqAbs(expectedFallSpeed(15), cfg.fall_speed, 0.01);
-    try std.testing.expectApproxEqAbs(expectedSpawnDelay(100, 4), cfg.spawn_delay, 0.01);
-    try std.testing.expectEqual(@as(u32, 33), cfg.pool_size);
+    try std.testing.expectEqual(@as(u32, 90), cfg.target_wpm);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(90), cfg.spawn_delay, 0.001);
+    // round(45 × 90 / 72) = 56
+    try std.testing.expectEqual(@as(u32, 56), cfg.pool_size);
 }
 
 test "wave completes when kills equals pool size" {
@@ -2147,49 +2115,58 @@ test "wave completes when kills equals pool size" {
     try std.testing.expect(!(partial_kills >= cfg.pool_size and spawned >= cfg.pool_size));
 }
 
-test "getWaveConfig scales correctly for wave 16+" {
-    const cfg16 = getWaveConfig(16);
-    try std.testing.expectEqual(@as(u32, 105), cfg16.target_wpm);
-    try std.testing.expectEqual(@as(u32, 35), cfg16.pool_size);
-
-    const cfg20 = getWaveConfig(20);
-    try std.testing.expectEqual(@as(u32, 43), cfg20.pool_size);
-
-    const cfg100 = getWaveConfig(100);
-    try std.testing.expectEqual(@as(u32, MAX_ZOMBIES), cfg100.pool_size);
-
-    const cfg_threshold = getWaveConfig(49);
-    try std.testing.expectEqual(@as(u32, MAX_ZOMBIES), cfg_threshold.pool_size);
-
-    const cfg48 = getWaveConfig(48);
-    try std.testing.expectEqual(@as(u32, 99), cfg48.pool_size);
+test "getWaveConfig follows linear WPM ramp" {
+    // target_wpm = WAVE_BASE_WPM + (wave-1) × WAVE_WPM_INCREMENT, capped at WAVE_MAX_WPM.
+    try std.testing.expectEqual(@as(u32, 95), getWaveConfig(16).target_wpm);
+    try std.testing.expectEqual(@as(u32, 115), getWaveConfig(20).target_wpm);
+    // pool_size = round(45 × wpm / 72) under the WAVE_DURATION_TARGET_S contract.
+    try std.testing.expectEqual(@as(u32, 59), getWaveConfig(16).pool_size); // round(45×95/72) = 59
+    try std.testing.expectEqual(@as(u32, 72), getWaveConfig(20).pool_size); // round(45×115/72) = 72
 }
 
-test "target WPM caps at 250" {
-    const cfg45 = getWaveConfig(45);
-    try std.testing.expectEqual(@as(u32, 250), cfg45.target_wpm);
-    const cfg100 = getWaveConfig(100);
-    try std.testing.expectEqual(@as(u32, 250), cfg100.target_wpm);
+test "target WPM caps at WAVE_MAX_WPM" {
+    // 20 + 46×5 = 250 hits the cap at wave 47.
+    try std.testing.expectEqual(@as(u32, 240), getWaveConfig(45).target_wpm);
+    try std.testing.expectEqual(@as(u32, 250), getWaveConfig(47).target_wpm);
+    try std.testing.expectEqual(@as(u32, 250), getWaveConfig(100).target_wpm);
+    // pool_size once capped: round(45 × 250 / 72) = round(156.25) = 156.
+    try std.testing.expectEqual(@as(u32, 156), getWaveConfig(47).pool_size);
+    try std.testing.expectEqual(@as(u32, 156), getWaveConfig(100).pool_size);
 }
 
-test "fall time floor is 2.5s at wave 25+" {
+test "fall time stays at or above MIN_TIME_ON_SCREEN floor" {
     const sh: f32 = @floatFromInt(screen_height);
-    const cfg25 = getWaveConfig(25);
-    const time25 = sh / (cfg25.fall_speed * FRAMES_PER_SECOND);
-    try std.testing.expect(time25 >= MIN_TIME_ON_SCREEN - 0.01);
-
+    // Floor is reached around wave 41 (8.0 - 0.1×40 = 4.0).
     const cfg50 = getWaveConfig(50);
     const time50 = sh / (cfg50.fall_speed * FRAMES_PER_SECOND);
     try std.testing.expect(time50 >= MIN_TIME_ON_SCREEN - 0.01);
+
+    const cfg100 = getWaveConfig(100);
+    const time100 = sh / (cfg100.fall_speed * FRAMES_PER_SECOND);
+    try std.testing.expect(time100 >= MIN_TIME_ON_SCREEN - 0.01);
 }
 
-test "burst size equals ceil(wave/4)" {
-    try std.testing.expectEqual(@as(u32, 1), getWaveConfig(1).burst_size);
-    try std.testing.expectEqual(@as(u32, 1), getWaveConfig(4).burst_size);
-    try std.testing.expectEqual(@as(u32, 2), getWaveConfig(5).burst_size);
-    try std.testing.expectEqual(@as(u32, 2), getWaveConfig(8).burst_size);
-    try std.testing.expectEqual(@as(u32, 3), getWaveConfig(9).burst_size);
-    try std.testing.expectEqual(@as(u32, 7), getWaveConfig(25).burst_size);
+test "spawn_delay equals 72/target_wpm at every wave" {
+    // The WPM-locked cadence: a typist at target_wpm produces one cleared zombie
+    // per spawn period, making target_wpm a real survival threshold.
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(20), getWaveConfig(1).spawn_delay, 0.001);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(90), getWaveConfig(15).spawn_delay, 0.001);
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(115), getWaveConfig(20).spawn_delay, 0.001);
+    // target_wpm caps at 250, so spawn_delay floors at 72/250 = 0.288s.
+    try std.testing.expectApproxEqAbs(expectedSpawnDelay(250), getWaveConfig(100).spawn_delay, 0.001);
+}
+
+test "wave duration at target_wpm stays close to WAVE_DURATION_TARGET_S" {
+    // pool_size × spawn_delay ≈ WAVE_DURATION_TARGET_S — the contract that
+    // every wave lasts ~45s when the player types exactly at target_wpm.
+    const waves_to_check = [_]u32{ 1, 5, 10, 15, 20, 30, 47, 100 };
+    for (waves_to_check) |w| {
+        const cfg = getWaveConfig(w);
+        const duration = @as(f32, @floatFromInt(cfg.pool_size)) * cfg.spawn_delay;
+        // Rounding pool_size to the nearest integer skews duration by at most
+        // one spawn_delay, so the tolerance is one spawn_delay.
+        try std.testing.expect(@abs(duration - WAVE_DURATION_TARGET_S) <= cfg.spawn_delay);
+    }
 }
 
 test "runner fall time stays above 1.9s at all waves" {
@@ -2229,17 +2206,18 @@ test "boss wave detection" {
 }
 
 test "boss spawn threshold calculation" {
+    // pool_size values under the new round(45 × target_wpm / 72) formula.
     const cfg5 = getWaveConfig(5);
-    try std.testing.expectEqual(@as(u32, 13), cfg5.pool_size);
-    try std.testing.expectEqual(@as(u32, 7), (cfg5.pool_size + 1) / 2);
+    try std.testing.expectEqual(@as(u32, 25), cfg5.pool_size); // wpm 40 → 25
+    try std.testing.expectEqual(@as(u32, 13), (cfg5.pool_size + 1) / 2);
 
     const cfg10 = getWaveConfig(10);
-    try std.testing.expectEqual(@as(u32, 23), cfg10.pool_size);
-    try std.testing.expectEqual(@as(u32, 12), (cfg10.pool_size + 1) / 2);
+    try std.testing.expectEqual(@as(u32, 41), cfg10.pool_size); // wpm 65 → 41
+    try std.testing.expectEqual(@as(u32, 21), (cfg10.pool_size + 1) / 2);
 
     const cfg20 = getWaveConfig(20);
-    try std.testing.expectEqual(@as(u32, 43), cfg20.pool_size);
-    try std.testing.expectEqual(@as(u32, 22), (cfg20.pool_size + 1) / 2);
+    try std.testing.expectEqual(@as(u32, 72), cfg20.pool_size); // wpm 115 → 72
+    try std.testing.expectEqual(@as(u32, 36), (cfg20.pool_size + 1) / 2);
 }
 
 test "getCurrentMaxInput returns correct limits" {
