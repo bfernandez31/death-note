@@ -290,6 +290,18 @@ const FrameContext = struct {
     frames_counter: usize,
 };
 
+// 20-step volume sliders map linearly to raylib's 0.0–1.0 range (20 * 0.05 = 1.0).
+fn volumeToFloat(level: u8) f32 {
+    return @as(f32, @floatFromInt(level)) * 0.05;
+}
+
+fn cyclePackEnum(comptime T: type, current: T, forward: bool) T {
+    const max: u8 = @intCast(@typeInfo(T).@"enum".fields.len);
+    const ord: u8 = @intFromEnum(current);
+    const next: u8 = if (forward) (ord + 1) % max else (ord + max - 1) % max;
+    return @enumFromInt(next);
+}
+
 fn getTypingSounds() []raylib.Sound {
     return switch (sound_cfg.typing_pack) {
         .click => &click_sounds,
@@ -309,10 +321,9 @@ fn getTypingSampleCount() u8 {
 fn playTypingSound() void {
     if (!sound_cfg.keystrokes_enabled or !audio_ready) return;
     const sounds = getTypingSounds();
-    const count = getTypingSampleCount();
-    raylib.SetSoundVolume(sounds[typing_round_robin], @as(f32, @floatFromInt(sound_cfg.typing_volume)) * 0.05);
+    raylib.SetSoundVolume(sounds[typing_round_robin], volumeToFloat(sound_cfg.typing_volume));
     raylib.PlaySound(sounds[typing_round_robin]);
-    typing_round_robin = (typing_round_robin + 1) % count;
+    typing_round_robin = (typing_round_robin + 1) % getTypingSampleCount();
 }
 
 fn getErrorSounds() []raylib.Sound {
@@ -331,13 +342,29 @@ fn getErrorSampleCount() u8 {
     };
 }
 
+// Errors share the typing pack's volume slider — they're part of the typing-feedback experience.
 fn playErrorSound() void {
     if (!sound_cfg.errors_enabled or !audio_ready) return;
     const sounds = getErrorSounds();
-    const count = getErrorSampleCount();
-    raylib.SetSoundVolume(sounds[error_round_robin], @as(f32, @floatFromInt(sound_cfg.typing_volume)) * 0.05);
+    raylib.SetSoundVolume(sounds[error_round_robin], volumeToFloat(sound_cfg.typing_volume));
     raylib.PlaySound(sounds[error_round_robin]);
-    error_round_robin = (error_round_robin + 1) % count;
+    error_round_robin = (error_round_robin + 1) % getErrorSampleCount();
+}
+
+fn typingPackName(pack: sound_config.TypingPack) []const u8 {
+    return switch (pack) {
+        .click => "CLICK",
+        .typewriter => "TYPEWRITER",
+        .hitmarker => "HITMARKER",
+    };
+}
+
+fn errorPackName(pack: sound_config.ErrorPack) []const u8 {
+    return switch (pack) {
+        .damage => "DAMAGE",
+        .square => "SQUARE",
+        .missed_punch => "MISSED PUNCH",
+    };
 }
 
 fn getSpeedMultiplier(zombie_type: ZombieType) f32 {
@@ -822,11 +849,13 @@ fn updateSoundSettings() void {
             8 => {
                 sound_cfg.music_enabled = !sound_cfg.music_enabled;
                 if (audio_ready) {
-                    if (sound_cfg.music_enabled and current_screen == .sound_settings and sound_menu_return_screen == .paused) {
-                        raylib.SetMusicVolume(music, @as(f32, @floatFromInt(sound_cfg.music_volume)) * 0.05);
-                        raylib.PlayMusicStream(music);
-                    } else if (!sound_cfg.music_enabled) {
+                    if (!sound_cfg.music_enabled) {
                         raylib.StopMusicStream(music);
+                    } else if (sound_menu_return_screen == .paused) {
+                        // Only resume immediately when coming from an active session; from main menu
+                        // there's nothing to hear yet — music will start when a mode is chosen.
+                        raylib.SetMusicVolume(music, volumeToFloat(sound_cfg.music_volume));
+                        raylib.PlayMusicStream(music);
                     }
                 }
             },
@@ -840,20 +869,12 @@ fn updateSoundSettings() void {
     if (left or right) {
         switch (sound_menu_selection) {
             1 => {
-                const ord = @intFromEnum(sound_cfg.typing_pack);
-                sound_cfg.typing_pack = if (right)
-                    (if (ord >= 2) @enumFromInt(0) else @as(sound_config.TypingPack, @enumFromInt(ord + 1)))
-                else
-                    (if (ord == 0) @enumFromInt(2) else @as(sound_config.TypingPack, @enumFromInt(ord - 1)));
+                sound_cfg.typing_pack = cyclePackEnum(sound_config.TypingPack, sound_cfg.typing_pack, right);
                 typing_round_robin = 0;
                 playPackPreview(true);
             },
             4 => {
-                const ord = @intFromEnum(sound_cfg.error_pack);
-                sound_cfg.error_pack = if (right)
-                    (if (ord >= 2) @enumFromInt(0) else @as(sound_config.ErrorPack, @enumFromInt(ord + 1)))
-                else
-                    (if (ord == 0) @enumFromInt(2) else @as(sound_config.ErrorPack, @enumFromInt(ord - 1)));
+                sound_cfg.error_pack = cyclePackEnum(sound_config.ErrorPack, sound_cfg.error_pack, right);
                 error_round_robin = 0;
                 playPackPreview(false);
             },
@@ -870,7 +891,7 @@ fn updateSoundSettings() void {
             9 => {
                 if (right and sound_cfg.music_volume < 20) sound_cfg.music_volume += 1;
                 if (left and sound_cfg.music_volume > 0) sound_cfg.music_volume -|= 1;
-                if (audio_ready) raylib.SetMusicVolume(music, @as(f32, @floatFromInt(sound_cfg.music_volume)) * 0.05);
+                if (audio_ready) raylib.SetMusicVolume(music, volumeToFloat(sound_cfg.music_volume));
             },
             else => {},
         }
@@ -887,19 +908,12 @@ fn updateSoundSettings() void {
 
 fn playPackPreview(is_typing: bool) void {
     if (!audio_ready) return;
-    if (is_typing) {
-        const sounds = getTypingSounds();
-        const vol = @as(f32, @floatFromInt(sound_cfg.typing_volume)) * 0.05;
-        const preview_vol = if (vol < 0.30) @as(f32, 0.30) else vol * 0.5;
-        raylib.SetSoundVolume(sounds[0], preview_vol);
-        raylib.PlaySound(sounds[0]);
-    } else {
-        const sounds = getErrorSounds();
-        const vol = @as(f32, @floatFromInt(sound_cfg.typing_volume)) * 0.05;
-        const preview_vol = if (vol < 0.30) @as(f32, 0.30) else vol * 0.5;
-        raylib.SetSoundVolume(sounds[0], preview_vol);
-        raylib.PlaySound(sounds[0]);
-    }
+    const sounds = if (is_typing) getTypingSounds() else getErrorSounds();
+    // Preview is half-volume, with a 0.30 floor so a near-muted slider can still audition packs.
+    const vol = volumeToFloat(sound_cfg.typing_volume);
+    const preview_vol = if (vol < 0.30) @as(f32, 0.30) else vol * 0.5;
+    raylib.SetSoundVolume(sounds[0], preview_vol);
+    raylib.PlaySound(sounds[0]);
 }
 
 fn drawSoundSettings() void {
@@ -936,35 +950,15 @@ fn drawSoundSettings() void {
         var val_buf: [48]u8 = undefined;
         const val_text: [*:0]const u8 = switch (@as(u8, @intCast(i))) {
             0 => if (sound_cfg.keystrokes_enabled) "[ON]" else "[OFF]",
-            1 => blk: {
-                const pack_name: []const u8 = switch (sound_cfg.typing_pack) {
-                    .click => "CLICK",
-                    .typewriter => "TYPEWRITER",
-                    .hitmarker => "HITMARKER",
-                };
-                break :blk std.fmt.bufPrintZ(&val_buf, "< {s} >", .{pack_name}) catch "???";
-            },
-            2 => blk: {
-                break :blk formatVolumeBar(&val_buf, sound_cfg.typing_volume);
-            },
+            1 => std.fmt.bufPrintZ(&val_buf, "< {s} >", .{typingPackName(sound_cfg.typing_pack)}) catch "???",
+            2 => formatVolumeBar(&val_buf, sound_cfg.typing_volume),
             3 => if (sound_cfg.errors_enabled) "[ON]" else "[OFF]",
-            4 => blk: {
-                const pack_name: []const u8 = switch (sound_cfg.error_pack) {
-                    .damage => "DAMAGE",
-                    .square => "SQUARE",
-                    .missed_punch => "MISSED PUNCH",
-                };
-                break :blk std.fmt.bufPrintZ(&val_buf, "< {s} >", .{pack_name}) catch "???";
-            },
+            4 => std.fmt.bufPrintZ(&val_buf, "< {s} >", .{errorPackName(sound_cfg.error_pack)}) catch "???",
             5 => if (sound_cfg.kills_enabled) "[ON]" else "[OFF]",
             6 => if (sound_cfg.power_ups_enabled) "[ON]" else "[OFF]",
-            7 => blk: {
-                break :blk formatVolumeBar(&val_buf, sound_cfg.effects_volume);
-            },
+            7 => formatVolumeBar(&val_buf, sound_cfg.effects_volume),
             8 => if (sound_cfg.music_enabled) "[ON]" else "[OFF]",
-            9 => blk: {
-                break :blk formatVolumeBar(&val_buf, sound_cfg.music_volume);
-            },
+            9 => formatVolumeBar(&val_buf, sound_cfg.music_volume),
             else => "???",
         };
         raylib.DrawText(val_text, screen_width - 300, y, 22, color);
@@ -1079,13 +1073,13 @@ fn playPowerUpSound(pu_type: PowerUpType) void {
         .bomb => bomb_sound,
         .shield => shield_sound,
     };
-    raylib.SetSoundVolume(snd, @as(f32, @floatFromInt(sound_cfg.effects_volume)) * 0.05);
+    raylib.SetSoundVolume(snd, volumeToFloat(sound_cfg.effects_volume));
     raylib.PlaySound(snd);
 }
 
 fn playKillSound() void {
     if (!sound_cfg.kills_enabled or !audio_ready) return;
-    raylib.SetSoundVolume(zombie_kill_sound, @as(f32, @floatFromInt(sound_cfg.effects_volume)) * 0.05);
+    raylib.SetSoundVolume(zombie_kill_sound, volumeToFloat(sound_cfg.effects_volume));
     raylib.PlaySound(zombie_kill_sound);
 }
 
@@ -1166,7 +1160,7 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     resetZombies(allocator);
     resetBoss(allocator);
     if (sound_cfg.music_enabled and audio_ready) {
-        raylib.SetMusicVolume(music, @as(f32, @floatFromInt(sound_cfg.music_volume)) * 0.05);
+        raylib.SetMusicVolume(music, volumeToFloat(sound_cfg.music_volume));
         raylib.StopMusicStream(music);
         raylib.PlayMusicStream(music);
     }
