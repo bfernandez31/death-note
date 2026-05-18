@@ -61,7 +61,7 @@ graph TB
     RaylibLib["raylib static library\n(rendering / audio / input)"]
     ZombiePool["Zombie pool\n[MAX_ZOMBIES]?*Zombie"]
     BossPtr["Boss pointer\n?*Zombie (0 or 1)"]
-    WaveTable["WAVE_TABLE\n[15]WaveAuthoring compile-time\n(target_wpm + pool_size; timing derived)"]
+    WaveFormulas["Wave formulas in getWaveConfig\n(target_wpm, spawn_delay, fall_speed,\npool_size, starter_pack — all derived from wave number)"]
     Assets["assets/\n(spritesheet, wav, sounds/, music/, fonts)"]
     Window["OS window\n(800×450 @ 60 FPS)"]
     AudioDevice["OS audio device\n(WAV + music playback)"]
@@ -77,7 +77,7 @@ graph TB
     Main --> SoundConfig
     Main --> ZombiePool
     Main --> BossPtr
-    Main --> WaveTable
+    Main --> WaveFormulas
     Main --> InputBuf
     RaylibWrapper --> RaylibLib
     RaylibLib --> Window
@@ -173,7 +173,7 @@ The following conventions are derived from `CLAUDE.md` and `.ai-board/memory/con
 
 **C interop wall.** `@cImport` appears only in `src/raylib.zig`. All game code imports that wrapper module and uses its re-exported symbols. Do not add `@cImport` anywhere else.
 
-**Named compile-time constants.** Magic numbers are not permitted inline. All tunables (`MAX_ZOMBIES`, `MAX_INPUT_CHARS`, `ZOMBIE_FRAME_COUNT`, `WAVE_TRANSITION_DURATION`, `WAVE_TABLE`, `screen_width`, `screen_height`) are declared at the top of `src/main.zig`. New tunables follow the same pattern.
+**Named compile-time constants.** Magic numbers are not permitted inline. All tunables (`MAX_ZOMBIES`, `MAX_INPUT_CHARS`, `ZOMBIE_FRAME_COUNT`, `WAVE_TRANSITION_DURATION`, `WAVE_BASE_WPM`, `WAVE_WPM_INCREMENT`, `WAVE_MAX_WPM`, `WAVE_DURATION_TARGET_S`, `SPAWN_DELAY_BASE`, `TIME_ON_SCREEN_BASE`, `STARTER_PACK_BASE`, `screen_width`, `screen_height`) are declared at the top of `src/main.zig`. New tunables follow the same pattern.
 
 **Naming discipline.**
 - Variables and runtime state: `snake_case` (`spawn_timer`, `is_game_over`, `letter_count`).

@@ -10,7 +10,7 @@ Typing-game where falling zombies are destroyed by typing their displayed names 
 - **Graphics / input / audio**: [raylib](https://github.com/raysan5/raylib) pinned to commit `52f2a10db610d0e9f619fd7c521db08a876547d0`, linked as a static library via `exe.linkLibrary(raylib_dep.artifact("raylib"))`
 - **C interop**: raylib headers (`raylib.h`, `raymath.h`, `rlgl.h`) are imported with `@cImport` in `src/raylib.zig`
 - **Executable name**: `death-note`
-- **Target window**: 800×450 @ 60 FPS (constants in `src/main.zig`)
+- **Target window**: 800×1000 @ 60 FPS (constants in `src/main.zig`)
 
 ## Commands
 
@@ -92,7 +92,7 @@ const WaveConfig = struct {
     spawn_delay: f32,
     fall_speed: f32,
     pool_size: u32,
-    burst_size: u32,
+    starter_pack: u32,
 };
 
 const HighScoreRecord = struct {
@@ -103,15 +103,17 @@ const HighScoreRecord = struct {
 };
 ```
 
-`WaveConfig` is fully formula-driven (no hand-tuned table) via `getWaveConfig(wave: u32)`. **WPM-locked continuous-stream horde model** for survival mode:
-- `target_wpm = min(WAVE_MAX_WPM, WAVE_BASE_WPM + (wave-1) × WAVE_WPM_INCREMENT)` — defaults 20/5/250, so wave 1 = 20 wpm (hunt-and-peck entry), +5 wpm per wave, cap at wave 47.
-- `pool_size = round(WAVE_DURATION_TARGET_S × target_wpm / 72)` — sized so the wave lasts ~45s when the player types exactly at `target_wpm`. Higher waves get more zombies (because they get typed faster).
-- Every spawn produces exactly one zombie (single-zombie continuous stream).
-- `spawn_delay = 72 / target_wpm` makes `target_wpm` a real survival threshold — a typist at `target_wpm` clears one zombie per spawn period, anyone slower accumulates zombies until one lands. Spawn cadence is jittered ±`SPAWN_DELAY_JITTER` (30%) so consecutive zombies don't arrive on a perfect metronome; the mean is preserved over a wave, so the WPM contract still holds.
-- `spawn_timer` is **pre-loaded** to `spawn_delay` at wave start (both first wave and on transition), so the first zombie of every wave spawns on the very next update tick rather than after a full empty `spawn_delay`.
-- **Density-driven fall**: `target_density(wave) = min(TARGET_DENSITY_CAP, TARGET_DENSITY_BASE + TARGET_DENSITY_INCREMENT_PER_WAVE×(wave-1))` (defaults 5/0.1/10) defines how many zombies should be on screen simultaneously when the player types at `target_wpm`. `time_on_screen = max(MIN_TIME_ON_SCREEN, target_density × spawn_delay)` — at wave 1 that's an 18s fall (5 × 3.6) so the horde forms visually; at wave ~23+ the 4s floor kicks in and effective density grows past the cap as the floor compresses fall time. `fall_speed = screen_height / (time_on_screen × FPS)`.
+`WaveConfig` is fully formula-driven (no hand-tuned table) via `getWaveConfig(wave: u32)`. **Sustained-density model** for survival mode — `spawn_delay`, `time_on_screen` (which drives `fall_speed`), and `starter_pack` all decay linearly per wave from a wave-1 base toward a floor/cap. Pool size stays WPM-linked so the announced WPM matches the wave-1 survival floor exactly:
+- `target_wpm = min(WAVE_MAX_WPM, WAVE_BASE_WPM + (wave-1) × WAVE_WPM_INCREMENT)` — defaults 20/5/250, so wave 1 = 20 wpm, +5 wpm per wave, cap at wave 47.
+- `pool_size = round(WAVE_DURATION_TARGET_S × target_wpm / 72)` — defaults `WAVE_DURATION_TARGET_S = 36`, so wave 1 = 10 zombies (aligned with the 20-wpm survival floor).
+- `spawn_delay = max(SPAWN_DELAY_MIN, SPAWN_DELAY_BASE - SPAWN_DELAY_DECAY_PER_WAVE × (wave-1))` — defaults 1.5/0.4/0.04, floor reached around wave 29. Drip spawns one zombie at y=0 every `spawn_delay` seconds; cadence jittered ±`SPAWN_DELAY_JITTER` (30%) so arrivals aren't a perfect metronome.
+- `spawn_timer` is **pre-loaded** to `spawn_delay` at wave start (both first wave and on transition), so the first drip arrives on the very next update tick.
+- `time_on_screen = max(TIME_ON_SCREEN_MIN, TIME_ON_SCREEN_BASE - TIME_ON_SCREEN_DECAY_PER_WAVE × (wave-1))` — defaults 30/4/0.9, floor reached around wave 30. `fall_speed = screen_height / (time_on_screen × FPS)`.
+- `starter_pack = min(pool_size, round(min(STARTER_PACK_CAP, STARTER_PACK_BASE + STARTER_PACK_INCREMENT_PER_WAVE × (wave-1))))` — defaults 6/0.25/18, cap reached around wave 49. Front-loaded at wave start by `spawnStarterPack(allocator, rng, count)`: each starter is placed in its own X zone (`screen_width / count` per zone) and stacked off-screen above with `y0 = -i × (STARTER_PACK_OFFSET_RANGE / (count - 1))` (default range 200 px), so the first starter is visible at y=0 and the rest slide in from above over the next few seconds. Each successful spawn increments `wave_spawned`.
 
-Density at the threshold WPM: 5 zombies at wave 1, 6.4 at wave 15, ~9 at wave 30, ~14 at wave 47+ (250 wpm cap, fall pegged at 4s floor). Zen mode shares the same `72/target_wpm` cadence via `deriveWaveTiming(target_wpm)` (no jitter — Zen is the "type at exact target WPM" mode) and scales fall with `FALL_GRACE_FACTOR` (density ≈ 2). Names come from `name_lists.zig` — `PrimaryNames` (349+ first names), `CompoundNames` (31 hyphenated names, e.g. `"Jean-Pierre"`), and `TrapGroups` (15 groups of 3–5 visually similar names). Name pointers are never copied, only referenced. `src/zombie_names.zig` still exists but is no longer the active spawn source — its 49 names are included in `PrimaryNames`.
+**Sustained-density math at wave 1**: with `pool_size=10`, `starter=6`, `spawn_delay=1.5s`, `time_on_screen=30s`, `STARTER_PACK_OFFSET_RANGE=200`, the last landing happens at `T_final = max(drip_last + 30, starter_slide_in + 30) = 36s`. The 10 zombies × 6 chars = 60 chars to type in 36s gives the 20-wpm survival floor exactly.
+
+Zen mode uses `deriveWaveTiming(target_wpm)` instead: `spawn_delay = TIME_TO_TYPE_NUMERATOR / target_wpm` (WPM-locked since the player picks the WPM tier) and `time_on_screen = max(TIME_ON_SCREEN_MIN, ZEN_DENSITY × spawn_delay)` with `ZEN_DENSITY = 8`. Names come from `name_lists.zig` — `PrimaryNames` (349+ first names), `CompoundNames` (31 hyphenated names, e.g. `"Jean-Pierre"`), and `TrapGroups` (15 groups of 3–5 visually similar names). Name pointers are never copied, only referenced. `src/zombie_names.zig` still exists but is no longer the active spawn source — its 49 names are included in `PrimaryNames`.
 
 `HighScoreRecord` is persisted as a 17-byte binary file (`highscore.dat`) on native builds using `std.c.fopen`/`fread`/`fwrite` (use `std.c` for file I/O — `std.fs` was removed in Zig 0.16). On web (Emscripten) builds it is stored in `localStorage` under `"death-note.highscore"` as JSON, accessed via `emscripten_run_script_int` / `emscripten_run_script`.
 

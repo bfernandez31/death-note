@@ -166,12 +166,14 @@ const MAX_INPUT_CHARS = 20;
 const ZOMBIE_FRAME_COUNT = 17;
 const screen_width = 800;
 const screen_height = 1000;          // portrait-arcade aspect for falling-name gameplay
-const AVG_NAME_CHARS: f32 = 6.0;     // input to deriveWaveTiming()
-const FALL_GRACE_FACTOR: f32 = 2.0;  // input to deriveWaveTiming()
-const FRAMES_PER_SECOND: f32 = 60.0; // input to deriveWaveTiming()
+const AVG_NAME_CHARS: f32 = 6.0;     // assumed average name length used in pool_size derivation
+const FRAMES_PER_SECOND: f32 = 60.0; // frame-rate reference used to convert seconds to px/frame
+const SPAWN_DELAY_BASE: f32 = 1.5;   // wave 1 spawn cadence (seconds), decays per wave
+const TIME_ON_SCREEN_BASE: f32 = 30.0; // wave 1 fall duration (seconds), decays per wave
+const STARTER_PACK_BASE: f32 = 6.0;  // wave 1 front-loaded zombie count
 ```
 
-Wave-specific `spawn_delay`, `fall_speed`, and `burst_size` are **not** authored — they are derived per call by `getWaveConfig()` from two independent levers: fall speed is derived from a per-wave `time_on_screen` formula (clamped to `MIN_TIME_ON_SCREEN = 2.5`), and spawn delay is derived from `burst_size` and `target_wpm`. Changing `screen_height` automatically re-tunes `fall_speed` for every wave.
+Wave-specific `spawn_delay`, `fall_speed`, `pool_size`, and `starter_pack` are **not** authored — they are derived per call by `getWaveConfig()` from a sustained-density model. Two timing curves decay linearly per wave: `spawn_delay` from `SPAWN_DELAY_BASE` down to `SPAWN_DELAY_MIN (0.4s)` at rate `SPAWN_DELAY_DECAY_PER_WAVE (0.04)`, and `time_on_screen` from `TIME_ON_SCREEN_BASE` down to `TIME_ON_SCREEN_MIN (4.0s)` at rate `TIME_ON_SCREEN_DECAY_PER_WAVE (0.9)`. `fall_speed` is computed as `screen_height / (time_on_screen × FRAMES_PER_SECOND)`. `pool_size = round(WAVE_DURATION_TARGET_S (36) × target_wpm / 72)` stays WPM-linked so the announced WPM matches the wave-1 survival floor. `starter_pack = round(STARTER_PACK_BASE + STARTER_PACK_INCREMENT_PER_WAVE (0.25) × (wave-1))` capped at `STARTER_PACK_CAP (18)` controls how many zombies are front-loaded at wave start. Changing `screen_height` automatically re-tunes `fall_speed` for every wave.
 
 There is no runtime configuration file, no environment variable reading, and no command-line argument parsing.
 

@@ -186,7 +186,7 @@ erDiagram
         f32 spawn_delay
         f32 fall_speed
         u32 pool_size
-        u32 burst_size
+        u32 starter_pack
     }
 
     GAME_STATE ||--|| INPUT_BUFFER : "controls input into"
@@ -424,62 +424,55 @@ These variables collectively represent the running state of the game session.
 
 ---
 
-### 3.5 WaveAuthoring / WaveConfig
+### 3.5 WaveConfig
 
-**Source:** `src/main.zig` — struct definitions at the top of the file, `WAVE_TABLE` compile-time array, `deriveWaveTiming`/`getWaveConfig` lookup functions.
+**Source:** `src/main.zig` — struct definition at the top of the file, `deriveWaveTiming`/`getWaveConfig` lookup functions.
 
-**Definitions:**
+**Definition:**
 
 ```zig
-// Authored per-wave knobs — the only values edited by hand.
-const WaveAuthoring = struct {
-    target_wpm: u32,
-    pool_size: u32,
-};
-
-// Full runtime config — spawn_delay, fall_speed, and burst_size are derived.
+// Full runtime config — every field is derived from `wave` via formulas.
 const WaveConfig = struct {
     target_wpm: u32,
     spawn_delay: f32,
     fall_speed: f32,
     pool_size: u32,
-    burst_size: u32,
+    starter_pack: u32,
 };
 ```
 
-Both types are value types — never heap-allocated. `WaveConfig` is returned by value from `getWaveConfig(wave: u32)`.
+`WaveConfig` is a value type — never heap-allocated. It is returned by value from `getWaveConfig(wave: u32)`.
 
 | Field | Type | Meaning | Range |
 |---|---|---|---|
-| `target_wpm` | `u32` | Target typing speed for the wave in words per minute | 15 (wave 1) – 250 (wave 45+) |
-| `spawn_delay` | `f32` | Seconds between bursts — **derived** from `burst_size` and `target_wpm` | ≈ 4.80s (wave 1) decreasing with higher burst/WPM |
-| `fall_speed` | `f32` | Pixels per frame each zombie descends — **derived** from `time_on_screen` and `screen_height` | floor at `screen_height / (MIN_TIME_ON_SCREEN × 60.0)` |
-| `pool_size` | `u32` | Total zombies to spawn in the wave | 5 (wave 1) – 33+2*(wave-15) (wave 16+), capped at `MAX_ZOMBIES` |
-| `burst_size` | `u32` | Number of zombies spawned simultaneously per burst — **derived** as `ceil(wave / 4)` | 1 (waves 1–4) – grows without cap |
+| `target_wpm` | `u32` | Announced typing speed for the wave in words per minute; matches the wave-1 survival floor under the sustained-density model | 20 (wave 1) – 250 (wave 47+) |
+| `spawn_delay` | `f32` | Seconds between successive drip spawns — decays linearly per wave | 1.5s (wave 1) → 0.4s (wave 29+) |
+| `fall_speed` | `f32` | Pixels per frame each zombie descends — derived from `time_on_screen` and `screen_height` | 0.555 px/frame (wave 1) → 4.17 px/frame at the `TIME_ON_SCREEN_MIN` floor |
+| `pool_size` | `u32` | Total zombies to spawn in the wave (drip + starter pack combined) | 10 (wave 1) – 125 (wave 47+) |
+| `starter_pack` | `u32` | Zombies front-loaded at wave start — spread across X zones and stacked off-screen above the spawn line so they slide in from the top | 6 (wave 1) – 18 (wave 49+), clamped to `pool_size` |
 
 **Derivation formulas (inside `getWaveConfig`):**
 
-**Lever 1 — readability (fall speed):**
 ```
-time_on_screen = clamp(6.0 - 0.15 × (wave - 1), MIN_TIME_ON_SCREEN (2.5), 6.0)
+spawn_delay    = max(SPAWN_DELAY_MIN (0.4),
+                     SPAWN_DELAY_BASE (1.5) - SPAWN_DELAY_DECAY_PER_WAVE (0.04) × (wave - 1))
+time_on_screen = max(TIME_ON_SCREEN_MIN (4.0),
+                     TIME_ON_SCREEN_BASE (30.0) - TIME_ON_SCREEN_DECAY_PER_WAVE (0.9) × (wave - 1))
 fall_speed     = screen_height / (time_on_screen × FRAMES_PER_SECOND (60.0))
+pool_size      = round(WAVE_DURATION_TARGET_S (36) × target_wpm / TIME_TO_TYPE_NUMERATOR (72))
+starter_pack   = min(pool_size,
+                     round(min(STARTER_PACK_CAP (18),
+                               STARTER_PACK_BASE (6) + STARTER_PACK_INCREMENT_PER_WAVE (0.25) × (wave - 1))))
+target_wpm     = min(WAVE_MAX_WPM (250), WAVE_BASE_WPM (20) + WAVE_WPM_INCREMENT (5) × (wave - 1))
 ```
-
-**Lever 2 — density (burst spawning):**
-```
-burst_size  = ceil(wave / 4)                              // 1 at wave 1, 2 at wave 5, etc.
-spawn_delay = (72.0 × burst_size) / target_wpm            // burst interval in seconds
-```
-
-Constants (compile-time):
-- `MIN_TIME_ON_SCREEN = 2.5` — fall-time floor; ensures names stay legible at high waves.
-- `FRAMES_PER_SECOND = 60.0`.
 
 The per-type speed multipliers (`runner ×1.3`, `tank ×0.5`) and per-type name-length filters (runners ≤5 chars, tanks ≥8 chars) layer **on top** of the derived `fall_speed`, so runners are tighter than baseline and tanks are looser.
 
-**Lookup:** `fn getWaveConfig(wave: u32) WaveConfig` reads the authoring tuple — `WAVE_TABLE[wave - 1]` for waves 1–15, or `{ target_wpm = min(250, 100 + (wave-15)×5), pool_size = min(33+2×(wave-15), MAX_ZOMBIES) }` for waves 16+ — then derives `fall_speed`, `burst_size`, and `spawn_delay`.
+**Sustained-density rationale.** The model is built so a 20-wpm typist clears wave 1 with no zombies landing. At wave 1, `pool_size × AVG_NAME_CHARS = 60 chars`, last landing at `T_final = max((pool_size - starter_pack - 1) × spawn_delay + time_on_screen, slide_in_time + time_on_screen) = 36s`, giving required `60/36 ≈ 1.67 chars/sec = 20 wpm`. For each subsequent wave the spawn cadence tightens and the fall window shrinks while the pool grows linearly with `target_wpm` — the announced WPM becomes a soft challenge target rather than a strict survival floor at high waves.
 
-**Storage:** `WAVE_TABLE` is a `[15]WaveAuthoring` compile-time constant array (`target_wpm` + `pool_size` only). No runtime allocation occurs.
+**Zen mode timing** uses `deriveWaveTiming(target_wpm)` instead: spawn cadence stays WPM-locked at `72/target_wpm` (the player picks the WPM tier) and fall is derived from a fixed `ZEN_DENSITY = 8` — `time_on_screen = max(TIME_ON_SCREEN_MIN, ZEN_DENSITY × spawn_delay)`.
+
+**Lookup:** `fn getWaveConfig(wave: u32) WaveConfig` runs the formulas above. No table lookup, no compile-time array — every wave (1 to ∞) is computable.
 
 ---
 
@@ -781,15 +774,33 @@ All other constants are compile-time `const` values declared at module scope in 
 | `ZOMBIE_FRAME_COUNT` | `17` | `comptime_int` | Number of horizontal animation frames in `z_spritesheet.png`; used to compute `frame_width` and to wrap the animation counter |
 | `ZOMBIE_ANIMATION_FRAME_DURATION` | `0.1` | `f32` | Seconds between animation frame advances in `drawZombies` |
 | `WAVE_TRANSITION_DURATION` | `3.0` | `f32` | Seconds the inter-wave countdown lasts before the next wave begins |
-| `WAVE_TABLE` | `[15]WaveAuthoring` | compile-time array | Authored `target_wpm` + `pool_size` for waves 1–15; `spawn_delay`, `fall_speed`, and `burst_size` are derived |
-| `MIN_TIME_ON_SCREEN` | `2.5` | `f32` | Floor for zombie time-on-screen in seconds; prevents names from scrolling past too quickly at high waves |
-| `AVG_NAME_CHARS` | `6.0` | `f32` | Average name length used in the legacy `deriveWaveTiming` helper (still referenced for fallback WPM calculation) |
-| `FALL_GRACE_FACTOR` | `2.0` | `f32` | Used in `deriveWaveTiming` (legacy helper); the two-lever model in `getWaveConfig` uses `MIN_TIME_ON_SCREEN` directly |
+| `WAVE_BASE_WPM` | `20` | `u32` | Announced `target_wpm` at wave 1; survival floor under the sustained-density model |
+| `WAVE_WPM_INCREMENT` | `5` | `u32` | Per-wave linear WPM ramp added to `WAVE_BASE_WPM`; caps at `WAVE_MAX_WPM` |
+| `WAVE_MAX_WPM` | `250` | `u32` | Ceiling for `target_wpm`; reached at wave 47 |
+| `WAVE_DURATION_TARGET_S` | `36.0` | `f32` | Wave length anchor in seconds; drives `pool_size = round(WAVE_DURATION_TARGET_S × target_wpm / 72)` so wave 1 yields 10 zombies aligned with 20 wpm |
+| `SPAWN_DELAY_BASE` | `1.5` | `f32` | Wave 1 spawn cadence in seconds for drip zombies |
+| `SPAWN_DELAY_MIN` | `0.4` | `f32` | Floor for `spawn_delay`; reached around wave 29 |
+| `SPAWN_DELAY_DECAY_PER_WAVE` | `0.04` | `f32` | Linear decay rate subtracted from `SPAWN_DELAY_BASE` per wave |
+| `SPAWN_DELAY_JITTER` | `0.3` | `f32` | ±30% random jitter around `spawn_delay` so drip arrivals aren't a perfect metronome |
+| `TIME_ON_SCREEN_BASE` | `30.0` | `f32` | Wave 1 fall duration in seconds; gives 20-wpm players enough time to clear the starter pack |
+| `TIME_ON_SCREEN_MIN` | `4.0` | `f32` | Floor for fall duration; ensures names stay readable at high waves |
+| `TIME_ON_SCREEN_DECAY_PER_WAVE` | `0.9` | `f32` | Linear decay rate subtracted from `TIME_ON_SCREEN_BASE` per wave |
+| `STARTER_PACK_BASE` | `6.0` | `f32` | Wave 1 front-loaded zombie count |
+| `STARTER_PACK_INCREMENT_PER_WAVE` | `0.25` | `f32` | Linear growth rate of `starter_pack` per wave |
+| `STARTER_PACK_CAP` | `18.0` | `f32` | Ceiling for `starter_pack`; reached around wave 49 |
+| `STARTER_PACK_OFFSET_RANGE` | `200.0` | `f32` | Max negative Y offset (pixels above the spawn line) for the deepest starter; smaller starters appear closer to y=0 |
+| `ZEN_DENSITY` | `8.0` | `f32` | Density multiplier used in `deriveWaveTiming` for Zen mode; `time_on_screen = ZEN_DENSITY × spawn_delay` |
+| `SPAWN_OVERLAP_GUARD_Y` | `80.0` | `f32` | Vertical band (pixels) around a candidate spawn Y where existing-zombie X collision is checked at spawn time |
+| `SPAWN_OVERLAP_PADDING` | `8` | `c_int` | Minimum horizontal whitespace required between two zombies' name+sprite boxes at spawn time |
+| `SPAWN_MAX_X_ATTEMPTS` | `8` | `u8` | Maximum X re-rolls in `spawnZombieInZone` to avoid spawning on top of an existing zombie in the guard band |
+| `AVG_NAME_CHARS` | `6.0` | `f32` | Average name length assumed when sizing `pool_size` via `WAVE_DURATION_TARGET_S × target_wpm / 72` |
+| `TIME_TO_TYPE_NUMERATOR` | `72.0` | `f32` | Derived constant `AVG_NAME_CHARS × 60 / CHARS_PER_WORD` used in `pool_size` and Zen `spawn_delay` formulas |
+| `CHARS_PER_WORD` | `5.0` | `f32` | Standard typing-test convention; converts WPM into characters per second |
 | `FRAMES_PER_SECOND` | `60.0` | `f32` | Frame-rate reference used to convert seconds into the per-frame `fall_speed` |
 | `ZOMBIE_SPAWN_X_MIN` | `10` | `c_int` | Left boundary for random zombie spawn x position (pixels from left edge) |
 | `ZOMBIE_SPAWN_X_MAX` | `749` | `c_int` | Right boundary for random zombie spawn x position (screen_width - 51) |
 | `screen_width` | `800` | `comptime_int` | Window width in pixels; passed to `raylib.InitWindow` and used for centering UI |
-| `screen_height` | `450` | `comptime_int` | Window height in pixels; a zombie or boss reaching `y >= screen_height` triggers game over |
+| `screen_height` | `1000` | `comptime_int` | Window height in pixels (portrait-arcade aspect for falling-name gameplay); a zombie or boss reaching `y >= screen_height` triggers game over |
 | `MAX_POPUPS` | `32` | `comptime_int` | Size of the `popups` fixed stack-allocated pool; also the maximum number of simultaneously animated score popups |
 | `POPUP_DURATION` | `0.5` | `f32` | Lifetime in seconds of each score popup; popup fades from full to zero opacity over this interval |
 | `POPUP_RISE_PX` | `30.0` | `f32` | Total upward travel in pixels a popup makes from spawn position to end of animation |
