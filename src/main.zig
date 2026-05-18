@@ -247,6 +247,27 @@ var zombies: [MAX_ZOMBIES]?*Zombie = [_]?*Zombie{null} ** MAX_ZOMBIES;
 var zombie_texture: raylib.Texture2D = undefined;
 var zombie_kill_sound: raylib.Sound = undefined;
 
+const CLICK_SAMPLE_COUNT: u8 = 3;
+const TYPEWRITER_SAMPLE_COUNT: u8 = 6;
+const HITMARKER_SAMPLE_COUNT: u8 = 3;
+const DAMAGE_SAMPLE_COUNT: u8 = 1;
+const SQUARE_SAMPLE_COUNT: u8 = 1;
+const MISSED_PUNCH_SAMPLE_COUNT: u8 = 2;
+
+var click_sounds: [CLICK_SAMPLE_COUNT]raylib.Sound = undefined;
+var typewriter_sounds: [TYPEWRITER_SAMPLE_COUNT]raylib.Sound = undefined;
+var hitmarker_sounds: [HITMARKER_SAMPLE_COUNT]raylib.Sound = undefined;
+var damage_sounds: [DAMAGE_SAMPLE_COUNT]raylib.Sound = undefined;
+var square_sounds: [SQUARE_SAMPLE_COUNT]raylib.Sound = undefined;
+var missed_punch_sounds: [MISSED_PUNCH_SAMPLE_COUNT]raylib.Sound = undefined;
+var bomb_sound: raylib.Sound = undefined;
+var freeze_sound: raylib.Sound = undefined;
+var shield_sound: raylib.Sound = undefined;
+var music: raylib.Music = undefined;
+
+var typing_round_robin: u8 = 0;
+var error_round_robin: u8 = 0;
+
 const screen_width = 800;
 const screen_height = 1000;
 
@@ -882,6 +903,16 @@ fn frame_c_callback(arg: ?*anyopaque) callconv(.c) void {
 fn cleanup_on_exit() callconv(.c) void {
     raylib.UnloadTexture(zombie_texture);
     raylib.UnloadSound(zombie_kill_sound);
+    for (&click_sounds) |*s| raylib.UnloadSound(s.*);
+    for (&typewriter_sounds) |*s| raylib.UnloadSound(s.*);
+    for (&hitmarker_sounds) |*s| raylib.UnloadSound(s.*);
+    for (&damage_sounds) |*s| raylib.UnloadSound(s.*);
+    for (&square_sounds) |*s| raylib.UnloadSound(s.*);
+    for (&missed_punch_sounds) |*s| raylib.UnloadSound(s.*);
+    raylib.UnloadSound(bomb_sound);
+    raylib.UnloadSound(freeze_sound);
+    raylib.UnloadSound(shield_sound);
+    raylib.UnloadMusicStream(music);
     raylib.CloseAudioDevice();
     raylib.CloseWindow();
 }
@@ -897,6 +928,55 @@ pub fn main() !void {
     // Load sound effect
     zombie_kill_sound = raylib.LoadSound("assets/zombie-hit.wav");
     defer raylib.UnloadSound(zombie_kill_sound);
+
+    click_sounds[0] = raylib.LoadSound("assets/sounds/click/1.wav");
+    defer raylib.UnloadSound(click_sounds[0]);
+    click_sounds[1] = raylib.LoadSound("assets/sounds/click/2.wav");
+    defer raylib.UnloadSound(click_sounds[1]);
+    click_sounds[2] = raylib.LoadSound("assets/sounds/click/3.wav");
+    defer raylib.UnloadSound(click_sounds[2]);
+
+    typewriter_sounds[0] = raylib.LoadSound("assets/sounds/typewriter/1.wav");
+    defer raylib.UnloadSound(typewriter_sounds[0]);
+    typewriter_sounds[1] = raylib.LoadSound("assets/sounds/typewriter/2.wav");
+    defer raylib.UnloadSound(typewriter_sounds[1]);
+    typewriter_sounds[2] = raylib.LoadSound("assets/sounds/typewriter/3.wav");
+    defer raylib.UnloadSound(typewriter_sounds[2]);
+    typewriter_sounds[3] = raylib.LoadSound("assets/sounds/typewriter/4.wav");
+    defer raylib.UnloadSound(typewriter_sounds[3]);
+    typewriter_sounds[4] = raylib.LoadSound("assets/sounds/typewriter/5.wav");
+    defer raylib.UnloadSound(typewriter_sounds[4]);
+    typewriter_sounds[5] = raylib.LoadSound("assets/sounds/typewriter/6.wav");
+    defer raylib.UnloadSound(typewriter_sounds[5]);
+
+    hitmarker_sounds[0] = raylib.LoadSound("assets/sounds/hitmarker/1.wav");
+    defer raylib.UnloadSound(hitmarker_sounds[0]);
+    hitmarker_sounds[1] = raylib.LoadSound("assets/sounds/hitmarker/2.wav");
+    defer raylib.UnloadSound(hitmarker_sounds[1]);
+    hitmarker_sounds[2] = raylib.LoadSound("assets/sounds/hitmarker/3.wav");
+    defer raylib.UnloadSound(hitmarker_sounds[2]);
+
+    damage_sounds[0] = raylib.LoadSound("assets/sounds/damage/1.wav");
+    defer raylib.UnloadSound(damage_sounds[0]);
+
+    square_sounds[0] = raylib.LoadSound("assets/sounds/square/1.wav");
+    defer raylib.UnloadSound(square_sounds[0]);
+
+    missed_punch_sounds[0] = raylib.LoadSound("assets/sounds/missed-punch/1.wav");
+    defer raylib.UnloadSound(missed_punch_sounds[0]);
+    missed_punch_sounds[1] = raylib.LoadSound("assets/sounds/missed-punch/2.wav");
+    defer raylib.UnloadSound(missed_punch_sounds[1]);
+
+    bomb_sound = raylib.LoadSound("assets/sounds/bomb/1.wav");
+    defer raylib.UnloadSound(bomb_sound);
+    freeze_sound = raylib.LoadSound("assets/sounds/freeze/1.wav");
+    defer raylib.UnloadSound(freeze_sound);
+    shield_sound = raylib.LoadSound("assets/sounds/shield/1.wav");
+    defer raylib.UnloadSound(shield_sound);
+
+    music = raylib.LoadMusicStream("assets/music/nightmare-pulse.wav");
+    defer raylib.UnloadMusicStream(music);
+    music.looping = true;
 
     zombie_texture = raylib.LoadTexture("assets/z_spritesheet.png");
     defer raylib.UnloadTexture(zombie_texture);
@@ -2608,4 +2688,13 @@ test "per-mode high scores are independent" {
     try std.testing.expectEqual(@as(u64, 1000), best_score_survival.score);
     try std.testing.expectEqual(@as(u32, 80), best_score_zen.wpm);
     try std.testing.expect(best_score_survival.score != best_score_zen.score);
+}
+
+test "sample count constants match array sizes" {
+    try std.testing.expectEqual(@as(usize, CLICK_SAMPLE_COUNT), click_sounds.len);
+    try std.testing.expectEqual(@as(usize, TYPEWRITER_SAMPLE_COUNT), typewriter_sounds.len);
+    try std.testing.expectEqual(@as(usize, HITMARKER_SAMPLE_COUNT), hitmarker_sounds.len);
+    try std.testing.expectEqual(@as(usize, DAMAGE_SAMPLE_COUNT), damage_sounds.len);
+    try std.testing.expectEqual(@as(usize, SQUARE_SAMPLE_COUNT), square_sounds.len);
+    try std.testing.expectEqual(@as(usize, MISSED_PUNCH_SAMPLE_COUNT), missed_punch_sounds.len);
 }

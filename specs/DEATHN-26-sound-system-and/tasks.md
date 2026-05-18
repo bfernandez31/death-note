@@ -21,16 +21,16 @@
 
 ## Phase 2: Foundational — Sound Asset Loading
 
-- [ ] T008 Declare module-level sound handle globals in `src/main.zig` (after `zombie_kill_sound` at line 245): `click_sounds: [3]raylib.Sound`, `typewriter_sounds: [6]raylib.Sound`, `hitmarker_sounds: [3]raylib.Sound`, `damage_sounds: [1]raylib.Sound`, `square_sounds: [1]raylib.Sound`, `missed_punch_sounds: [2]raylib.Sound`, `bomb_sound: raylib.Sound`, `freeze_sound: raylib.Sound`, `shield_sound: raylib.Sound`, `music: raylib.Music`
-- [ ] T009 Declare sample count constants in `src/main.zig`: `CLICK_SAMPLE_COUNT = 3`, `TYPEWRITER_SAMPLE_COUNT = 6`, `HITMARKER_SAMPLE_COUNT = 3`, `DAMAGE_SAMPLE_COUNT = 1`, `SQUARE_SAMPLE_COUNT = 1`, `MISSED_PUNCH_SAMPLE_COUNT = 2`
-- [ ] T010 In `main()` of `src/main.zig`, after existing `LoadSound` (line 895), add `LoadSound` calls for all 22 sound files with literal asset paths (`"assets/sounds/click/1.wav"` through `"assets/sounds/shield/1.wav"`), each immediately followed by `defer raylib.UnloadSound(...)`, following the paired load/defer pattern at lines 895–896
-- [ ] T011 In `main()` of `src/main.zig`, add `LoadMusicStream("assets/music/nightmare-pulse.wav")` with `defer raylib.UnloadMusicStream(music)`, and set `music.looping = true` after load
-- [ ] T012 Update `cleanup_on_exit()` in `src/main.zig` (line 879–884) to unload all new sounds and music stream for web builds
-- [ ] T013 Declare round-robin state in `src/main.zig`: `var typing_round_robin: u8 = 0;` and `var error_round_robin: u8 = 0;`
+- [X] T008 Declare module-level sound handle globals in `src/main.zig` (after `zombie_kill_sound` at line 245): `click_sounds: [3]raylib.Sound`, `typewriter_sounds: [6]raylib.Sound`, `hitmarker_sounds: [3]raylib.Sound`, `damage_sounds: [1]raylib.Sound`, `square_sounds: [1]raylib.Sound`, `missed_punch_sounds: [2]raylib.Sound`, `bomb_sound: raylib.Sound`, `freeze_sound: raylib.Sound`, `shield_sound: raylib.Sound`, `music: raylib.Music`
+- [X] T009 Declare sample count constants in `src/main.zig`: `CLICK_SAMPLE_COUNT = 3`, `TYPEWRITER_SAMPLE_COUNT = 6`, `HITMARKER_SAMPLE_COUNT = 3`, `DAMAGE_SAMPLE_COUNT = 1`, `SQUARE_SAMPLE_COUNT = 1`, `MISSED_PUNCH_SAMPLE_COUNT = 2`
+- [X] T010 In `main()` of `src/main.zig`, after existing `LoadSound` (line 895), add `LoadSound` calls for all 22 sound files with literal asset paths (`"assets/sounds/click/1.wav"` through `"assets/sounds/shield/1.wav"`), each immediately followed by `defer raylib.UnloadSound(...)`, following the paired load/defer pattern at lines 895–896
+- [X] T011 In `main()` of `src/main.zig`, add `LoadMusicStream("assets/music/nightmare-pulse.wav")` with `defer raylib.UnloadMusicStream(music)`, and set `music.looping = true` after load
+- [X] T012 Update `cleanup_on_exit()` in `src/main.zig` (line 879–884) to unload all new sounds and music stream for web builds
+- [X] T013 Declare round-robin state in `src/main.zig`: `var typing_round_robin: u8 = 0;` and `var error_round_robin: u8 = 0;`
 
 ### Phase 2 Tests
 
-- [ ] T014 [P] Add tests in `src/main.zig`: sample count constants match array sizes (e.g. `CLICK_SAMPLE_COUNT == 3`, `TYPEWRITER_SAMPLE_COUNT == 6`, etc.)
+- [X] T014 [P] Add tests in `src/main.zig`: sample count constants match array sizes (e.g. `CLICK_SAMPLE_COUNT == 3`, `TYPEWRITER_SAMPLE_COUNT == 6`, etc.)
 
 ## Phase 3: User Story 1 — Keystroke Audio Feedback (P1)
 
