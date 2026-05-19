@@ -48,6 +48,7 @@
   - [F-42 Power-Up Activation Sounds](#f-42-power-up-activation-sounds)
   - [F-43 Kill Sound Volume System](#f-43-kill-sound-volume-system)
   - [F-44 Sound Settings Screen](#f-44-sound-settings-screen)
+  - [F-45 Bot Mode](#f-45-bot-mode)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -73,6 +74,7 @@ graph TB
         MainMenu["F-30 Main Menu"]
         PauseSystem["F-31 Pause System"]
         ZenMode["F-32 Zen Mode"]
+        BotMode["F-45 Bot Mode"]
     end
 
     subgraph Sound
@@ -178,6 +180,9 @@ graph TB
     ShieldPU --> GameOver
     GameOver --> MainMenu
     HighScore --> MainMenu
+    MainMenu --> BotMode
+    BotMode --> Spawning
+    BotMode --> HighScore
     Keyboard --> WpmHUD
     Keyboard --> AccHUD
     Combo --> AccHUD
@@ -879,23 +884,24 @@ graph TB
 
 ### F-30 Main Menu
 
-**Description.** The game opens to a main menu screen with three options: "Survival", "Zen", and "Quit". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
+**Description.** The game opens to a main menu screen with five options: "SURVIVAL", "ZEN", "BOT", "SOUND", and "QUIT". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
 
-**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from Quit back to Survival). Pressing Enter on "Survival" starts a new Survival session; on "Zen" advances to the WPM target selection screen; on "Quit" closes the window. The best score for the last-played mode is shown at the bottom of the menu.
+**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from QUIT back to SURVIVAL). Pressing Enter on "SURVIVAL" starts a new Survival session; on "ZEN" advances to the WPM target selection screen; on "BOT" starts a Survival session with the bot active; on "SOUND" opens the Sound settings screen; on "QUIT" closes the window. The best score for the last-played mode is shown at the bottom of the menu.
 
 **System behavior.**
-- `current_screen` starts as `.main_menu`; transitions to `.playing` (Survival), `.wpm_select` (Zen), or calls `raylib.CloseWindow()` (Quit).
-- `menu_selected_item: usize` tracks the highlighted index (0=Survival, 1=Zen, 2=Quit).
+- `current_screen` starts as `.main_menu`; transitions to `.playing` (SURVIVAL or BOT), `.wpm_select` (ZEN), `.sound_settings` (SOUND), or calls `raylib.CloseWindow()` (QUIT).
+- `menu_selected_item: usize` tracks the highlighted index (0=SURVIVAL, 1=ZEN, 2=BOT, 3=SOUND, 4=QUIT).
+- `MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "BOT", "SOUND", "QUIT" }`, `MENU_ITEM_COUNT = 5`.
 - Up/Down arrows: `menu_selected_item = (menu_selected_item + delta + MENU_ITEM_COUNT) % MENU_ITEM_COUNT`.
-- Enter: dispatches based on `menu_selected_item` value.
+- Enter: dispatches based on `menu_selected_item` value. Case 2 (BOT) sets `bot_active = true`, `bot_tainted = true`, then calls `startGame(.survival, allocator)`.
 - `last_played_mode` is read at draw time to select which `best_score` record to show.
 - The menu does not block keyboard input from leaking; the input buffer is cleared on game start.
 
 **Key source references.**
-- `src/main.zig` — `GameScreen` enum, `current_screen`, `menu_selected_item`, `last_played_mode`
+- `src/main.zig` — `GameScreen` enum, `current_screen`, `menu_selected_item`, `last_played_mode`, `MENU_ITEMS`, `MENU_ITEM_COUNT`
 - `src/main.zig` — main menu update/draw branch in `frame()`
 
-**Dependencies.** F-31 (pause shows "Quit to Menu"), F-32 (Zen option leads to WPM select), F-38 (best score shown).
+**Dependencies.** F-31 (pause shows "Quit to Menu"), F-32 (Zen option leads to WPM select), F-38 (best score shown), F-44 (SOUND entry leads to settings), F-45 (BOT entry starts bot session).
 
 ---
 
@@ -1185,7 +1191,7 @@ graph TB
 - On pack change: reset corresponding round-robin index to 0; play preview sample at 50% of typing volume (minimum 30% volume if slider is at 0).
 - On slider adjustment completion (key released): play a representative sound at the new volume.
 - `drawSoundSettings()`: title `"SOUND SETTINGS"` in `CRT_FG`; item rows use `CRT_ACCENT` (selected) / `CRT_DIM` (unselected) following the existing `drawMenu` pattern; toggles show `[ON]` / `[OFF]`; sliders render as `[████░░░░░░░░░░░░░░░░] 70%` using `CRT_ACCENT` fill / `CRT_DIM` empty; footer `"ESC: BACK"` in `CRT_DIM`.
-- Main menu has 4 items: SURVIVAL, ZEN, SOUND, QUIT.
+- Main menu has 5 items: SURVIVAL, ZEN, BOT, SOUND, QUIT.
 - Pause menu has 3 items: RESUME, SOUND, QUIT TO MENU.
 
 **Key source references.**
@@ -1193,6 +1199,40 @@ graph TB
 - `src/sound_config.zig` — `sound_config.save`
 
 **Dependencies.** F-30 (main menu entry point), F-31 (pause menu entry point), F-39–F-43 (settings control each sound category).
+
+---
+
+### F-45 Bot Mode
+
+**Description.** An AI bot that plays Survival mode autonomously by typing zombie names at the wave's announced WPM cadence. The bot validates that the survival-floor math is genuinely survivable by observation, serves as an auto-pilot demo, and can be toggled on/off mid-game via F2. A session-level "bot-tainted" flag permanently disables high-score persistence whenever bot mode has been active during that session.
+
+**User-facing behavior.**
+- Selecting "BOT" from the main menu starts a Survival session with the bot active; a "BOT" badge (in `CRT_WARN` amber) appears on the HUD.
+- Pressing F2 during an active Survival session toggles bot mode on or off instantly. The badge appears on activation and disappears on deactivation.
+- While active, the bot types zombie names at `target_wpm / 12` characters per second (the standard 5-chars/word WPM convention), targeting the zombie closest to the bottom of the screen.
+- The bot prioritizes the boss zombie when one is present, typing the full phrase including spaces.
+- Power-ups are picked up by killing carrier zombies but are never activated by the bot.
+- Once bot mode is activated at any point in a session, the high-score record is not updated at game-over, even if the player deactivates the bot and plays manually for the remainder.
+
+**System behavior.**
+- `bot_active: bool` — when `true`, the bot drives the shared `name` input buffer; player keyboard input (`GetCharPressed`, backspace, Space power-up activation) is suppressed.
+- `bot_tainted: bool` — set to `true` the first time `bot_active` is set to `true` in a session; never cleared until `startGame()` is called (new session). Guards `highscore.save()` calls: `if (!bot_tainted) highscore.save(...)`.
+- `bot_target_index: ?usize` — index into `zombies[]` of the current target, or `null` when no target is locked.
+- `bot_targeting_boss: bool` — `true` when the bot is typing the active boss phrase instead of a regular zombie name.
+- `bot_char_index: usize` — position within the target's name/phrase the bot has typed so far.
+- `bot_type_timer: f32` — accumulated time since the last character injection; fires when `>= 1.0 / (target_wpm / 12.0)`.
+- `bot_reaction_timer: f32` — countdown (initialised to `BOT_REACTION_DELAY = 0.2 s`) before the bot selects a new target; applied on activation, after each kill, and on wave start.
+- `updateBot()` runs inside the `.playing` screen case; gated by `bot_active and !is_transitioning and !is_dying`.
+- `selectBotTarget()` scans `zombies[]` for the highest-Y active zombie; tie-breaks first by shortest name, then by lowest X position (leftmost). When `boss != null`, `bot_targeting_boss = true` takes priority.
+- `resetBotState()` is called from `startGame()` to clear all bot variables; `bot_tainted` is also cleared there (new session).
+- F2 toggle is a no-op if `current_screen != .playing`, `is_dying`, or `game_mode != .survival`.
+
+**Key source references.**
+- `src/main.zig` — `bot_active`, `bot_tainted`, `bot_target_index`, `bot_targeting_boss`, `bot_char_index`, `bot_type_timer`, `bot_reaction_timer`, `BOT_REACTION_DELAY`
+- `src/main.zig` — `updateBot()`, `selectBotTarget()`, `resetBotState()`
+- `src/main.zig` — F2 toggle in `.playing` screen case; `drawCenteredText("BOT", ...)` in `drawPlayingHud()`
+
+**Dependencies.** F-30 (BOT menu entry), F-14 (wave WPM drives bot cadence), F-15/F-16 (boss handling by bot), F-27 (high-score gating via bot-tainted flag).
 
 ---
 

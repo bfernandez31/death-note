@@ -111,7 +111,7 @@ This codebase does not use a traditional layered architecture. All concerns coll
 | Layer | Files | Responsibilities |
 |---|---|---|
 | **Presentation / Rendering** | `src/main.zig` (`drawZombies`, `drawBoss`, `drawCrtOverlay`, inline draw calls) | Clears background (`CRT_BG`), draws text input box, blinking cursor, zombie sprites (tinted with `CRT_*` palette), boss sprite, boss phrase text, boss health bar, zombie names, game-over overlay, CRT post-processing overlay (scanlines, vignette, bezel) |
-| **Input** | `src/main.zig` | Mouse hit-test against text box; `GetCharPressed` loop (limit via `getCurrentMaxInput()`); backspace handling; `KEY_ENTER` restart |
+| **Input** | `src/main.zig` | Mouse hit-test against text box; `GetCharPressed` loop (limit via `getCurrentMaxInput()`); backspace handling; `KEY_ENTER` restart; `KEY_F2` toggles bot mode on/off (Survival only). When `bot_active` is `true`, all player keyboard input paths (`GetCharPressed`, backspace, Space power-up activation) are suppressed; `updateBot()` drives the shared input buffer instead. |
 | **Gameplay State** | `src/main.zig` (`updateZombies`, `updateBoss`, `spawnZombie`, `spawnBoss`, `resetZombies`, `resetBoss`; module-level globals) | Zombie and boss y-position advance, game-over detection, name/phrase-match comparison, spawn timer, pool management, boss priority, wave completion gate |
 | **Resources** | `src/main.zig`; `assets/` directory | Load/unload `zombie-hit.wav`, `z_spritesheet.png`, `JetBrainsMonoNerdFont-Thin.ttf`, 22 typing/error/power-up WAV files, and `nightmare-pulse.wav` music stream once at startup; all paired with `defer Unload…` |
 | **Sound Persistence** | `src/sound_config.zig` | `SoundConfig` struct + `TypingPack`/`ErrorPack` enums; `load()`/`save()` dispatching to `std.c.fopen` native backend (`soundconfig.dat`) or Emscripten `localStorage` (`"death-note.soundconfig"`) depending on `comptime is_web` |
@@ -171,6 +171,7 @@ const FRAMES_PER_SECOND: f32 = 60.0; // frame-rate reference used to convert sec
 const SPAWN_DELAY_BASE: f32 = 1.5;   // wave 1 spawn cadence (seconds), decays per wave
 const TIME_ON_SCREEN_BASE: f32 = 30.0; // wave 1 fall duration (seconds), decays per wave
 const STARTER_PACK_BASE: f32 = 6.0;  // wave 1 front-loaded zombie count
+const BOT_REACTION_DELAY: f32 = 0.2; // seconds bot waits before locking onto a new target
 ```
 
 Wave-specific `spawn_delay`, `fall_speed`, `pool_size`, and `starter_pack` are **not** authored — they are derived per call by `getWaveConfig()` from a sustained-density model. Two timing curves decay linearly per wave: `spawn_delay` from `SPAWN_DELAY_BASE` down to `SPAWN_DELAY_MIN (0.4s)` at rate `SPAWN_DELAY_DECAY_PER_WAVE (0.04)`, and `time_on_screen` from `TIME_ON_SCREEN_BASE` down to `TIME_ON_SCREEN_MIN (4.0s)` at rate `TIME_ON_SCREEN_DECAY_PER_WAVE (0.9)`. `fall_speed` is computed as `screen_height / (time_on_screen × FRAMES_PER_SECOND)`. `pool_size = round(WAVE_DURATION_TARGET_S (36) × target_wpm / 72)` stays WPM-linked so the announced WPM matches the wave-1 survival floor. `starter_pack = round(STARTER_PACK_BASE + STARTER_PACK_INCREMENT_PER_WAVE (0.25) × (wave-1))` capped at `STARTER_PACK_CAP (18)` controls how many zombies are front-loaded at wave start. Changing `screen_height` automatically re-tunes `fall_speed` for every wave.

@@ -85,6 +85,13 @@ erDiagram
         f32 elapsed_time
         f32 displayed_wpm
         f32 displayed_accuracy
+        bool bot_active
+        bool bot_tainted
+        opt_usize bot_target_index
+        bool bot_targeting_boss
+        usize bot_char_index
+        f32 bot_type_timer
+        f32 bot_reaction_timer
     }
 
     HIGHSCORE_RECORD {
@@ -399,6 +406,13 @@ These variables collectively represent the running state of the game session.
 | `sound_cfg` | `sound_config.SoundConfig` | defaults from `sound_config.load()` | preserved | Player's full audio preference state. Loaded at startup; written to disk when the Sound settings screen is exited. |
 | `sound_menu_selection` | `u8` | `0` | — | Currently highlighted item index (0–9) in the Sound settings screen. |
 | `sound_menu_return_screen` | `GameScreen` | `.paused` | — | Screen to return to when Escape is pressed in Sound settings (`.main_menu` or `.paused`). |
+| `bot_active` | `bool` | `false` | `false` | When `true`, `updateBot()` drives the input buffer and all player keyboard input is suppressed. Reset to `false` by `resetBotState()` on new session. |
+| `bot_tainted` | `bool` | `false` | `false` | Set to `true` the first time bot mode is activated in a session; never cleared until `startGame()` starts a new session. When `true`, `highscore.save()` is not called at game-over, preventing bot-assisted scores from reaching persistent storage. |
+| `bot_target_index` | `?usize` | `null` | `null` | Index into `zombies[]` of the zombie the bot is currently typing. `null` when the bot has no target or is targeting the boss. |
+| `bot_targeting_boss` | `bool` | `false` | `false` | `true` when the bot is typing the active boss phrase. Takes priority over regular zombie targeting. |
+| `bot_char_index` | `usize` | `0` | `0` | Position within the current target's name (or boss phrase) that the bot has typed so far. Reset on each new target. |
+| `bot_type_timer` | `f32` | `0.0` | `0.0` | Accumulated seconds since the bot's last character injection. Fires a character when `>= 1.0 / (target_wpm / 12.0)`. |
+| `bot_reaction_timer` | `f32` | `0.0` | `0.0` | Countdown before the bot locks on to a new target. Initialised to `BOT_REACTION_DELAY` (0.2 s) on activation, after each kill, and at wave start. Bot idles while this is > 0. |
 
 **Note on `frames_counter` and `mouse_on_text`:** These live on the `FrameContext` struct allocated in `main()`, not at module scope. They constitute observable game state, but their scoping differs from the other globals.
 
@@ -553,7 +567,7 @@ pub const Record = struct {
 };
 ```
 
-**Runtime instance:** `var best_score: highscore.Record = .{}` — a single value-type struct at module scope in `src/main.zig`. Loaded once at startup via `highscore.load(game_mode)`; updated in memory and conditionally written to the persistence store at the `is_dying → is_game_over` transition via `highscore.save(game_mode, best_score)`. Two separate records are maintained, one per `GameMode`.
+**Runtime instance:** `var best_score: highscore.Record = .{}` — a single value-type struct at module scope in `src/main.zig`. Loaded once at startup via `highscore.load(game_mode)`; updated in memory and conditionally written to the persistence store at the `is_dying → is_game_over` transition via `highscore.save(game_mode, best_score)` — but **only when `!bot_tainted`**. Two separate records are maintained, one per `GameMode`. In-memory tracking continues for display purposes even during bot-tainted sessions; only the disk/localStorage write is suppressed.
 
 | Field | Type | Meaning | Constraints |
 |---|---|---|---|
@@ -821,6 +835,7 @@ All other constants are compile-time `const` values declared at module scope in 
 | `ACC_HUD_Y` | `30` | `c_int` | Y pixel position of the accuracy HUD label (below WPM) |
 | `METRICS_HUD_SIZE` | `18` | `c_int` | Font size for both WPM and accuracy HUD labels |
 | `SMOOTHING_FACTOR` | `0.2` | `f32` | Per-frame interpolation rate applied to both `displayed_wpm` and `displayed_accuracy`; at 60 FPS, display converges to within 1% of target in ~21 frames |
+| `BOT_REACTION_DELAY` | `0.2` | `f32` | Seconds the bot waits before selecting a new target (on activation, after each kill, and at wave start). Exposed as a named constant so developers can adjust it for balance research (e.g. 0 ms for pure-cadence validation) |
 | `DYING_DURATION` | `1.0` | `f32` | Seconds the dying state lasts before transitioning to game-over; during this time the responsible regular zombie is drawn with a red tint |
 | `STATS_TITLE_Y` | `30` | `c_int` | Y pixel position of the "GAME OVER" title on the stats overlay |
 | `STATS_LINE_START_Y` | `80` | `c_int` | Y pixel position of the first stat line on the stats overlay |

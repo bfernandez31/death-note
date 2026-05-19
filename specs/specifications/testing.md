@@ -35,7 +35,7 @@ The `test_step` compiles `src/main.zig` (and every module transitively `@import`
 
 **Command**: `zig build test`
 
-**Current state**: Approximately 106 `test "..." {}` blocks exist, distributed as `src/main.zig` (~75), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3) — all reachable from the `test_step` root because each is either directly inside `src/main.zig` or `@import`-ed transitively. The list below catalogs the historically documented blocks; many newer additions (sound system, per-mode high scores, power-ups, shield wave-kill counting) are not enumerated here but follow the same conventions:
+**Current state**: Approximately 120 `test "..." {}` blocks exist, distributed as `src/main.zig` (89), `src/name_lists.zig` (12), `src/sound_config.zig` (10), `src/highscore.zig` (6), and `src/zombie_types.zig` (3) — all reachable from the `test_step` root because each is either directly inside `src/main.zig` or `@import`-ed transitively. The list below catalogs the historically documented blocks; many newer additions (sound system, per-mode high scores, power-ups, shield wave-kill counting, bot mode) are not enumerated here but follow the same conventions:
 - `test "name match equality"` — exercises the null-terminated name comparison path (`std.mem.eql`)
 - `test "input buffer bounds"` — asserts the printable-ASCII gate and 9-char length cap
 - `test "getWaveConfig wave 1"` — verifies wave 1 `target_wpm` (20), `spawn_delay` (SPAWN_DELAY_BASE), `pool_size` (10), and `starter_pack` (6) under the sustained-density model
