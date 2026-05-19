@@ -655,27 +655,21 @@ fn frame(ctx: *FrameContext) void {
                     if (audio_ready) raylib.StopMusicStream(music);
                     const avg_wpm = calculateAverageWpm();
                     const acc: u8 = @intCast(calculateStatsAccuracy());
-                    if (game_mode == .arcade) {
-                        if (score > best_score_arcade.score) {
+                    const best_ref: ?*highscore.Record = switch (game_mode) {
+                        .arcade => &best_score_arcade,
+                        .survival => &best_score_survival,
+                        .zen => null,
+                    };
+                    if (best_ref) |best| {
+                        if (score > best.score) {
                             is_new_high_score = true;
-                            best_score_arcade = highscore.Record{
+                            best.* = highscore.Record{
                                 .score = score,
                                 .wave = current_wave,
                                 .wpm = avg_wpm,
                                 .accuracy = acc,
                             };
-                            if (!bot_tainted) highscore.save(.arcade, best_score_arcade);
-                        }
-                    } else if (game_mode == .survival) {
-                        if (score > best_score_survival.score) {
-                            is_new_high_score = true;
-                            best_score_survival = highscore.Record{
-                                .score = score,
-                                .wave = current_wave,
-                                .wpm = avg_wpm,
-                                .accuracy = acc,
-                            };
-                            if (!bot_tainted) highscore.save(.survival, best_score_survival);
+                            if (!bot_tainted) highscore.save(game_mode, best.*);
                         }
                     }
                 }
@@ -1233,22 +1227,21 @@ fn drawPlayingHud() void {
 }
 
 fn drawArcadeLivesHud() void {
-    var lives_buf: [32]u8 = undefined;
-    var text_buf: [32]u8 = undefined;
+    var hearts: [16]u8 = undefined;
+    var len: usize = 0;
     var i: u8 = 0;
-    var written: usize = 0;
-    while (i < arcade_lives and written + 3 < lives_buf.len) : (i += 1) {
-        if (written > 0) {
-            lives_buf[written] = ' ';
-            written += 1;
+    while (i < arcade_lives) : (i += 1) {
+        if (len > 0) {
+            hearts[len] = ' ';
+            len += 1;
         }
-        lives_buf[written] = '<';
-        lives_buf[written + 1] = '3';
-        written += 2;
+        hearts[len] = '<';
+        hearts[len + 1] = '3';
+        len += 2;
     }
-    lives_buf[written] = 0;
-    const lives_text = std.fmt.bufPrintZ(&text_buf, "LIVES: {s}", .{lives_buf[0..written]}) catch "LIVES";
-    drawText(lives_text.ptr, screen_width / 2 - 80, 40, METRICS_HUD_SIZE, CRT_ERR);
+    var buf: [32]u8 = undefined;
+    const text = std.fmt.bufPrintZ(&buf, "LIVES: {s}", .{hearts[0..len]}) catch "LIVES";
+    drawText(text.ptr, screen_width / 2 - 80, 40, METRICS_HUD_SIZE, CRT_ERR);
 }
 
 fn getFallSpeed() f32 {
