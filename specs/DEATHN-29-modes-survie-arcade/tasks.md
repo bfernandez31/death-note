@@ -33,12 +33,12 @@
 
 **CRITICAL**: `highscore.zig` has exhaustive `switch` on `GameMode` at lines 16 and 23. Adding new enum variants will break compilation until these switches are updated. `main.zig` uses `if` conditionals (not exhaustive switches) on `game_mode`, so it compiles without changes.
 
-- [ ] T001 Extend `GameMode` enum with `.arcade` and `.simulation` variants in `src/zombie_types.zig:15-18`
-- [ ] T002 [P] Update test `"GameMode enum has 2 variants"` to expect 4 variants in `src/zombie_types.zig:84-87`
-- [ ] T003 Add `.arcade => "highscore-arcade.dat"` and `.simulation => "highscore.dat"` arms to `filename()` switch in `src/highscore.zig:15-20`
-- [ ] T004 Add `.arcade => "death-note.highscore.arcade"` and `.simulation => "death-note.highscore"` arms to `webKey()` switch in `src/highscore.zig:22-27`
-- [ ] T005 [P] Add test `"filename arcade returns highscore-arcade.dat"` and test `"webKey arcade returns death-note.highscore.arcade"` in `src/highscore.zig`
-- [ ] T006 Declare `var best_score_arcade: highscore.Record = .{};` at `src/main.zig:221` (after `best_score_survival`) and add `best_score_arcade = highscore.load(.arcade);` in initialization block
+- [x] T001 Extend `GameMode` enum with `.arcade` and `.simulation` variants in `src/zombie_types.zig:15-18`
+- [x] T002 [P] Update test `"GameMode enum has 2 variants"` to expect 4 variants in `src/zombie_types.zig:84-87`
+- [x] T003 Add `.arcade => "highscore-arcade.dat"` and `.simulation => "highscore.dat"` arms to `filename()` switch in `src/highscore.zig:15-20`
+- [x] T004 Add `.arcade => "death-note.highscore.arcade"` and `.simulation => "death-note.highscore"` arms to `webKey()` switch in `src/highscore.zig:22-27`
+- [x] T005 [P] Add test `"filename arcade returns highscore-arcade.dat"` and test `"webKey arcade returns death-note.highscore.arcade"` in `src/highscore.zig`
+- [x] T006 Declare `var best_score_arcade: highscore.Record = .{};` at `src/main.zig:221` (after `best_score_survival`) and add `best_score_arcade = highscore.load(.arcade);` in initialization block
 
 **Checkpoint**: `zig build test` passes. Code compiles with 4 GameMode variants. Arcade high score loads at startup.
 

@@ -218,6 +218,7 @@ var is_dying: bool = false;
 var dying_timer: f32 = 0.0;
 var dying_zombie_index: ?usize = null;
 var best_score_survival: highscore.Record = .{};
+var best_score_arcade: highscore.Record = .{};
 var best_score_zen: highscore.Record = .{};
 var last_played_mode: GameMode = .survival;
 var is_new_high_score: bool = false;
@@ -1433,6 +1434,7 @@ pub fn main() !void {
     prng = std.Random.DefaultPrng.init(seed);
 
     best_score_survival = highscore.load(.survival);
+    best_score_arcade = highscore.load(.arcade);
     best_score_zen = highscore.load(.zen);
     sound_cfg = sound_config.load();
 
