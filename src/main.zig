@@ -3045,8 +3045,8 @@ test "kill counter tracks total kills" {
 
 test "ZombieType speed multipliers" {
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), getSpeedMultiplier(.standard), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 1.3), getSpeedMultiplier(.runner), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.5), getSpeedMultiplier(.tank), 0.001);
+    try std.testing.expectApproxEqAbs(zt.RUNNER_SPEED_MULTIPLIER, getSpeedMultiplier(.runner), 0.001);
+    try std.testing.expectApproxEqAbs(zt.TANK_SPEED_MULTIPLIER, getSpeedMultiplier(.tank), 0.001);
 }
 
 test "spawn weight table wave brackets" {
