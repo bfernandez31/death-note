@@ -120,8 +120,12 @@ const BOSS_TIER_TIME_BONUS: f32 = 5.0;
 // Per-wave acceleration applied *within* a tier (does not fire on the boundary
 // wave itself, so wave 6/11/16 stay calibrated). Each subsequent wave inside
 // the tier shaves an extra BOSS_INTRA_TIER_BONUS seconds, so the late-tier
-// waves catch the announced target_wpm instead of drifting easier.
-const BOSS_INTRA_TIER_BONUS: f32 = 2.0;
+// waves catch the announced target_wpm instead of drifting easier. Calibrated
+// so the slack between announced WPM and survival floor at the last wave of a
+// tier (e.g. wave 10) matches the slack at the boundary wave (wave 6) — about
+// 5 wpm of margin for a real player, while staying inside the bot's effective
+// ~64-wpm ceiling so the bot still validates.
+const BOSS_INTRA_TIER_BONUS: f32 = 1.5;
 
 const STARTER_PACK_BASE: f32 = 6.0;
 const STARTER_PACK_INCREMENT_PER_WAVE: f32 = 0.25;
