@@ -3637,9 +3637,17 @@ test "bot target selection picks boss when present" {
     zombies[0] = &z1;
 
     const saved_boss = boss;
-    defer boss = saved_boss;
+    const saved_phrase_len = boss_phrase_len;
+    defer {
+        boss = saved_boss;
+        boss_phrase_len = saved_phrase_len;
+    }
     var boss_zombie = Zombie{ .x = 400, .y = 100, .speed = 0.5, .name = "the dead walk", .is_active = true, .frame = 0, .animation_timer = 0 };
     boss = &boss_zombie;
+    // selectBotTarget skips the boss when boss_phrase_len == 0 (defensive guard
+    // against the infinite-acquire/release loop on an empty phrase). The live
+    // spawnBoss path always sets this alongside boss; mirror that here.
+    boss_phrase_len = "the dead walk".len;
 
     selectBotTarget();
     try std.testing.expectEqual(true, bot_targeting_boss);
