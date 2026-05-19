@@ -73,11 +73,11 @@
 
 ### Tests for User Story 2
 
-- [ ] T012 [P] [US2] Add test `"power-ups drop only in arcade mode"` verifying the mode condition in the power-up drop logic references `.arcade` in `src/main.zig`
+- [x] T012 [P] [US2] Add test `"power-ups drop only in arcade mode"` verifying the mode condition in the power-up drop logic references `.arcade` in `src/main.zig`
 
 ### Implementation for User Story 2
 
-- [ ] T013 [US2] Change power-up drop condition from `if (game_mode == .survival)` to `if (game_mode == .arcade)` in `spawnZombieInZone()` at `src/main.zig:1732-1740`
+- [x] T013 [US2] Change power-up drop condition from `if (game_mode == .survival)` to `if (game_mode == .arcade)` in `spawnZombieInZone()` at `src/main.zig:1732-1740`
 
 **Checkpoint**: Survie mode produces zero power-up drops across all waves. All other survival behavior unchanged.
 

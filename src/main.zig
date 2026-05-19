@@ -1174,7 +1174,7 @@ fn drawPlayingHud() void {
         drawCenteredText("BOT", 35, 24, CRT_WARN);
     }
 
-    if (game_mode == .survival) {
+    if (game_mode == .arcade) {
         if (held_power_up) |pu| {
             const label: [*:0]const u8 = switch (pu) {
                 .freeze => "[*] FREEZE",
@@ -1734,7 +1734,7 @@ fn spawnZombieInZone(allocator: *std.mem.Allocator, rng: std.Random, zone_x_min:
             const x: f32 = @floatFromInt(candidate);
 
             var carrier_power_up: ?PowerUpType = null;
-            if (game_mode == .survival) {
+            if (game_mode == .arcade) {
                 if (rng.intRangeAtMost(u8, 0, 99) < zt.POWER_UP_DROP_CHANCE) {
                     carrier_power_up = switch (rng.intRangeAtMost(u8, 0, 2)) {
                         0 => .freeze,
@@ -3445,6 +3445,23 @@ test "carrier zombie power-up field is optional" {
         .zombie_type = .standard,
     };
     try std.testing.expect(z2.power_up == null);
+}
+
+test "power-ups drop only in arcade mode" {
+    const saved_mode = game_mode;
+    defer game_mode = saved_mode;
+
+    game_mode = .arcade;
+    try std.testing.expect(game_mode == .arcade);
+
+    game_mode = .survival;
+    try std.testing.expect(game_mode != .arcade);
+
+    game_mode = .simulation;
+    try std.testing.expect(game_mode != .arcade);
+
+    game_mode = .zen;
+    try std.testing.expect(game_mode != .arcade);
 }
 
 test "per-mode high scores are independent" {
