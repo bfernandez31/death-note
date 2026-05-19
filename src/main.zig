@@ -113,6 +113,12 @@ const SPAWN_DELAY_DECAY_PER_WAVE: f32 = 0.04;
 const TIME_ON_SCREEN_BASE: f32 = 30.0;
 const TIME_ON_SCREEN_MIN: f32 = 4.0;
 const TIME_ON_SCREEN_DECAY_PER_WAVE: f32 = 0.9;
+// Step speedup applied after each cleared boss wave (every BOSS_WAVE_INTERVAL).
+// Wave 1-5 stay at the linear decay; wave 6+ adds 5s of shaved fall time per
+// completed boss tier, wave 11+ adds 10s, etc. — closes the gap between the
+// announced target_wpm and the actual survival floor that grew with the linear
+// decay alone.
+const BOSS_TIER_TIME_BONUS: f32 = 5.0;
 
 const STARTER_PACK_BASE: f32 = 6.0;
 const STARTER_PACK_INCREMENT_PER_WAVE: f32 = 0.25;
@@ -1803,7 +1809,11 @@ fn getWaveConfig(wave: u32) WaveConfig {
 
     // Decoupled fall time: long at wave 1 (30s) so 20-wpm players can clear the
     // front-loaded cascade; tightens to a 4s floor for late-wave challenge.
-    const time_on_screen = @max(TIME_ON_SCREEN_MIN, TIME_ON_SCREEN_BASE - TIME_ON_SCREEN_DECAY_PER_WAVE * (wave_f - 1.0));
+    // After each completed boss wave the base shrinks by BOSS_TIER_TIME_BONUS,
+    // creating a step-up "tier" feel that catches the announced target_wpm.
+    const boss_tier_count: u32 = (wave - 1) / BOSS_WAVE_INTERVAL;
+    const boss_tier_speedup: f32 = @as(f32, @floatFromInt(boss_tier_count)) * BOSS_TIER_TIME_BONUS;
+    const time_on_screen = @max(TIME_ON_SCREEN_MIN, TIME_ON_SCREEN_BASE - TIME_ON_SCREEN_DECAY_PER_WAVE * (wave_f - 1.0) - boss_tier_speedup);
 
     const sh: f32 = @floatFromInt(screen_height);
     const fall_speed = sh / (time_on_screen * FRAMES_PER_SECOND);
