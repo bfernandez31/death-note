@@ -48,7 +48,8 @@
   - [F-42 Power-Up Activation Sounds](#f-42-power-up-activation-sounds)
   - [F-43 Kill Sound Volume System](#f-43-kill-sound-volume-system)
   - [F-44 Sound Settings Screen](#f-44-sound-settings-screen)
-  - [F-45 Bot Mode](#f-45-bot-mode)
+  - [F-45 Simulation Mode](#f-45-simulation-mode)
+  - [F-46 Arcade Mode](#f-46-arcade-mode)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -74,7 +75,8 @@ graph TB
         MainMenu["F-30 Main Menu"]
         PauseSystem["F-31 Pause System"]
         ZenMode["F-32 Zen Mode"]
-        BotMode["F-45 Bot Mode"]
+        ArcadeMode["F-46 Arcade Mode"]
+        SimulationMode["F-45 Simulation Mode"]
     end
 
     subgraph Sound
@@ -180,9 +182,13 @@ graph TB
     ShieldPU --> GameOver
     GameOver --> MainMenu
     HighScore --> MainMenu
-    MainMenu --> BotMode
-    BotMode --> Spawning
-    BotMode --> HighScore
+    MainMenu --> SimulationMode
+    MainMenu --> ArcadeMode
+    SimulationMode --> Spawning
+    SimulationMode --> HighScore
+    ArcadeMode --> Spawning
+    ArcadeMode --> GameOver
+    ArcadeMode --> CarrierZombie
     Keyboard --> WpmHUD
     Keyboard --> AccHUD
     Combo --> AccHUD
@@ -304,15 +310,15 @@ graph TB
 
 ### F-05 Game Over Detection
 
-**Description.** During each frame's update pass, if any active zombie's `y` position meets or exceeds `screen_height` (1000), the game enters the dying state (`is_dying = true`, `dying_timer = DYING_DURATION`, `dying_zombie_index = slot_index`) and `updateZombies` returns immediately. The same check runs for the boss zombie in `updateBoss`, which sets `dying_zombie_index = null`. After the 1-second dying pause expires, `is_game_over` is set to `true` — at that point the high score comparison runs and the stats overlay is rendered.
+**Description.** During each frame's update pass, if any active zombie's `y` position meets or exceeds `screen_height` (1000), the outcome depends on the active game mode. In **Survival** mode (and non-shield Arcade mode with hearts remaining), the zombie costs a life or ends the game. In **Arcade** mode the zombie crossing the bottom costs one heart; game-over only triggers when `hearts` reaches 0. The boss crossing the bottom follows the same arcade/survival split. After a game-ending event, the 1-second dying pause expires and `is_game_over` is set to `true` — the high score comparison runs and the stats overlay is rendered.
 
-**User-facing behavior.** When any zombie — including the boss — reaches the bottom of the screen the game pauses all movement for 1 second (the responsible regular zombie glows red), then the stats overlay appears.
+**User-facing behavior.** In Survival mode, any zombie or boss reaching the bottom pauses the game for 1 second (the responsible regular zombie glows red), then the stats overlay appears. In Arcade mode, a zombie reaching the bottom costs one heart and gameplay continues; only the final heart triggers the dying state.
 
 **System behavior.**
-- Inside `updateZombies`, after `zomb.y += zomb.speed`: `if (zomb.y >= screen_height)` → `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = i; return;`.
-- Inside `updateBoss`, after `b.y += b.speed`: `if (b.y >= screen_height)` → `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = null; return;`.
+- Inside `updateZombies`, after `zomb.y += zomb.speed`: if shield absorbed → free zombie, increment counters, continue. Else if `game_mode == .arcade`: `hearts -= 1; heart_flash_timer = HEART_LOSS_FLASH_DURATION; playErrorSound()`; free zombie; if `hearts == 0` → `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = null; break;`; else continue. Else (Survival/Zen): `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = i; return;`.
+- Inside `updateBoss`, after `b.y += b.speed`: if `game_mode == .arcade and hearts > 0` → same heart-decrement path; if `hearts == 0` → `is_dying = true; dying_zombie_index = null`. Else → `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = null; return;`.
 - `is_dying` and `is_game_over` guards in the update phase prevent further movement, spawning, and input during both states.
-- Draw phase still runs during `is_dying`; regular zombie draw applies a red tint to the zombie at `dying_zombie_index`.
+- Draw phase still runs during `is_dying`; regular zombie draw applies a red tint to the zombie at `dying_zombie_index` (which is `null` in the arcade-hearts and boss-triggered cases).
 
 **Key source references.**
 - `src/main.zig` — `is_dying`, `dying_timer`, `dying_zombie_index` declarations
@@ -818,24 +824,24 @@ graph TB
 
 ### F-27 High Score Persistence
 
-**Description.** The game maintains separate high score records for Survival and Zen modes. Each record holds `score`, `wave`, `wpm`, and `accuracy`. Persistence is handled by `src/highscore.zig`, which provides `load(mode)` and `save(mode, record)` functions with dual backends. On native builds, Survival is stored in `highscore.dat` and Zen in `highscore-zen.dat` (both 17-byte little-endian binary files). On web (Emscripten) builds, Survival is stored in `localStorage` under `death-note.highscore` and Zen under `death-note.highscore.zen` (both as JSON objects). Both records are loaded at startup via `startGame()` and saved conditionally when the session score exceeds the stored best.
+**Description.** The game maintains separate high score records for Survival, Arcade, and Zen modes. Each record holds `score`, `wave`, `wpm`, and `accuracy`. Persistence is handled by `src/highscore.zig`, which provides `load(mode)` and `save(mode, record)` functions with dual backends. On native builds, Survival → `highscore.dat`, Arcade → `highscore-arcade.dat`, Zen → `highscore-zen.dat` (all 17-byte little-endian binary files). On web (Emscripten) builds the keys are `death-note.highscore`, `death-note.highscore.arcade`, and `death-note.highscore.zen` (all JSON). All three records are loaded at startup; saved conditionally when the session score exceeds the stored best.
 
-**User-facing behavior.** After losing in Survival mode, the stats screen shows "NEW HIGH SCORE!" if the session score beats the stored Survival best. After a Zen session, the best WPM/accuracy record for Zen mode is updated if improved. High scores for each mode are independent and persist across restarts.
+**User-facing behavior.** After losing in Survival or Arcade mode, the stats screen shows "NEW HIGH SCORE!" if the session score beats the stored mode best. After a Zen session, the best WPM/accuracy record for Zen is updated if improved. High scores for each mode are independent and persist across restarts. Simulation sessions never update any stored record.
 
 **System behavior.**
-- Startup: `highscore.load(.survival)` and `highscore.load(.zen)` are called from `startGame()` to populate `best_score`.
-- Conditional save (Survival): at the `is_dying → game_over` transition, `score > best_score.score` → `highscore.save(.survival, ...)`.
+- Startup: `highscore.load(.survival)`, `highscore.load(.arcade)`, and `highscore.load(.zen)` are called from `startGame()` to populate the three per-mode records.
+- Conditional save (Survival/Arcade): at the `is_dying → game_over` transition, if `score > best_score_<mode>.score` and `!bot_tainted` → `highscore.save(game_mode, ...)`.
 - Conditional save (Zen): on quit-to-menu, if session WPM or accuracy improved → `highscore.save(.zen, ...)`.
-- Native filename: `highscore.filename(mode)` returns `"highscore.dat"` or `"highscore-zen.dat"`.
-- Web key: `highscore.webKey(mode)` returns `"death-note.highscore"` or `"death-note.highscore.zen"`.
+- Native filename: `highscore.filename(mode)` returns the mode-specific `.dat` file.
+- Web key: `highscore.webKey(mode)` returns the mode-specific localStorage key.
 - Build target selected at compile time via `comptime is_web`.
 
 **Key source references.**
 - `src/highscore.zig` — `Record` struct, `load`, `save`, `loadNative`, `saveNative`, `loadWeb`, `saveWeb`, `filename`, `webKey`
-- `src/main.zig` — `best_score`, `is_new_high_score` declarations
-- `src/main.zig` — startup load in `startGame()`, high score comparison and save at dying→game-over transition and Zen quit-to-menu
+- `src/main.zig` — `best_score_survival`, `best_score_arcade`, `is_new_high_score` declarations
+- `src/main.zig` — startup loads in `startGame()`, high score comparison and save at dying→game-over transition and Zen quit-to-menu
 
-**Dependencies.** F-05 / F-26 (dying→game-over transition triggers Survival save), F-11 (best score shown on stats screen), F-06 (best_score preserved across restarts), F-38 (per-mode separation).
+**Dependencies.** F-05 / F-26 (dying→game-over transition triggers save), F-11 (best score shown on stats screen), F-06 (best_score preserved across restarts), F-38 (per-mode separation), F-46 (Arcade mode separate best).
 
 ---
 
@@ -884,24 +890,24 @@ graph TB
 
 ### F-30 Main Menu
 
-**Description.** The game opens to a main menu screen with five options: "SURVIVAL", "ZEN", "BOT", "SOUND", and "QUIT". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
+**Description.** The game opens to a main menu screen with six options: "SURVIE", "ARCADE", "SIMULATION", "ZEN", "SOUND", and "QUIT". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
 
-**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from QUIT back to SURVIVAL). Pressing Enter on "SURVIVAL" starts a new Survival session; on "ZEN" advances to the WPM target selection screen; on "BOT" starts a Survival session with the bot active; on "SOUND" opens the Sound settings screen; on "QUIT" closes the window. The best score for the last-played mode is shown at the bottom of the menu.
+**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from QUIT back to SURVIE). Pressing Enter on "SURVIE" starts a new Survival session; on "ARCADE" starts an Arcade session (3 hearts, power-ups); on "SIMULATION" starts a Simulation (auto-play) session; on "ZEN" advances to the WPM target selection screen; on "SOUND" opens the Sound settings screen; on "QUIT" closes the window. The best score for the last-played mode is shown at the bottom of the menu (Arcade shows its own separate best; Simulation shows the Survival best label).
 
 **System behavior.**
-- `current_screen` starts as `.main_menu`; transitions to `.playing` (SURVIVAL or BOT), `.wpm_select` (ZEN), `.sound_settings` (SOUND), or calls `raylib.CloseWindow()` (QUIT).
-- `menu_selected_item: usize` tracks the highlighted index (0=SURVIVAL, 1=ZEN, 2=BOT, 3=SOUND, 4=QUIT).
-- `MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "BOT", "SOUND", "QUIT" }`, `MENU_ITEM_COUNT = 5`.
-- Up/Down arrows: `menu_selected_item = (menu_selected_item + delta + MENU_ITEM_COUNT) % MENU_ITEM_COUNT`.
-- Enter: dispatches based on `menu_selected_item` value. Case 2 (BOT) sets `bot_active = true`, `bot_tainted = true`, then calls `startGame(.survival, allocator)`.
-- `last_played_mode` is read at draw time to select which `best_score` record to show.
+- `current_screen` starts as `.main_menu`; transitions to `.playing` (SURVIE, ARCADE, or SIMULATION), `.wpm_select` (ZEN), `.sound_settings` (SOUND), or calls `raylib.CloseWindow()` (QUIT).
+- `menu_selection: u8` tracks the highlighted index (0=SURVIE, 1=ARCADE, 2=SIMULATION, 3=ZEN, 4=SOUND, 5=QUIT).
+- `MENU_ITEMS = [_][]const u8{ "SURVIE", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" }`, `MENU_ITEM_COUNT = 6`.
+- Up/Down arrows: `menu_selection = (menu_selection ±% 1 +% MENU_ITEM_COUNT) % MENU_ITEM_COUNT`.
+- Enter: Case 0 → `startGame(.survival, allocator)`; Case 1 → `startGame(.arcade, allocator)`; Case 2 → `bot_active = true; bot_tainted = true; startGame(.simulation, allocator)`; Case 3 → `current_screen = .wpm_select`; Case 4 → `current_screen = .sound_settings`; Case 5 → `raylib.CloseWindow()`.
+- `last_played_mode` is read at draw time to select which best score to show: `.arcade` → `best_score_arcade`; `.survival`/`.simulation` → `best_score_survival`; `.zen` → `best_score_zen`.
 - The menu does not block keyboard input from leaking; the input buffer is cleared on game start.
 
 **Key source references.**
-- `src/main.zig` — `GameScreen` enum, `current_screen`, `menu_selected_item`, `last_played_mode`, `MENU_ITEMS`, `MENU_ITEM_COUNT`
+- `src/main.zig` — `GameScreen` enum, `current_screen`, `menu_selection`, `last_played_mode`, `MENU_ITEMS`, `MENU_ITEM_COUNT`
 - `src/main.zig` — main menu update/draw branch in `frame()`
 
-**Dependencies.** F-31 (pause shows "Quit to Menu"), F-32 (Zen option leads to WPM select), F-38 (best score shown), F-44 (SOUND entry leads to settings), F-45 (BOT entry starts bot session).
+**Dependencies.** F-31 (pause shows "Quit to Menu"), F-32 (Zen option leads to WPM select), F-38 (best score shown), F-44 (SOUND entry leads to settings), F-45 (SIMULATION entry starts bot session), F-46 (ARCADE entry starts Arcade session).
 
 ---
 
@@ -940,7 +946,7 @@ graph TB
 - In Zen mode, zombie-at-bottom detection skips the `is_dying = true` branch; the zombie is freed and the slot nulled immediately.
 - Boss spawn is skipped: `spawnBoss` is not called in Zen mode.
 - Score and combo display are hidden in the draw block when `game_mode == .zen`.
-- Power-up carrier assignment is skipped in `spawnZombie` when `game_mode == .zen`.
+- Power-up carrier assignment is skipped in Zen mode (power-ups only spawn when `game_mode == .arcade`).
 - On quit-to-menu from Zen session, if session WPM exceeds `best_score.wpm` → `highscore.save(.zen, ...)`.
 
 **Key source references.**
@@ -954,12 +960,12 @@ graph TB
 
 ### F-33 Power-up Carrier Zombies
 
-**Description.** In Survival mode, each spawned zombie has a 10% chance to carry a randomly selected power-up (Freeze, Bomb, or Shield, each equally likely). A carrier zombie displays a small colored text indicator above its name label. The carried power-up is transferred to the player's inventory slot on kill (if the slot is empty). If the player already has a power-up, the drop is lost. If a carrier reaches the bottom, the power-up is lost.
+**Description.** In Arcade mode, each spawned zombie has a 10% chance to carry a randomly selected power-up (Freeze, Bomb, or Shield, each equally likely). A carrier zombie displays a small colored text indicator above its name label. The carried power-up is transferred to the player's inventory slot on kill (if the slot is empty). If the player already has a power-up, the drop is lost. If a carrier reaches the bottom, the power-up is lost. Power-ups do not drop in Survival, Simulation, or Zen modes.
 
-**User-facing behavior.** Carrier zombies appear with a visible label above their name. When killed, the player's inventory slot fills with the corresponding power-up. No special input is needed to pick up; the transfer is automatic on kill.
+**User-facing behavior.** In Arcade mode, carrier zombies appear with a visible label above their name. When killed, the player's inventory slot fills with the corresponding power-up. No special input is needed to pick up; the transfer is automatic on kill.
 
 **System behavior.**
-- In `spawnZombie`, when `game_mode == .survival`: roll `rng.intRangeLessThan(u8, 0, 100) < POWER_UP_DROP_CHANCE (10)` → select type `rng.intRangeAtMost(u8, 0, 2)` → set `zombie.power_up`.
+- In `spawnZombie`, when `game_mode == .arcade`: roll `rng.intRangeAtMost(u8, 0, 99) < POWER_UP_DROP_CHANCE (10)` → select type `rng.intRangeAtMost(u8, 0, 2)` → set `zombie.power_up`.
 - At kill site in `updateZombies`: if `zomb.power_up != null and held_power_up == null` → `held_power_up = zomb.power_up`.
 - `drawZombies` renders a small color-coded text symbol above the name if `zomb.power_up != null`.
 - Carrier indicator uses: Freeze → `CRT_FG` `"[F]"`, Bomb → `CRT_WARN` `"[B]"`, Shield → `CRT_ACCENT` `"[S]"` (text drawn above the name label).
@@ -981,7 +987,7 @@ graph TB
 
 **System behavior.**
 - `held_power_up: ?PowerUpType` (null = empty).
-- HUD rendered only when `game_mode == .survival`: formats `"PU: {s}"` using a name string per type.
+- HUD rendered only when `game_mode == .arcade`: formats `"PU: {s}"` using a name string per type.
 - Space bar: `IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null and boss == null` → `activatePowerUp(allocator)` → `held_power_up = null` after activation. The `boss == null` guard prevents the space key from triggering the held power-up while a boss is active — boss phrases contain spaces (F-16) so during a boss fight the space character must be routed to the input buffer instead.
 - On restart / quit-to-menu: `held_power_up = null`.
 
@@ -1002,7 +1008,7 @@ graph TB
 - `activatePowerUp`: sets `freeze_timer = FREEZE_DURATION (3.0)`.
 - `updateZombies` and `updateBoss` skip `y` advancement when `freeze_timer > 0`.
 - `freeze_timer` decrements each frame via `freeze_timer -= GetFrameTime()` (in the `.playing` update path; paused while `current_screen == .paused`).
-- HUD: when `freeze_timer > 0` and `game_mode == .survival`, renders `"FREEZE: {d}s"` with `CRT_FG` color.
+- HUD: when `freeze_timer > 0` and `game_mode == .arcade`, renders `"FREEZE: {d}s"` with `CRT_FG` color.
 - On restart / quit-to-menu: `freeze_timer = 0.0`.
 
 **Key source references.**
@@ -1041,7 +1047,7 @@ graph TB
 - `activatePowerUp`: sets `shield_active = true`.
 - In `updateZombies`, zombie-at-bottom detection: if `shield_active` → free zombie (`allocator.destroy`, slot = `null`), mark `shield_absorbed_any = true`, and increment both `wave_kills` and `total_kills`; continue iteration so additional same-frame crossings are also absorbed. After the loop, `shield_active = false` if `shield_absorbed_any`. Absorbed zombies count toward wave completion — without the `wave_kills` increment the wave would stall forever once a zombie was shielded, because `wave_spawned` would have advanced but `wave_kills` never would. They also count toward `total_kills` for stat-screen accuracy, but they do NOT award `score`, `combo_count`, or score popups (the shield is a defensive consumable, not a kill reward).
 - Shield does not block boss crossing the bottom (boss-crossing path is in `updateBoss`, which does not check `shield_active`).
-- HUD: when `shield_active` and `game_mode == .survival`, renders `"SHIELD ARMED"` with `CRT_WARN` color (on its own row when `freeze_timer > 0` so it does not overlap the FREEZE countdown).
+- HUD: when `shield_active` and `game_mode == .arcade`, renders `"SHIELD ARMED"` with `CRT_WARN` color (on its own row when `freeze_timer > 0` so it does not overlap the FREEZE countdown).
 - On restart / quit-to-menu: `shield_active = false`.
 
 **Key source references.**
@@ -1053,23 +1059,24 @@ graph TB
 
 ### F-38 Per-Mode High Scores
 
-**Description.** Survival and Zen modes maintain independent high score records. Both records use the same `highscore.Record` struct (`score`, `wave`, `wpm`, `accuracy`). Persistence is handled by `src/highscore.zig`, which selects the correct file or localStorage key based on `GameMode`. Existing Survival high scores from previous versions are preserved in `highscore.dat`, which is the same path used by the new system.
+**Description.** Survival, Arcade, and Zen modes each maintain independent high score records. All records use the same `highscore.Record` struct (`score`, `wave`, `wpm`, `accuracy`). Persistence is handled by `src/highscore.zig`, which selects the correct file or localStorage key based on `GameMode`. Simulation mode never saves a high score (`bot_tainted` guard). Existing Survival high scores are preserved in `highscore.dat`.
 
-**User-facing behavior.** Each mode's best performance is remembered across sessions. The main menu shows the high score for the most recently played mode. Survival scores and Zen scores never overwrite each other.
+**User-facing behavior.** Each mode's best performance is remembered across sessions. The main menu shows the high score for the most recently played mode. Survival, Arcade, and Zen scores never overwrite each other. Simulation sessions never update any stored best.
 
 **System behavior.**
 - `highscore.load(.survival)` → reads `highscore.dat` (native) or `death-note.highscore` (web).
+- `highscore.load(.arcade)` → reads `highscore-arcade.dat` (native) or `death-note.highscore.arcade` (web).
 - `highscore.load(.zen)` → reads `highscore-zen.dat` (native) or `death-note.highscore.zen` (web).
-- `highscore.save(mode, record)` dispatches to the correct backend and file.
+- `highscore.save(mode, record)` dispatches to the correct backend and file; guarded by `!bot_tainted` so Simulation sessions never reach this call.
 - `last_played_mode` is updated to `game_mode` at session start; read by the main menu draw to select which record to display.
 - Backward compatibility: `highscore.dat` path is unchanged, so existing Survival records are preserved.
 
 **Key source references.**
 - `src/highscore.zig` — `filename`, `webKey`, `load`, `save`, `loadNative`, `saveNative`, `loadWeb`, `saveWeb`
-- `src/zombie_types.zig` — `GameMode` enum
-- `src/main.zig` — `last_played_mode`, calls to `highscore.load`/`save`
+- `src/zombie_types.zig` — `GameMode` enum (`survival`, `arcade`, `simulation`, `zen`)
+- `src/main.zig` — `best_score_survival`, `best_score_arcade`, `last_played_mode`, calls to `highscore.load`/`save`
 
-**Dependencies.** F-27 (per-mode replaces single-record persistence), F-30 (main menu shows mode-specific best), F-32 (Zen best saved on session end).
+**Dependencies.** F-27 (per-mode replaces single-record persistence), F-30 (main menu shows mode-specific best), F-32 (Zen best saved on session end), F-46 (Arcade best saved on game-over).
 
 ---
 
@@ -1191,7 +1198,7 @@ graph TB
 - On pack change: reset corresponding round-robin index to 0; play preview sample at 50% of typing volume (minimum 30% volume if slider is at 0).
 - On slider adjustment completion (key released): play a representative sound at the new volume.
 - `drawSoundSettings()`: title `"SOUND SETTINGS"` in `CRT_FG`; item rows use `CRT_ACCENT` (selected) / `CRT_DIM` (unselected) following the existing `drawMenu` pattern; toggles show `[ON]` / `[OFF]`; sliders render as `[████░░░░░░░░░░░░░░░░] 70%` using `CRT_ACCENT` fill / `CRT_DIM` empty; footer `"ESC: BACK"` in `CRT_DIM`.
-- Main menu has 5 items: SURVIVAL, ZEN, BOT, SOUND, QUIT.
+- Main menu has 6 items: SURVIE, ARCADE, SIMULATION, ZEN, SOUND, QUIT.
 - Pause menu has 3 items: RESUME, SOUND, QUIT TO MENU.
 
 **Key source references.**
@@ -1202,17 +1209,18 @@ graph TB
 
 ---
 
-### F-45 Bot Mode
+### F-45 Simulation Mode
 
-**Description.** An AI bot that plays Survival mode autonomously by typing zombie names at the wave's announced WPM cadence. The bot validates that the survival-floor math is genuinely survivable by observation, serves as an auto-pilot demo, and can be toggled on/off mid-game via F2. A session-level "bot-tainted" flag permanently disables high-score persistence whenever bot mode has been active during that session.
+**Description.** An AI bot that plays autonomously by typing zombie names at the wave's announced WPM cadence. Simulation mode is the renamed successor of "Bot mode" — all auto-play behavior is preserved exactly. The mode serves as an auto-pilot demo and can be toggled on/off mid-game via F2. A session-level "bot-tainted" flag permanently disables high-score persistence whenever Simulation has been active during that session.
 
 **User-facing behavior.**
-- Selecting "BOT" from the main menu starts a Survival session with the bot active; a "BOT" badge (in `CRT_WARN` amber) appears on the HUD.
-- Pressing F2 during an active Survival session toggles bot mode on or off instantly. The badge appears on activation and disappears on deactivation.
-- While active, the bot types zombie names at `target_wpm / 12` characters per second (the standard 5-chars/word WPM convention), targeting the zombie closest to the bottom of the screen.
+- Selecting "SIMULATION" from the main menu starts a Simulation session; a "SIMULATION" badge (in `CRT_WARN` amber) appears on the HUD.
+- Pressing F2 during an active Simulation session toggles auto-play on or off instantly. The badge appears on activation and disappears on deactivation.
+- While active, the bot types zombie names at `target_wpm / 12` characters per second, targeting the zombie closest to the bottom of the screen.
 - The bot prioritizes the boss zombie when one is present, typing the full phrase including spaces.
 - Power-ups are picked up by killing carrier zombies but are never activated by the bot.
-- Once bot mode is activated at any point in a session, the high-score record is not updated at game-over, even if the player deactivates the bot and plays manually for the remainder.
+- Once Simulation is activated at any point in a session, no high-score record is updated at game-over, even if the player deactivates it and plays manually for the remainder.
+- The word "Bot" does not appear anywhere in the game UI; all labels, badges, and overlays use "Simulation".
 
 **System behavior.**
 - `bot_active: bool` — when `true`, the bot drives the shared `name` input buffer; player keyboard input (`GetCharPressed`, backspace, Space power-up activation) is suppressed.
@@ -1221,18 +1229,47 @@ graph TB
 - `bot_targeting_boss: bool` — `true` when the bot is typing the active boss phrase instead of a regular zombie name.
 - `bot_char_index: usize` — position within the target's name/phrase the bot has typed so far.
 - `bot_type_timer: f32` — accumulated time since the last character injection; fires when `>= 1.0 / (target_wpm / 12.0)`.
-- `bot_reaction_timer: f32` — countdown (initialised to `BOT_REACTION_DELAY = 0.2 s`) before the bot selects a new target; applied on activation, after each kill, and on wave start.
+- `bot_reaction_timer: f32` — countdown (initialised to `BOT_REACTION_DELAY = 0.2 s`) before the bot selects a new target; applied on activation, after each kill, and at wave start.
 - `updateBot()` runs inside the `.playing` screen case; gated by `bot_active and !is_transitioning and !is_dying`.
 - `selectBotTarget()` scans `zombies[]` for the highest-Y active zombie; tie-breaks first by shortest name, then by lowest X position (leftmost). When `boss != null`, `bot_targeting_boss = true` takes priority.
 - `resetBotState()` is called from `startGame()` to clear all bot variables; `bot_tainted` is also cleared there (new session).
-- F2 toggle is a no-op if `current_screen != .playing`, `is_dying`, or `game_mode != .survival`.
+- F2 toggle is a no-op if `current_screen != .playing`, `is_dying`, or `game_mode != .simulation`.
 
 **Key source references.**
 - `src/main.zig` — `bot_active`, `bot_tainted`, `bot_target_index`, `bot_targeting_boss`, `bot_char_index`, `bot_type_timer`, `bot_reaction_timer`, `BOT_REACTION_DELAY`
 - `src/main.zig` — `updateBot()`, `selectBotTarget()`, `resetBotState()`
-- `src/main.zig` — F2 toggle in `.playing` screen case; `drawCenteredText("BOT", ...)` in `drawPlayingHud()`
+- `src/main.zig` — F2 toggle in `.playing` screen case; `drawCenteredText("SIMULATION", ...)` in `drawPlayingHud()`
 
-**Dependencies.** F-30 (BOT menu entry), F-14 (wave WPM drives bot cadence), F-15/F-16 (boss handling by bot), F-27 (high-score gating via bot-tainted flag).
+**Dependencies.** F-30 (SIMULATION menu entry), F-14 (wave WPM drives bot cadence), F-15/F-16 (boss handling by bot), F-27 (high-score gating via bot-tainted flag).
+
+---
+
+### F-46 Arcade Mode
+
+**Description.** Arcade mode uses the same wave configuration as Survival but adds a 3-heart lives system and power-up carrier zombies. A zombie or boss crossing the bottom costs one heart instead of ending the game immediately. Defeating a boss restores one heart (up to the 3-heart cap). Game over triggers only when all hearts are depleted. Power-up carrier zombies spawn in Arcade mode with the same 10% probability and behavior as they previously had in Survival mode. High scores are stored independently from Survival and Zen.
+
+**User-facing behavior.** The player starts each Arcade session with 3 heart icons displayed centered at the top of the screen. When a zombie reaches the bottom, one heart icon dims and the screen briefly flashes; gameplay continues. Defeating a boss lights up an additional heart icon (up to 3) with a different flash color. Only the 3rd lost heart triggers the dying pause and game-over sequence. Power-up carriers appear, are picked up automatically on kill, and are activated with Space. The game-over screen shows the Arcade-specific best score.
+
+**System behavior.**
+- `startGame(.arcade, allocator)` sets `hearts = MAX_HEARTS` (3), `heart_flash_timer = 0.0`, `heart_flash_is_loss = false`.
+- `drawHearts()` renders `MAX_HEARTS` heart icons (`"<3"`) centered at the top of the screen at `HEART_HUD_Y` (5). Active hearts use `CRT_ERR` normally; during a restore flash (`!heart_flash_is_loss`), active hearts use `CRT_ACCENT`. Empty hearts use `CRT_DIM` normally; during a loss flash (`heart_flash_is_loss`), empty hearts use `CRT_ERR`. The function early-returns when `game_mode != .arcade`.
+- `heart_flash_timer` decrements each frame via `heart_flash_timer -= GetFrameTime()`; clamped to 0 when it would go below.
+- When a regular zombie crosses `screen_height` in Arcade mode: `hearts -= 1; heart_flash_timer = HEART_LOSS_FLASH_DURATION (0.2); heart_flash_is_loss = true; playErrorSound()`; zombie freed immediately; `wave_kills += 1`; `total_kills += 1`; if `hearts == 0` → `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = null; break;`; else `continue`.
+- When the boss crosses `screen_height` in Arcade mode with hearts remaining: same heart-decrement path; if `hearts == 0` → `is_dying = true; dying_zombie_index = null`; boss freed.
+- When the boss is defeated in Arcade mode: if `hearts < MAX_HEARTS` → `hearts += 1; heart_flash_timer = HEART_RESTORE_FLASH_DURATION (0.3); heart_flash_is_loss = false; playPowerUpSound(.shield)`.
+- Shield absorption (F-37) runs before the arcade heart-loss check: a shielded zombie does not consume a heart.
+- High score save: at game-over transition, if `score > best_score_arcade.score` → `best_score_arcade = ...; highscore.save(.arcade, ...)`.
+- Power-up carrier gating: `game_mode == .arcade` checked in `spawnZombieInZone`; same 10% drop rate (`POWER_UP_DROP_CHANCE`), same inventory slot, same activation mechanics as the pre-existing system.
+
+**Key source references.**
+- `src/main.zig` — `hearts`, `heart_flash_timer`, `heart_flash_is_loss`, `MAX_HEARTS`, `HEART_LOSS_FLASH_DURATION`, `HEART_RESTORE_FLASH_DURATION`, `HEART_HUD_Y`, `HEART_HUD_SIZE`, `HEART_SPACING`
+- `src/main.zig` — `drawHearts()` function
+- `src/main.zig` — arcade heart-loss branch in `updateZombies` and `updateBoss`
+- `src/main.zig` — boss-kill heart-restore branch in `updateBoss`
+- `src/main.zig` — `best_score_arcade` declaration and save call at dying→game-over transition
+- `src/highscore.zig` — `.arcade` branch in `filename` and `webKey`
+
+**Dependencies.** F-05 (zombie/boss crossing screen_height; arcade path), F-30 (ARCADE menu entry), F-33 (power-up carriers active in arcade), F-34–F-37 (power-up inventory and activation mechanics), F-38 (separate arcade high score), F-26 (dying transition triggered at 0 hearts).
 
 ---
 
@@ -1423,12 +1460,12 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> MainMenu : main() initialises
     MainMenu --> WpmSelect : player selects Zen
-    MainMenu --> Playing : player selects Survival
+    MainMenu --> Playing : player selects Survie / Arcade / Simulation
     WpmSelect --> Playing : WPM target chosen (game_mode=.zen)
     Playing --> Paused : Escape pressed
     Paused --> Playing : Resume selected
     Paused --> MainMenu : Quit to Menu (session discarded)
-    Playing --> Dying : zombie.y >= screen_height\nAND game_mode==.survival\nAND !shield_active
+    Playing --> Dying : zombie.y >= screen_height\nAND (game_mode==.survival OR hearts==0)\nAND !shield_active
     Dying --> GameOver : dying_timer <= 0\n(is_game_over=true, high score\ncompared and saved if beaten)
     Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\nAND boss_done
     Transitioning --> Playing : transition_timer <= 0\ncurrent_wave += 1
