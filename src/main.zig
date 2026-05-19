@@ -2066,15 +2066,6 @@ fn releaseBotTarget() void {
 }
 
 fn selectBotTarget() void {
-    // Only lock onto the boss if it has a non-empty phrase; an empty phrase
-    // would make updateBot release the target immediately on every tick,
-    // re-acquiring the same boss and spinning forever.
-    if (boss != null and boss_phrase_len > 0) {
-        bot_targeting_boss = true;
-        bot_target_index = null;
-        return;
-    }
-
     var best_index: ?usize = null;
     var best_y: f32 = -1.0;
     var best_name_len: usize = std.math.maxInt(usize);
@@ -2098,7 +2089,23 @@ fn selectBotTarget() void {
         }
     }
 
-    bot_target_index = best_index;
+    // Defer the boss until no regular zombies remain. Regular spawns are paused
+    // while the boss is alive (see the spawn gate `boss == null`), so the
+    // on-screen zombie pool is finite and shrinking; targeting the long boss
+    // phrase while zombies are mid-fall would let one land before the bot
+    // finishes the boss. As soon as the last zombie is killed selectBotTarget
+    // picks the boss on the next tick.
+    if (best_index != null) {
+        bot_target_index = best_index;
+        bot_targeting_boss = false;
+        return;
+    }
+    if (boss != null and boss_phrase_len > 0) {
+        bot_targeting_boss = true;
+        bot_target_index = null;
+        return;
+    }
+    bot_target_index = null;
     bot_targeting_boss = false;
 }
 
@@ -3651,11 +3658,15 @@ test "bot target tie-break: shortest name then leftmost" {
     bot_target_index = null;
 }
 
-test "bot target selection picks boss when present" {
+test "bot defers boss while regular zombies remain" {
     const saved_zombies = zombies;
     defer zombies = saved_zombies;
     for (&zombies) |*slot| slot.* = null;
 
+    // A zombie at y=500 is on screen with the boss present at y=100. The bot
+    // should target the zombie first — regular spawns are paused while the
+    // boss is alive, so the zombie pool only shrinks, and committing to the
+    // long boss phrase first would let the zombie land mid-typing.
     var z1 = Zombie{ .x = 100, .y = 500, .speed = 1, .name = "Alpha", .is_active = true, .frame = 0, .animation_timer = 0 };
     zombies[0] = &z1;
 
@@ -3667,16 +3678,36 @@ test "bot target selection picks boss when present" {
     }
     var boss_zombie = Zombie{ .x = 400, .y = 100, .speed = 0.5, .name = "the dead walk", .is_active = true, .frame = 0, .animation_timer = 0 };
     boss = &boss_zombie;
-    // selectBotTarget skips the boss when boss_phrase_len == 0 (defensive guard
-    // against the infinite-acquire/release loop on an empty phrase). The live
-    // spawnBoss path always sets this alongside boss; mirror that here.
+    boss_phrase_len = "the dead walk".len;
+
+    selectBotTarget();
+    try std.testing.expectEqual(false, bot_targeting_boss);
+    try std.testing.expectEqual(@as(?usize, 0), bot_target_index);
+
+    for (&zombies) |*slot| slot.* = null;
+    boss = null;
+    bot_targeting_boss = false;
+}
+
+test "bot targets boss once no regular zombies remain" {
+    const saved_zombies = zombies;
+    defer zombies = saved_zombies;
+    for (&zombies) |*slot| slot.* = null;
+
+    const saved_boss = boss;
+    const saved_phrase_len = boss_phrase_len;
+    defer {
+        boss = saved_boss;
+        boss_phrase_len = saved_phrase_len;
+    }
+    var boss_zombie = Zombie{ .x = 400, .y = 100, .speed = 0.5, .name = "the dead walk", .is_active = true, .frame = 0, .animation_timer = 0 };
+    boss = &boss_zombie;
     boss_phrase_len = "the dead walk".len;
 
     selectBotTarget();
     try std.testing.expectEqual(true, bot_targeting_boss);
     try std.testing.expectEqual(@as(?usize, null), bot_target_index);
 
-    for (&zombies) |*slot| slot.* = null;
     boss = null;
     bot_targeting_boss = false;
 }
