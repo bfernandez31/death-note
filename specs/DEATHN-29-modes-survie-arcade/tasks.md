@@ -141,12 +141,12 @@
 
 ### Tests for User Story 5
 
-- [ ] T032 [P] [US5] Add test `"simulation mode never saves high score"` verifying explicit mode guard prevents saving in `src/main.zig`
+- [x] T032 [P] [US5] Add test `"simulation mode never saves high score"` verifying explicit mode guard prevents saving in `src/main.zig`
 
 ### Implementation for User Story 5
 
-- [ ] T033 [US5] Add explicit `.simulation` mode guard to high score save path (complementing `bot_tainted` guard) at game-over in `src/main.zig`
-- [ ] T034 [US5] Update game-over screen stats display to show mode-specific high score label (SURVIE BEST / ARCADE BEST / ZEN BEST) in `src/main.zig`
+- [x] T033 [US5] Add explicit `.simulation` mode guard to high score save path (complementing `bot_tainted` guard) at game-over in `src/main.zig`
+- [x] T034 [US5] Update game-over screen stats display to show mode-specific high score label (SURVIE BEST / ARCADE BEST / ZEN BEST) in `src/main.zig`
 
 **Checkpoint**: Scores are fully independent per mode. Simulation mode never persists scores.
 

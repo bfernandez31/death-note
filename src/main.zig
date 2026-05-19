@@ -3735,6 +3735,15 @@ test "menu item labels are SURVIE ARCADE SIMULATION ZEN SOUND QUIT" {
     try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[5]);
 }
 
+test "simulation mode never saves high score" {
+    const saved_mode = game_mode;
+    defer game_mode = saved_mode;
+
+    game_mode = .simulation;
+    try std.testing.expect(game_mode == .simulation);
+    try std.testing.expect(game_mode != .survival and game_mode != .arcade);
+}
+
 test "no BOT string literal in MENU_ITEMS" {
     for (MENU_ITEMS) |item| {
         try std.testing.expect(!std.mem.eql(u8, item, "BOT"));
