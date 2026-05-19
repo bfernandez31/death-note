@@ -2096,10 +2096,15 @@ fn updateBot() void {
     if (bot_target_index == null and !bot_targeting_boss) {
         selectBotTarget();
         if (bot_target_index == null and !bot_targeting_boss) return;
-        // Keep the target just acquired; reset only the typing progress + reaction delay.
+        // releaseBotTarget (and the F2/menu activation paths) already arm
+        // bot_reaction_timer; arming it again here would double the gap between
+        // kills and drop effective WPM well below target. Pre-load bot_type_timer
+        // to the wave's per-char interval so the first character of the new
+        // target fires on the very next tick instead of waiting another full
+        // interval — the reaction delay alone is the inter-kill gap.
         bot_char_index = 0;
-        bot_type_timer = 0.0;
-        bot_reaction_timer = BOT_REACTION_DELAY;
+        const cps = @as(f32, @floatFromInt(getWaveConfig(current_wave).target_wpm)) * CHARS_PER_WORD / SECONDS_PER_MINUTE;
+        bot_type_timer = 1.0 / cps;
         letter_count = 0;
         name[0] = '\x00';
         return;
