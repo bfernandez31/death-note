@@ -25,10 +25,15 @@ pub const PowerUpType = enum {
 
 pub const POWER_UP_DROP_CHANCE: u8 = 10;
 
-pub const RUNNER_SPEED_MULTIPLIER: f32 = 1.3;
+pub const RUNNER_SPEED_MULTIPLIER: f32 = 1.6;
 pub const TANK_SPEED_MULTIPLIER: f32 = 0.5;
-pub const RUNNER_MAX_NAME_LEN: usize = 5;
-pub const TANK_MIN_NAME_LEN: usize = 8;
+// Length partition: runners take ≤3-char names, tanks take ≥9-char names,
+// standards take the 4–8 middle band. The partition is exhaustive so every
+// name has exactly one matching type (compounds like "Jean-Pierre" at 11 chars
+// route automatically to tanks; short trap-group entries to runners).
+pub const RUNNER_MAX_NAME_LEN: usize = 3;
+pub const STANDARD_MAX_NAME_LEN: usize = 8;
+pub const TANK_MIN_NAME_LEN: usize = 9;
 pub const MAX_SPAWN_RETRIES: u32 = 10;
 
 pub const SpawnWeights = struct {

@@ -286,7 +286,10 @@ fn meetsLengthConstraint(n: [*:0]const u8, zombie_type: zt.ZombieType) bool {
     return switch (zombie_type) {
         .runner => len <= zt.RUNNER_MAX_NAME_LEN,
         .tank => len >= zt.TANK_MIN_NAME_LEN,
-        .standard => true,
+        // Standards own the middle band (4–8 chars). Without this filter a long
+        // compound like "Jean-Pierre" could spawn at normal speed and be unfair;
+        // the new partition routes any ≥9-char name to tank automatically.
+        .standard => len > zt.RUNNER_MAX_NAME_LEN and len <= zt.STANDARD_MAX_NAME_LEN,
     };
 }
 
@@ -356,9 +359,22 @@ test "sufficient runner names" {
 }
 
 test "sufficient tank names" {
+    // Count across every source the tank-eligible filter can draw from
+    // (PrimaryNames + CompoundNames + TrapGroup entries). The narrowed
+    // TANK_MIN_NAME_LEN partition leaves fewer ≥9-char primaries, but the
+    // compounds carry the rest and the total pool stays comfortably above
+    // the anti-doublon retry budget.
     var count: usize = 0;
     for (PrimaryNames) |n| {
         if (cstrLen(n) >= zt.TANK_MIN_NAME_LEN) count += 1;
+    }
+    for (CompoundNames) |n| {
+        if (cstrLen(n) >= zt.TANK_MIN_NAME_LEN) count += 1;
+    }
+    for (TrapGroups) |group| {
+        for (group.names) |n| {
+            if (cstrLen(n) >= zt.TANK_MIN_NAME_LEN) count += 1;
+        }
     }
     try std.testing.expect(count >= 30);
 }
