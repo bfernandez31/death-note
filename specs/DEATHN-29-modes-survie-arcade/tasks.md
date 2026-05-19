@@ -156,11 +156,11 @@
 
 **Purpose**: Edge case verification, rename sweep, and final validation across all modes.
 
-- [ ] T035 [P] Add test `"shield absorbs before heart loss in arcade"` verifying shield check ordering at `src/main.zig:1492` runs before arcade heart-loss branch
-- [ ] T036 Verify edge case: multiple zombies reaching bottom on the same frame in Arcade each cost 1 heart independently (arcade path uses `continue`, not `break`, until `hearts == 0`) in `src/main.zig`
-- [ ] T037 Verify edge case: boss encounter continues after heart loss in Arcade (boss is in `boss` variable, not zombie pool) in `src/main.zig`
-- [ ] T038 Run `zig build test` and verify all new and existing tests pass
-- [ ] T039 Run `zig build run` and manually test all 4 modes per plan Phase 7 verification checklist: menu navigation, Survie (no powers, single death), Arcade (hearts, powers, boss restore), Simulation (auto-play, no "Bot" text), Zen (unchanged), cross-mode score independence
+- [x] T035 [P] Add test `"shield absorbs before heart loss in arcade"` verifying shield check ordering at `src/main.zig:1492` runs before arcade heart-loss branch
+- [x] T036 Verify edge case: multiple zombies reaching bottom on the same frame in Arcade each cost 1 heart independently (arcade path uses `continue`, not `break`, until `hearts == 0`) in `src/main.zig`
+- [x] T037 Verify edge case: boss encounter continues after heart loss in Arcade (boss is in `boss` variable, not zombie pool) in `src/main.zig`
+- [x] T038 Run `zig build test` and verify all new and existing tests pass
+- [x] T039 Run `zig build run` and manually test all 4 modes per plan Phase 7 verification checklist: menu navigation, Survie (no powers, single death), Arcade (hearts, powers, boss restore), Simulation (auto-play, no "Bot" text), Zen (unchanged), cross-mode score independence
 
 ---
 

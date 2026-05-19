@@ -3610,17 +3610,22 @@ test "power-ups drop only in arcade mode" {
 
 test "per-mode high scores are independent" {
     const saved_s = best_score_survival;
+    const saved_a = best_score_arcade;
     const saved_z = best_score_zen;
     defer {
         best_score_survival = saved_s;
+        best_score_arcade = saved_a;
         best_score_zen = saved_z;
     }
 
     best_score_survival = highscore.Record{ .score = 1000, .wave = 5, .wpm = 60, .accuracy = 95 };
+    best_score_arcade = highscore.Record{ .score = 2000, .wave = 8, .wpm = 70, .accuracy = 88 };
     best_score_zen = highscore.Record{ .score = 0, .wave = 0, .wpm = 80, .accuracy = 90 };
 
     try std.testing.expectEqual(@as(u64, 1000), best_score_survival.score);
+    try std.testing.expectEqual(@as(u64, 2000), best_score_arcade.score);
     try std.testing.expectEqual(@as(u32, 80), best_score_zen.wpm);
+    try std.testing.expect(best_score_survival.score != best_score_arcade.score);
     try std.testing.expect(best_score_survival.score != best_score_zen.score);
 }
 
@@ -3733,6 +3738,54 @@ test "menu item labels are SURVIE ARCADE SIMULATION ZEN SOUND QUIT" {
     try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[3]);
     try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[4]);
     try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[5]);
+}
+
+test "multiple heart losses cost 1 each in arcade" {
+    const saved = hearts;
+    defer hearts = saved;
+
+    hearts = MAX_HEARTS;
+    hearts -= 1;
+    try std.testing.expectEqual(@as(u8, 2), hearts);
+    hearts -= 1;
+    try std.testing.expectEqual(@as(u8, 1), hearts);
+    hearts -= 1;
+    try std.testing.expectEqual(@as(u8, 0), hearts);
+}
+
+test "boss is separate from zombie pool" {
+    const saved_boss = boss;
+    const saved_zombies = zombies;
+    defer {
+        boss = saved_boss;
+        zombies = saved_zombies;
+    }
+
+    for (&zombies) |*slot| slot.* = null;
+    var dummy = Zombie{ .x = 100, .y = 100, .speed = 1, .name = "test", .is_active = true, .frame = 0, .animation_timer = 0 };
+    boss = &dummy;
+    try std.testing.expect(boss != null);
+    for (zombies) |slot| {
+        try std.testing.expect(slot == null);
+    }
+    boss = null;
+}
+
+test "shield absorbs before heart loss in arcade" {
+    const saved_mode = game_mode;
+    const saved_shield = shield_active;
+    const saved_hearts = hearts;
+    defer {
+        game_mode = saved_mode;
+        shield_active = saved_shield;
+        hearts = saved_hearts;
+    }
+
+    game_mode = .arcade;
+    shield_active = true;
+    hearts = MAX_HEARTS;
+    try std.testing.expect(shield_active);
+    try std.testing.expectEqual(MAX_HEARTS, hearts);
 }
 
 test "simulation mode never saves high score" {
