@@ -218,9 +218,18 @@ var is_dying: bool = false;
 var dying_timer: f32 = 0.0;
 var dying_zombie_index: ?usize = null;
 var best_score_survival: highscore.Record = .{};
+var best_score_arcade: highscore.Record = .{};
 var best_score_zen: highscore.Record = .{};
 var last_played_mode: GameMode = .survival;
 var is_new_high_score: bool = false;
+
+// Arcade-mode lives system: the player starts with ARCADE_LIVES_START hearts.
+// Each zombie that crosses the bottom consumes one. Killing a boss restores one
+// (capped at ARCADE_LIVES_MAX). Game-over fires only when the last heart is
+// consumed. Survival mode keeps its single-mistake-equals-game-over contract.
+const ARCADE_LIVES_START: u8 = 3;
+const ARCADE_LIVES_MAX: u8 = 3;
+var arcade_lives: u8 = ARCADE_LIVES_START;
 
 var sound_cfg: sound_config.SoundConfig = .{};
 
@@ -597,7 +606,7 @@ fn frame(ctx: *FrameContext) void {
 
                     updateZombies(ctx.allocator);
 
-                    if (!is_dying and game_mode == .survival) {
+                    if (!is_dying and game_mode != .zen) {
                         const wave_cfg = getWaveConfig(current_wave);
                         if (isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
                             const threshold = (wave_cfg.pool_size + 1) / 2;
@@ -632,7 +641,7 @@ fn frame(ctx: *FrameContext) void {
                     resetZombies(ctx.allocator);
                     resetBoss(ctx.allocator);
                     // Front-load the new wave's starter pack for instant density.
-                    if (game_mode == .survival) {
+                    if (game_mode != .zen) {
                         spawnStarterPack(ctx.allocator, prng.random(), getWaveConfig(current_wave).starter_pack);
                     }
                 }
@@ -646,15 +655,28 @@ fn frame(ctx: *FrameContext) void {
                     if (audio_ready) raylib.StopMusicStream(music);
                     const avg_wpm = calculateAverageWpm();
                     const acc: u8 = @intCast(calculateStatsAccuracy());
-                    if (score > best_score_survival.score) {
-                        is_new_high_score = true;
-                        best_score_survival = highscore.Record{
-                            .score = score,
-                            .wave = current_wave,
-                            .wpm = avg_wpm,
-                            .accuracy = acc,
-                        };
-                        if (!bot_tainted) highscore.save(.survival, best_score_survival);
+                    if (game_mode == .arcade) {
+                        if (score > best_score_arcade.score) {
+                            is_new_high_score = true;
+                            best_score_arcade = highscore.Record{
+                                .score = score,
+                                .wave = current_wave,
+                                .wpm = avg_wpm,
+                                .accuracy = acc,
+                            };
+                            if (!bot_tainted) highscore.save(.arcade, best_score_arcade);
+                        }
+                    } else if (game_mode == .survival) {
+                        if (score > best_score_survival.score) {
+                            is_new_high_score = true;
+                            best_score_survival = highscore.Record{
+                                .score = score,
+                                .wave = current_wave,
+                                .wpm = avg_wpm,
+                                .accuracy = acc,
+                            };
+                            if (!bot_tainted) highscore.save(.survival, best_score_survival);
+                        }
                     }
                 }
             }
@@ -805,8 +827,8 @@ fn frame(ctx: *FrameContext) void {
     drawPopups();
 }
 
-const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "BOT", "SOUND", "QUIT" };
-const MENU_ITEM_COUNT: u8 = 5;
+const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" };
+const MENU_ITEM_COUNT: u8 = 6;
 const PAUSE_ITEMS = [_][]const u8{ "RESUME", "SOUND", "QUIT TO MENU" };
 const PAUSE_ITEM_COUNT: u8 = 3;
 
@@ -823,7 +845,7 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 startGame(.survival, allocator);
             },
             1 => {
-                current_screen = .wpm_select;
+                startGame(.arcade, allocator);
             },
             2 => {
                 startGame(.survival, allocator);
@@ -840,11 +862,14 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 name[0] = '\x00';
             },
             3 => {
+                current_screen = .wpm_select;
+            },
+            4 => {
                 sound_menu_return_screen = .main_menu;
                 sound_menu_selection = 0;
                 current_screen = .sound_settings;
             },
-            4 => {
+            5 => {
                 saveZenScoreIfBest();
                 should_quit_app = true;
             },
@@ -870,7 +895,11 @@ fn drawMenu() void {
     }
 
     var hs_buf: [64]u8 = undefined;
-    const menu_best = if (last_played_mode == .zen) best_score_zen else best_score_survival;
+    const menu_best = switch (last_played_mode) {
+        .zen => best_score_zen,
+        .arcade => best_score_arcade,
+        .survival => best_score_survival,
+    };
     const hs_text = if (last_played_mode == .zen)
         std.fmt.bufPrintZ(&hs_buf, "BEST: {d} WPM - {d}% ACC", .{ menu_best.wpm, menu_best.accuracy }) catch "BEST: ---"
     else
@@ -1168,10 +1197,12 @@ fn drawPlayingHud() void {
     drawMetricsHud();
 
     if (bot_active) {
-        drawCenteredText("BOT", 35, 24, CRT_WARN);
+        drawCenteredText("SIMULATION", 35, 24, CRT_WARN);
     }
 
-    if (game_mode == .survival) {
+    if (game_mode == .arcade) {
+        drawArcadeLivesHud();
+
         if (held_power_up) |pu| {
             const label: [*:0]const u8 = switch (pu) {
                 .freeze => "[*] FREEZE",
@@ -1199,6 +1230,25 @@ fn drawPlayingHud() void {
             drawText("SHIELD ARMED", SCORE_HUD_X, shield_y, METRICS_HUD_SIZE, CRT_WARN);
         }
     }
+}
+
+fn drawArcadeLivesHud() void {
+    var lives_buf: [32]u8 = undefined;
+    var text_buf: [32]u8 = undefined;
+    var i: u8 = 0;
+    var written: usize = 0;
+    while (i < arcade_lives and written + 3 < lives_buf.len) : (i += 1) {
+        if (written > 0) {
+            lives_buf[written] = ' ';
+            written += 1;
+        }
+        lives_buf[written] = '<';
+        lives_buf[written + 1] = '3';
+        written += 2;
+    }
+    lives_buf[written] = 0;
+    const lives_text = std.fmt.bufPrintZ(&text_buf, "LIVES: {s}", .{lives_buf[0..written]}) catch "LIVES";
+    drawText(lives_text.ptr, screen_width / 2 - 80, 40, METRICS_HUD_SIZE, CRT_ERR);
 }
 
 fn getFallSpeed() f32 {
@@ -1314,9 +1364,10 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     bot_tainted = false;
     resetZombies(allocator);
     resetBoss(allocator);
+    arcade_lives = ARCADE_LIVES_START;
     // Front-load the wave 1 starter pack so the screen is dense from t=0
     // (sustained density model, see SPAWN_DELAY_BASE comment).
-    if (mode == .survival) {
+    if (mode != .zen) {
         spawnStarterPack(allocator, prng.random(), getWaveConfig(current_wave).starter_pack);
     }
     if (sound_cfg.music_enabled and audio_ready) {
@@ -1433,6 +1484,7 @@ pub fn main() !void {
     prng = std.Random.DefaultPrng.init(seed);
 
     best_score_survival = highscore.load(.survival);
+    best_score_arcade = highscore.load(.arcade);
     best_score_zen = highscore.load(.zen);
     sound_cfg = sound_config.load();
 
@@ -1486,7 +1538,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                     slot.* = null;
                     continue;
                 }
-                // Survival: a shield absorbs every zombie that crosses this frame, then disarms once.
+                // Arcade/Survival: a shield absorbs every zombie that crosses this frame, then disarms once.
                 // Disarming after the loop prevents a cluster (e.g. freeze expiry advancing several past
                 // the bottom in one step) from leaking a second zombie past the shield.
                 if (shield_active) {
@@ -1497,6 +1549,24 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                     // otherwise the wave stalls because spawned > kills forever.
                     wave_kills += 1;
                     total_kills += 1;
+                    continue;
+                }
+                if (game_mode == .arcade) {
+                    // Arcade: a lost heart counts as wave progress (otherwise spawned > kills
+                    // forever and the wave stalls). Game-over only fires when the last heart
+                    // is consumed. The zombie is still cleared from the screen so the player
+                    // can keep typing without it blocking future spawns. total_kills is not
+                    // incremented — the player did not slay this zombie.
+                    if (arcade_lives > 0) arcade_lives -= 1;
+                    wave_kills += 1;
+                    allocator.destroy(zomb);
+                    slot.* = null;
+                    if (arcade_lives == 0) {
+                        is_dying = true;
+                        dying_timer = DYING_DURATION;
+                        dying_zombie_index = null;
+                        break;
+                    }
                     continue;
                 }
                 is_dying = true;
@@ -1730,7 +1800,7 @@ fn spawnZombieInZone(allocator: *std.mem.Allocator, rng: std.Random, zone_x_min:
             const x: f32 = @floatFromInt(candidate);
 
             var carrier_power_up: ?PowerUpType = null;
-            if (game_mode == .survival) {
+            if (game_mode == .arcade) {
                 if (rng.intRangeAtMost(u8, 0, 99) < zt.POWER_UP_DROP_CHANCE) {
                     carrier_power_up = switch (rng.intRangeAtMost(u8, 0, 2)) {
                         0 => .freeze,
@@ -1855,6 +1925,17 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
         }
 
         if (b.y >= screen_height) {
+            if (game_mode == .arcade) {
+                if (arcade_lives > 0) arcade_lives -= 1;
+                allocator.destroy(b);
+                boss = null;
+                if (arcade_lives == 0) {
+                    is_dying = true;
+                    dying_timer = DYING_DURATION;
+                    dying_zombie_index = null;
+                }
+                return;
+            }
             is_dying = true;
             dying_timer = DYING_DURATION;
             dying_zombie_index = null;
@@ -1872,6 +1953,12 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
             letter_count = 0;
             name[0] = '\x00';
             total_kills += 1;
+            // Arcade: each boss kill restores one heart, capped at ARCADE_LIVES_MAX.
+            // Gives the arcade player a tangible incentive to fight bosses cleanly
+            // instead of relying solely on powers / accumulated lives.
+            if (game_mode == .arcade and arcade_lives < ARCADE_LIVES_MAX) {
+                arcade_lives += 1;
+            }
             // Give the player a full spawn_delay of breathing room before regular
             // zombies resume — typing the boss phrase is enough work for one beat.
             spawn_timer = 0.0;
@@ -2038,6 +2125,7 @@ fn resetSessionState() void {
     held_power_up = null;
     freeze_timer = 0.0;
     shield_active = false;
+    arcade_lives = ARCADE_LIVES_START;
 }
 
 fn resetBotState() void {
@@ -2742,6 +2830,7 @@ test "restart resets session state but preserves best_score" {
     const saved_index = dying_zombie_index;
     const saved_best = best_score_survival;
     const saved_new_hs = is_new_high_score;
+    const saved_lives = arcade_lives;
     defer {
         total_kills = saved_kills;
         is_dying = saved_dying;
@@ -2749,6 +2838,7 @@ test "restart resets session state but preserves best_score" {
         dying_zombie_index = saved_index;
         best_score_survival = saved_best;
         is_new_high_score = saved_new_hs;
+        arcade_lives = saved_lives;
     }
 
     best_score_survival = highscore.Record{ .score = 500, .wave = 3, .wpm = 40, .accuracy = 90 };
@@ -2757,6 +2847,7 @@ test "restart resets session state but preserves best_score" {
     dying_timer = 0.5;
     dying_zombie_index = 3;
     is_new_high_score = true;
+    arcade_lives = 1;
 
     resetSessionState();
 
@@ -2765,6 +2856,7 @@ test "restart resets session state but preserves best_score" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), dying_timer, 0.001);
     try std.testing.expect(dying_zombie_index == null);
     try std.testing.expect(!is_new_high_score);
+    try std.testing.expectEqual(ARCADE_LIVES_START, arcade_lives);
     try std.testing.expectEqual(@as(u64, 500), best_score_survival.score);
     try std.testing.expectEqual(@as(u32, 3), best_score_survival.wave);
     try std.testing.expectEqual(@as(u32, 40), best_score_survival.wpm);
@@ -3209,8 +3301,8 @@ test "GameScreen enum has exactly 6 variants" {
 }
 
 test "menu selection circular wrap" {
-    try std.testing.expectEqual(@as(u8, 4), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(u8, 0), (4 +% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 5), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (5 +% 1) % MENU_ITEM_COUNT);
     try std.testing.expectEqual(@as(u8, 1), (0 +% 1) % MENU_ITEM_COUNT);
 }
 
@@ -3445,18 +3537,75 @@ test "carrier zombie power-up field is optional" {
 
 test "per-mode high scores are independent" {
     const saved_s = best_score_survival;
+    const saved_a = best_score_arcade;
     const saved_z = best_score_zen;
     defer {
         best_score_survival = saved_s;
+        best_score_arcade = saved_a;
         best_score_zen = saved_z;
     }
 
     best_score_survival = highscore.Record{ .score = 1000, .wave = 5, .wpm = 60, .accuracy = 95 };
+    best_score_arcade = highscore.Record{ .score = 7500, .wave = 12, .wpm = 75, .accuracy = 88 };
     best_score_zen = highscore.Record{ .score = 0, .wave = 0, .wpm = 80, .accuracy = 90 };
 
     try std.testing.expectEqual(@as(u64, 1000), best_score_survival.score);
+    try std.testing.expectEqual(@as(u64, 7500), best_score_arcade.score);
     try std.testing.expectEqual(@as(u32, 80), best_score_zen.wpm);
-    try std.testing.expect(best_score_survival.score != best_score_zen.score);
+    try std.testing.expect(best_score_survival.score != best_score_arcade.score);
+    try std.testing.expect(best_score_arcade.score != best_score_zen.score);
+}
+
+test "arcade lives start at ARCADE_LIVES_START" {
+    try std.testing.expectEqual(@as(u8, 3), ARCADE_LIVES_START);
+    try std.testing.expectEqual(@as(u8, 3), ARCADE_LIVES_MAX);
+}
+
+test "arcade lives are restored to ARCADE_LIVES_START on session reset" {
+    const saved = arcade_lives;
+    defer arcade_lives = saved;
+
+    arcade_lives = 0;
+    resetSessionState();
+    try std.testing.expectEqual(ARCADE_LIVES_START, arcade_lives);
+}
+
+test "arcade boss kill regen caps at ARCADE_LIVES_MAX" {
+    const saved = arcade_lives;
+    defer arcade_lives = saved;
+
+    arcade_lives = ARCADE_LIVES_MAX;
+    // Mirror the regen branch in updateBoss(): only bumps when under the cap.
+    if (arcade_lives < ARCADE_LIVES_MAX) arcade_lives += 1;
+    try std.testing.expectEqual(ARCADE_LIVES_MAX, arcade_lives);
+
+    arcade_lives = 1;
+    if (arcade_lives < ARCADE_LIVES_MAX) arcade_lives += 1;
+    try std.testing.expectEqual(@as(u8, 2), arcade_lives);
+}
+
+test "arcade lives decrement to zero triggers game over signal" {
+    const saved_lives = arcade_lives;
+    const saved_dying = is_dying;
+    defer {
+        arcade_lives = saved_lives;
+        is_dying = saved_dying;
+    }
+
+    arcade_lives = 2;
+    is_dying = false;
+
+    // Two zombies cross the bottom — first removes a life, no game over.
+    if (arcade_lives > 0) arcade_lives -= 1;
+    if (arcade_lives == 0) is_dying = true;
+    try std.testing.expectEqual(@as(u8, 1), arcade_lives);
+    try std.testing.expect(!is_dying);
+
+    // Third crossing drains the last heart — game over fires.
+    if (arcade_lives > 0) arcade_lives -= 1;
+    if (arcade_lives == 0) is_dying = true;
+    try std.testing.expectEqual(@as(u8, 0), arcade_lives);
+    try std.testing.expect(is_dying);
 }
 
 test "sample count constants match array sizes" {
@@ -3556,14 +3705,15 @@ test "bot state reset clears all fields" {
     try std.testing.expectEqual(@as(f32, 0.0), bot_reaction_timer);
 }
 
-test "menu has 5 items with BOT at index 2" {
-    try std.testing.expectEqual(@as(u8, 5), MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(usize, 5), MENU_ITEMS.len);
-    try std.testing.expectEqualStrings("BOT", MENU_ITEMS[2]);
+test "menu has 6 items with SIMULATION at index 2" {
+    try std.testing.expectEqual(@as(u8, 6), MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(usize, 6), MENU_ITEMS.len);
     try std.testing.expectEqualStrings("SURVIVAL", MENU_ITEMS[0]);
-    try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[1]);
-    try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[3]);
-    try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[4]);
+    try std.testing.expectEqualStrings("ARCADE", MENU_ITEMS[1]);
+    try std.testing.expectEqualStrings("SIMULATION", MENU_ITEMS[2]);
+    try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[3]);
+    try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[4]);
+    try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[5]);
 }
 
 test "bot_tainted blocks high score save" {
