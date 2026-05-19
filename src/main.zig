@@ -489,6 +489,11 @@ fn frame(ctx: *FrameContext) void {
                     bot_target_index = null;
                     bot_targeting_boss = false;
                     bot_char_index = 0;
+                    // The bot may have been mid-name; the human taking control must
+                    // not inherit a partial buffer or the next keystroke would
+                    // append to whatever fragment the bot left behind.
+                    letter_count = 0;
+                    name[0] = '\x00';
                 } else {
                     bot_active = true;
                     bot_tainted = true;
@@ -512,7 +517,7 @@ fn frame(ctx: *FrameContext) void {
                         var space_consumed = false;
                         // Boss phrases contain spaces ("the dead walk again", ...), so during a
                         // boss fight space must be a typing character, not the power-up trigger.
-                        if (raylib.IsKeyPressed(raylib.KEY_SPACE) and held_power_up != null and boss == null) {
+                        if (raylib.IsKeyPressed(raylib.KEY_SPACE) and humanPowerUpReady()) {
                             activatePowerUp(ctx.allocator);
                             space_consumed = true;
                         }
@@ -809,8 +814,17 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
             },
             2 => {
                 startGame(.survival, allocator);
+                // Match the F2 toggle-on path so the bot waits BOT_REACTION_DELAY before
+                // committing to a target (FR-004), and the typing state is clean.
                 bot_active = true;
                 bot_tainted = true;
+                bot_reaction_timer = BOT_REACTION_DELAY;
+                bot_target_index = null;
+                bot_targeting_boss = false;
+                bot_char_index = 0;
+                bot_type_timer = 0.0;
+                letter_count = 0;
+                name[0] = '\x00';
             },
             3 => {
                 sound_menu_return_screen = .main_menu;
@@ -2015,6 +2029,14 @@ fn resetBotState() void {
 
 // Drops the current bot target (if any) and rearms the reaction delay so the
 // bot waits BOT_REACTION_DELAY before locking on to whatever it picks next.
+// Power-up activation predicate: the human Space-key handler may only fire
+// when the bot isn't driving input, a power-up is held, and no boss is active
+// (boss fights make Space a typing character, not a trigger). Extracted so the
+// bot-suppression contract (FR-008) is unit-testable from a single source.
+fn humanPowerUpReady() bool {
+    return !bot_active and held_power_up != null and boss == null;
+}
+
 fn releaseBotTarget() void {
     bot_target_index = null;
     bot_targeting_boss = false;
@@ -2026,7 +2048,10 @@ fn releaseBotTarget() void {
 }
 
 fn selectBotTarget() void {
-    if (boss != null) {
+    // Only lock onto the boss if it has a non-empty phrase; an empty phrase
+    // would make updateBot release the target immediately on every tick,
+    // re-acquiring the same boss and spinning forever.
+    if (boss != null and boss_phrase_len > 0) {
         bot_targeting_boss = true;
         bot_target_index = null;
         return;
@@ -2092,10 +2117,19 @@ fn updateBot() void {
         }
     }
 
-    const target_wpm = if (game_mode == .zen)
-        zen_target_wpm
-    else
-        getWaveConfig(current_wave).target_wpm;
+    // updateZombies (and updateBoss) reset `letter_count` to 0 on every kill,
+    // including kills against zombies the bot was not targeting. Without this
+    // sync the bot would write target_name[bot_char_index] into name[0],
+    // producing garbage that fails typedMatchesAnyEnemy and bills a wrong_char
+    // every tick until the bot releases the target. Re-aligning bot_char_index
+    // to letter_count makes the bot retype from the start of the current target.
+    if (bot_char_index != letter_count) {
+        bot_char_index = letter_count;
+    }
+
+    // Bot mode is gated to Survival in both activation paths, so target_wpm
+    // always comes from the wave config — no Zen branch needed here.
+    const target_wpm = getWaveConfig(current_wave).target_wpm;
     const chars_per_second = @as(f32, @floatFromInt(target_wpm)) * CHARS_PER_WORD / SECONDS_PER_MINUTE;
     const interval = 1.0 / chars_per_second;
 
@@ -3616,6 +3650,30 @@ test "bot target selection picks boss when present" {
     bot_targeting_boss = false;
 }
 
-test "bot never activates power-ups" {
-    try std.testing.expect(true);
+test "humanPowerUpReady gates Space-key power-up activation" {
+    const saved_bot = bot_active;
+    const saved_held = held_power_up;
+    const saved_boss = boss;
+    defer {
+        bot_active = saved_bot;
+        held_power_up = saved_held;
+        boss = saved_boss;
+    }
+
+    boss = null;
+    held_power_up = .bomb;
+
+    // Human in control with a held power-up and no boss → activation allowed.
+    bot_active = false;
+    try std.testing.expect(humanPowerUpReady());
+
+    // Bot driving → activation MUST be suppressed (FR-008), even with a held
+    // power-up and no boss. Regressions that drop the `!bot_active` term fail here.
+    bot_active = true;
+    try std.testing.expect(!humanPowerUpReady());
+
+    // Bot off but no power-up held → still false.
+    bot_active = false;
+    held_power_up = null;
+    try std.testing.expect(!humanPowerUpReady());
 }
