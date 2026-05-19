@@ -2303,18 +2303,18 @@ test "boss wave detection" {
 }
 
 test "boss spawn threshold calculation" {
-    // pool_size values under the new round(45 × target_wpm / 72) formula.
+    // pool_size values under round(WAVE_DURATION_TARGET_S × target_wpm / 72) = round(36 × wpm / 72).
     const cfg5 = getWaveConfig(5);
-    try std.testing.expectEqual(@as(u32, 25), cfg5.pool_size); // wpm 40 → 25
-    try std.testing.expectEqual(@as(u32, 13), (cfg5.pool_size + 1) / 2);
+    try std.testing.expectEqual(@as(u32, 20), cfg5.pool_size); // wpm 40 → round(36×40/72) = 20
+    try std.testing.expectEqual(@as(u32, 10), (cfg5.pool_size + 1) / 2);
 
     const cfg10 = getWaveConfig(10);
-    try std.testing.expectEqual(@as(u32, 41), cfg10.pool_size); // wpm 65 → 41
-    try std.testing.expectEqual(@as(u32, 21), (cfg10.pool_size + 1) / 2);
+    try std.testing.expectEqual(@as(u32, 33), cfg10.pool_size); // wpm 65 → round(36×65/72) = round(32.5) = 33
+    try std.testing.expectEqual(@as(u32, 17), (cfg10.pool_size + 1) / 2);
 
     const cfg20 = getWaveConfig(20);
-    try std.testing.expectEqual(@as(u32, 72), cfg20.pool_size); // wpm 115 → 72
-    try std.testing.expectEqual(@as(u32, 36), (cfg20.pool_size + 1) / 2);
+    try std.testing.expectEqual(@as(u32, 58), cfg20.pool_size); // wpm 115 → round(36×115/72) = round(57.5) = 58
+    try std.testing.expectEqual(@as(u32, 29), (cfg20.pool_size + 1) / 2);
 }
 
 test "getCurrentMaxInput returns correct limits" {
