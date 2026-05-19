@@ -806,8 +806,8 @@ fn frame(ctx: *FrameContext) void {
     drawPopups();
 }
 
-const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ZEN", "BOT", "SOUND", "QUIT" };
-const MENU_ITEM_COUNT: u8 = 5;
+const MENU_ITEMS = [_][]const u8{ "SURVIE", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" };
+const MENU_ITEM_COUNT: u8 = 6;
 const PAUSE_ITEMS = [_][]const u8{ "RESUME", "SOUND", "QUIT TO MENU" };
 const PAUSE_ITEM_COUNT: u8 = 3;
 
@@ -824,12 +824,10 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 startGame(.survival, allocator);
             },
             1 => {
-                current_screen = .wpm_select;
+                startGame(.arcade, allocator);
             },
             2 => {
-                startGame(.survival, allocator);
-                // Match the F2 toggle-on path so the bot waits BOT_REACTION_DELAY before
-                // committing to a target (FR-004), and the typing state is clean.
+                startGame(.simulation, allocator);
                 bot_active = true;
                 bot_tainted = true;
                 bot_reaction_timer = BOT_REACTION_DELAY;
@@ -841,11 +839,14 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 name[0] = '\x00';
             },
             3 => {
+                current_screen = .wpm_select;
+            },
+            4 => {
                 sound_menu_return_screen = .main_menu;
                 sound_menu_selection = 0;
                 current_screen = .sound_settings;
             },
-            4 => {
+            5 => {
                 saveZenScoreIfBest();
                 should_quit_app = true;
             },
@@ -871,11 +872,12 @@ fn drawMenu() void {
     }
 
     var hs_buf: [64]u8 = undefined;
-    const menu_best = if (last_played_mode == .zen) best_score_zen else best_score_survival;
-    const hs_text = if (last_played_mode == .zen)
-        std.fmt.bufPrintZ(&hs_buf, "BEST: {d} WPM - {d}% ACC", .{ menu_best.wpm, menu_best.accuracy }) catch "BEST: ---"
-    else
-        std.fmt.bufPrintZ(&hs_buf, "BEST: {d:0>6} - WAVE {d}", .{ menu_best.score, menu_best.wave }) catch "BEST: ---";
+    const hs_text = switch (last_played_mode) {
+        .zen => std.fmt.bufPrintZ(&hs_buf, "ZEN BEST: {d} WPM - {d}% ACC", .{ best_score_zen.wpm, best_score_zen.accuracy }) catch "ZEN BEST: ---",
+        .arcade => std.fmt.bufPrintZ(&hs_buf, "ARCADE BEST: {d:0>6} - WAVE {d}", .{ best_score_arcade.score, best_score_arcade.wave }) catch "ARCADE BEST: ---",
+        .simulation => std.fmt.bufPrintZ(&hs_buf, "SURVIE BEST: {d:0>6} - WAVE {d}", .{ best_score_survival.score, best_score_survival.wave }) catch "SURVIE BEST: ---",
+        .survival => std.fmt.bufPrintZ(&hs_buf, "SURVIE BEST: {d:0>6} - WAVE {d}", .{ best_score_survival.score, best_score_survival.wave }) catch "SURVIE BEST: ---",
+    };
     drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM_TEXT);
 }
 
@@ -3211,8 +3213,8 @@ test "GameScreen enum has exactly 6 variants" {
 }
 
 test "menu selection circular wrap" {
-    try std.testing.expectEqual(@as(u8, 4), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(u8, 0), (4 +% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 5), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (5 +% 1) % MENU_ITEM_COUNT);
     try std.testing.expectEqual(@as(u8, 1), (0 +% 1) % MENU_ITEM_COUNT);
 }
 
@@ -3558,14 +3560,18 @@ test "bot state reset clears all fields" {
     try std.testing.expectEqual(@as(f32, 0.0), bot_reaction_timer);
 }
 
-test "menu has 5 items with BOT at index 2" {
-    try std.testing.expectEqual(@as(u8, 5), MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(usize, 5), MENU_ITEMS.len);
-    try std.testing.expectEqualStrings("BOT", MENU_ITEMS[2]);
-    try std.testing.expectEqualStrings("SURVIVAL", MENU_ITEMS[0]);
-    try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[1]);
-    try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[3]);
-    try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[4]);
+test "menu has 6 items" {
+    try std.testing.expectEqual(@as(u8, 6), MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(usize, 6), MENU_ITEMS.len);
+}
+
+test "menu item labels are SURVIE ARCADE SIMULATION ZEN SOUND QUIT" {
+    try std.testing.expectEqualStrings("SURVIE", MENU_ITEMS[0]);
+    try std.testing.expectEqualStrings("ARCADE", MENU_ITEMS[1]);
+    try std.testing.expectEqualStrings("SIMULATION", MENU_ITEMS[2]);
+    try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[3]);
+    try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[4]);
+    try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[5]);
 }
 
 test "bot_tainted blocks high score save" {

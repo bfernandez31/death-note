@@ -52,14 +52,14 @@
 
 ### Tests for User Story 1
 
-- [ ] T007 [P] [US1] Add test `"menu has 6 items"` verifying `MENU_ITEMS.len == 6` and `MENU_ITEM_COUNT == 6` in `src/main.zig`
-- [ ] T008 [P] [US1] Add test `"menu item labels are SURVIE ARCADE SIMULATION ZEN SOUND QUIT"` verifying exact label strings and order in `src/main.zig`
+- [x] T007 [P] [US1] Add test `"menu has 6 items"` verifying `MENU_ITEMS.len == 6` and `MENU_ITEM_COUNT == 6` in `src/main.zig`
+- [x] T008 [P] [US1] Add test `"menu item labels are SURVIE ARCADE SIMULATION ZEN SOUND QUIT"` verifying exact label strings and order in `src/main.zig`
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Update `MENU_ITEMS` array to `{ "SURVIE", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" }` and `MENU_ITEM_COUNT` to `6` in `src/main.zig:808-809`
-- [ ] T010 [US1] Update `updateMenu()` switch at `src/main.zig:821-852`: index 0 = SURVIE (`startGame(.survival, allocator)`), index 1 = ARCADE (`startGame(.arcade, allocator)`), index 2 = SIMULATION (current bot activation code with `.simulation`), index 3 = ZEN (current zen flow), index 4 = SOUND, index 5 = QUIT
-- [ ] T011 [US1] Update `drawMenu()` high score display at `src/main.zig:872-878` to handle `.arcade` and `.simulation` in the `last_played_mode` conditional, add mode label prefix (e.g., "SURVIE BEST:" / "ARCADE BEST:")
+- [x] T009 [US1] Update `MENU_ITEMS` array to `{ "SURVIE", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" }` and `MENU_ITEM_COUNT` to `6` in `src/main.zig:808-809`
+- [x] T010 [US1] Update `updateMenu()` switch at `src/main.zig:821-852`: index 0 = SURVIE (`startGame(.survival, allocator)`), index 1 = ARCADE (`startGame(.arcade, allocator)`), index 2 = SIMULATION (current bot activation code with `.simulation`), index 3 = ZEN (current zen flow), index 4 = SOUND, index 5 = QUIT
+- [x] T011 [US1] Update `drawMenu()` high score display at `src/main.zig:872-878` to handle `.arcade` and `.simulation` in the `last_played_mode` conditional, add mode label prefix (e.g., "SURVIE BEST:" / "ARCADE BEST:")
 
 **Checkpoint**: Menu shows 6 items. Each mode launches correctly. High score display shows mode-specific labels.
 
