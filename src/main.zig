@@ -22,6 +22,14 @@ const TANK_SPEED_MULTIPLIER = zt.TANK_SPEED_MULTIPLIER;
 const getSpawnWeights = zt.getSpawnWeights;
 const getNameWeights = zt.getNameWeights;
 
+// Wave-based modes share the wave/boss/starter-pack lifecycle; zen runs an endless flow.
+fn isWaveMode(mode: GameMode) bool {
+    return switch (mode) {
+        .survival, .arcade, .simulation => true,
+        .zen => false,
+    };
+}
+
 const is_web = builtin.target.os.tag == .emscripten;
 
 const MAX_ZOMBIES = 100;
@@ -605,7 +613,7 @@ fn frame(ctx: *FrameContext) void {
 
                     updateZombies(ctx.allocator);
 
-                    if (!is_dying and (game_mode == .survival or game_mode == .arcade or game_mode == .simulation)) {
+                    if (!is_dying and isWaveMode(game_mode)) {
                         const wave_cfg = getWaveConfig(current_wave);
                         if (isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
                             const threshold = (wave_cfg.pool_size + 1) / 2;
@@ -639,7 +647,7 @@ fn frame(ctx: *FrameContext) void {
                     resetMetricsState();
                     resetZombies(ctx.allocator);
                     resetBoss(ctx.allocator);
-                    if (game_mode == .survival or game_mode == .arcade or game_mode == .simulation) {
+                    if (isWaveMode(game_mode)) {
                         spawnStarterPack(ctx.allocator, prng.random(), getWaveConfig(current_wave).starter_pack);
                     }
                 }
@@ -659,22 +667,18 @@ fn frame(ctx: *FrameContext) void {
                         .wpm = avg_wpm,
                         .accuracy = acc,
                     };
-                    switch (game_mode) {
-                        .survival => {
-                            if (score > best_score_survival.score) {
-                                is_new_high_score = true;
-                                best_score_survival = new_record;
-                                if (!bot_tainted) highscore.save(.survival, best_score_survival);
-                            }
-                        },
-                        .arcade => {
-                            if (score > best_score_arcade.score) {
-                                is_new_high_score = true;
-                                best_score_arcade = new_record;
-                                if (!bot_tainted) highscore.save(.arcade, best_score_arcade);
-                            }
-                        },
-                        .simulation, .zen => {},
+                    // Simulation runs never record (bot-driven); zen uses its own save path elsewhere.
+                    const best_slot: ?*highscore.Record = switch (game_mode) {
+                        .survival => &best_score_survival,
+                        .arcade => &best_score_arcade,
+                        .simulation, .zen => null,
+                    };
+                    if (best_slot) |best| {
+                        if (score > best.score) {
+                            is_new_high_score = true;
+                            best.* = new_record;
+                            if (!bot_tainted) highscore.save(game_mode, best.*);
+                        }
                     }
                 }
             }
@@ -907,8 +911,7 @@ fn drawMenu() void {
     const hs_text = switch (last_played_mode) {
         .zen => std.fmt.bufPrintZ(&hs_buf, "ZEN BEST: {d} WPM - {d}% ACC", .{ best_score_zen.wpm, best_score_zen.accuracy }) catch "ZEN BEST: ---",
         .arcade => std.fmt.bufPrintZ(&hs_buf, "ARCADE BEST: {d:0>6} - WAVE {d}", .{ best_score_arcade.score, best_score_arcade.wave }) catch "ARCADE BEST: ---",
-        .simulation => std.fmt.bufPrintZ(&hs_buf, "SURVIE BEST: {d:0>6} - WAVE {d}", .{ best_score_survival.score, best_score_survival.wave }) catch "SURVIE BEST: ---",
-        .survival => std.fmt.bufPrintZ(&hs_buf, "SURVIE BEST: {d:0>6} - WAVE {d}", .{ best_score_survival.score, best_score_survival.wave }) catch "SURVIE BEST: ---",
+        .survival, .simulation => std.fmt.bufPrintZ(&hs_buf, "SURVIE BEST: {d:0>6} - WAVE {d}", .{ best_score_survival.score, best_score_survival.wave }) catch "SURVIE BEST: ---",
     };
     drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM_TEXT);
 }
@@ -1374,7 +1377,7 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     heart_flash_is_loss = false;
     resetZombies(allocator);
     resetBoss(allocator);
-    if (mode == .survival or mode == .arcade or mode == .simulation) {
+    if (isWaveMode(mode)) {
         spawnStarterPack(allocator, prng.random(), getWaveConfig(current_wave).starter_pack);
     }
     if (sound_cfg.music_enabled and audio_ready) {
