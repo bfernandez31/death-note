@@ -114,11 +114,14 @@ const TIME_ON_SCREEN_BASE: f32 = 30.0;
 const TIME_ON_SCREEN_MIN: f32 = 4.0;
 const TIME_ON_SCREEN_DECAY_PER_WAVE: f32 = 0.9;
 // Step speedup applied after each cleared boss wave (every BOSS_WAVE_INTERVAL).
-// Wave 1-5 stay at the linear decay; wave 6+ adds 5s of shaved fall time per
-// completed boss tier, wave 11+ adds 10s, etc. — closes the gap between the
-// announced target_wpm and the actual survival floor that grew with the linear
-// decay alone.
+// Wave 1-5 stay at the linear decay; wave 6+ adds BOSS_TIER_TIME_BONUS of shaved
+// fall time per completed boss tier (wave 11 adds 2× the bonus, etc.).
 const BOSS_TIER_TIME_BONUS: f32 = 5.0;
+// Per-wave acceleration applied *within* a tier (does not fire on the boundary
+// wave itself, so wave 6/11/16 stay calibrated). Each subsequent wave inside
+// the tier shaves an extra BOSS_INTRA_TIER_BONUS seconds, so the late-tier
+// waves catch the announced target_wpm instead of drifting easier.
+const BOSS_INTRA_TIER_BONUS: f32 = 2.0;
 
 const STARTER_PACK_BASE: f32 = 6.0;
 const STARTER_PACK_INCREMENT_PER_WAVE: f32 = 0.25;
@@ -1809,10 +1812,15 @@ fn getWaveConfig(wave: u32) WaveConfig {
 
     // Decoupled fall time: long at wave 1 (30s) so 20-wpm players can clear the
     // front-loaded cascade; tightens to a 4s floor for late-wave challenge.
-    // After each completed boss wave the base shrinks by BOSS_TIER_TIME_BONUS,
-    // creating a step-up "tier" feel that catches the announced target_wpm.
+    // After each completed boss wave the base shrinks by BOSS_TIER_TIME_BONUS
+    // (the "step" jump). Within a tier, each subsequent wave shaves another
+    // BOSS_INTRA_TIER_BONUS so the late-tier waves don't drift back to easier.
+    // Intra-tier acceleration is gated to tier ≥ 1 — wave 1-5 keep their
+    // original linear-decay pace so the wave-1 20-wpm contract stays exact.
     const boss_tier_count: u32 = (wave - 1) / BOSS_WAVE_INTERVAL;
-    const boss_tier_speedup: f32 = @as(f32, @floatFromInt(boss_tier_count)) * BOSS_TIER_TIME_BONUS;
+    const tier_progress: u32 = if (boss_tier_count == 0) 0 else (wave - 1) % BOSS_WAVE_INTERVAL;
+    const boss_tier_speedup: f32 = @as(f32, @floatFromInt(boss_tier_count)) * BOSS_TIER_TIME_BONUS +
+        @as(f32, @floatFromInt(tier_progress)) * BOSS_INTRA_TIER_BONUS;
     const time_on_screen = @max(TIME_ON_SCREEN_MIN, TIME_ON_SCREEN_BASE - TIME_ON_SCREEN_DECAY_PER_WAVE * (wave_f - 1.0) - boss_tier_speedup);
 
     const sh: f32 = @floatFromInt(screen_height);
