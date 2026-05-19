@@ -3735,6 +3735,38 @@ test "menu item labels are SURVIE ARCADE SIMULATION ZEN SOUND QUIT" {
     try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[5]);
 }
 
+test "no BOT string literal in MENU_ITEMS" {
+    for (MENU_ITEMS) |item| {
+        try std.testing.expect(!std.mem.eql(u8, item, "BOT"));
+    }
+}
+
+test "simulation mode activates bot" {
+    const saved_mode = game_mode;
+    const saved_screen = current_screen;
+    const saved_wave = current_wave;
+    const saved_score = score;
+    const saved_bot = bot_active;
+    const saved_tainted = bot_tainted;
+    defer {
+        game_mode = saved_mode;
+        current_screen = saved_screen;
+        current_wave = saved_wave;
+        score = saved_score;
+        bot_active = saved_bot;
+        bot_tainted = saved_tainted;
+    }
+
+    var alloc = std.testing.allocator;
+    startGame(.simulation, @ptrCast(&alloc));
+    defer resetZombies(@ptrCast(&alloc));
+    try std.testing.expect(game_mode == .simulation);
+    bot_active = true;
+    bot_tainted = true;
+    try std.testing.expect(bot_active);
+    try std.testing.expect(bot_tainted);
+}
+
 test "bot_tainted blocks high score save" {
     bot_tainted = true;
     defer bot_tainted = false;

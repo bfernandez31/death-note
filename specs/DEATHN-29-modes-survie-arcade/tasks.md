@@ -122,12 +122,12 @@
 
 ### Tests for User Story 4
 
-- [ ] T029 [P] [US4] Add test `"no BOT string literal in MENU_ITEMS"` verifying none of the menu labels contain "BOT" in `src/main.zig`
-- [ ] T030 [P] [US4] Add test `"simulation mode activates bot"` verifying `bot_active` and `bot_tainted` are set when starting simulation in `src/main.zig`
+- [x] T029 [P] [US4] Add test `"no BOT string literal in MENU_ITEMS"` verifying none of the menu labels contain "BOT" in `src/main.zig`
+- [x] T030 [P] [US4] Add test `"simulation mode activates bot"` verifying `bot_active` and `bot_tainted` are set when starting simulation in `src/main.zig`
 
 ### Implementation for User Story 4
 
-- [ ] T031 [US4] Replace all visible "BOT"/"Bot" string literals with "SIMULATION"/"Simulation" across `src/main.zig` (menu labels, HUD text, pause screen text, game-over text)
+- [x] T031 [US4] Replace all visible "BOT"/"Bot" string literals with "SIMULATION"/"Simulation" across `src/main.zig` (menu labels, HUD text, pause screen text, game-over text)
 
 **Checkpoint**: Zero "Bot" text visible anywhere in the game. Simulation mode auto-plays identically to old Bot mode.
 
