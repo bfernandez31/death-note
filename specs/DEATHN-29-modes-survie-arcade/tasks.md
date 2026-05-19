@@ -91,24 +91,24 @@
 
 ### Tests for User Story 3
 
-- [ ] T014 [P] [US3] Add test `"MAX_HEARTS is 3"` verifying the constant value in `src/main.zig`
-- [ ] T015 [P] [US3] Add test `"hearts start at MAX_HEARTS in arcade mode"` verifying initialization logic in `src/main.zig`
-- [ ] T016 [P] [US3] Add test `"hearts start at 0 in survival mode"` verifying non-arcade modes get 0 hearts in `src/main.zig`
-- [ ] T017 [P] [US3] Add test `"heart restore caps at MAX_HEARTS"` verifying increment never exceeds 3 in `src/main.zig`
+- [x] T014 [P] [US3] Add test `"MAX_HEARTS is 3"` verifying the constant value in `src/main.zig`
+- [x] T015 [P] [US3] Add test `"hearts start at MAX_HEARTS in arcade mode"` verifying initialization logic in `src/main.zig`
+- [x] T016 [P] [US3] Add test `"hearts start at 0 in survival mode"` verifying non-arcade modes get 0 hearts in `src/main.zig`
+- [x] T017 [P] [US3] Add test `"heart restore caps at MAX_HEARTS"` verifying increment never exceeds 3 in `src/main.zig`
 
 ### Implementation for User Story 3
 
-- [ ] T018 [US3] Add hearts constants (`MAX_HEARTS`, `HEART_LOSS_FLASH_DURATION`, `HEART_RESTORE_FLASH_DURATION`) and state variables (`hearts`, `heart_flash_timer`, `heart_flash_is_loss`) at file scope in `src/main.zig` near line 227
-- [ ] T019 [US3] Initialize `hearts = if (mode == .arcade) MAX_HEARTS else 0` and reset flash state in `startGame()` at `src/main.zig:1293`
-- [ ] T020 [US3] Add hearts reset (`hearts = 0`, `heart_flash_timer = 0.0`, `heart_flash_is_loss = false`) to `resetSessionState()` at `src/main.zig:2032-2041`
-- [ ] T021 [US3] Implement arcade heart-loss branch before existing death code in `updateZombies()` at `src/main.zig:1502`: decrement hearts, play damage sound, destroy zombie, set flash timer, trigger `is_dying` if hearts == 0, `continue` otherwise
-- [ ] T022 [US3] Implement heart restore on boss defeat: after boss kill scoring at `src/main.zig:1864-1879`, if arcade and `hearts < MAX_HEARTS`, increment hearts, set restore flash, play shield sound
-- [ ] T023 [US3] Add `heart_flash_timer` countdown (`-= GetFrameTime()`, clamp to 0) in the playing update phase in `src/main.zig`
-- [ ] T024 [US3] Expand starter pack guard from `.survival` to `.survival or .arcade or .simulation` at `startGame()` (`src/main.zig:1319`) and wave transition (`src/main.zig:634`)
-- [ ] T025 [US3] Add HUD constants (`HEART_HUD_Y`, `HEART_HUD_SIZE`, `HEART_SPACING`) and implement `drawHeartsHud()` function: draw filled hearts in `CRT_ERR`, empty in `CRT_DIM`, pulse flash during `heart_flash_timer > 0`, only when `game_mode == .arcade` in `src/main.zig`
-- [ ] T026 [US3] Call `drawHeartsHud()` from `drawPlayingHud()` at `src/main.zig:1149`
-- [ ] T027 [US3] Add arcade-specific high score save logic at dying timer expiry in `src/main.zig`: compare score against `best_score_arcade`, save via `highscore.save(.arcade, ...)` if better
-- [ ] T028 [US3] Update game-over stats screen to show final hearts info and arcade-specific high score in `src/main.zig`
+- [x] T018 [US3] Add hearts constants (`MAX_HEARTS`, `HEART_LOSS_FLASH_DURATION`, `HEART_RESTORE_FLASH_DURATION`) and state variables (`hearts`, `heart_flash_timer`, `heart_flash_is_loss`) at file scope in `src/main.zig` near line 227
+- [x] T019 [US3] Initialize `hearts = if (mode == .arcade) MAX_HEARTS else 0` and reset flash state in `startGame()` at `src/main.zig:1293`
+- [x] T020 [US3] Add hearts reset (`hearts = 0`, `heart_flash_timer = 0.0`, `heart_flash_is_loss = false`) to `resetSessionState()` at `src/main.zig:2032-2041`
+- [x] T021 [US3] Implement arcade heart-loss branch before existing death code in `updateZombies()` at `src/main.zig:1502`: decrement hearts, play damage sound, destroy zombie, set flash timer, trigger `is_dying` if hearts == 0, `continue` otherwise
+- [x] T022 [US3] Implement heart restore on boss defeat: after boss kill scoring at `src/main.zig:1864-1879`, if arcade and `hearts < MAX_HEARTS`, increment hearts, set restore flash, play shield sound
+- [x] T023 [US3] Add `heart_flash_timer` countdown (`-= GetFrameTime()`, clamp to 0) in the playing update phase in `src/main.zig`
+- [x] T024 [US3] Expand starter pack guard from `.survival` to `.survival or .arcade or .simulation` at `startGame()` (`src/main.zig:1319`) and wave transition (`src/main.zig:634`)
+- [x] T025 [US3] Add HUD constants (`HEART_HUD_Y`, `HEART_HUD_SIZE`, `HEART_SPACING`) and implement `drawHeartsHud()` function: draw filled hearts in `CRT_ERR`, empty in `CRT_DIM`, pulse flash during `heart_flash_timer > 0`, only when `game_mode == .arcade` in `src/main.zig`
+- [x] T026 [US3] Call `drawHeartsHud()` from `drawPlayingHud()` at `src/main.zig:1149`
+- [x] T027 [US3] Add arcade-specific high score save logic at dying timer expiry in `src/main.zig`: compare score against `best_score_arcade`, save via `highscore.save(.arcade, ...)` if better
+- [x] T028 [US3] Update game-over stats screen to show final hearts info and arcade-specific high score in `src/main.zig`
 
 **Checkpoint**: Arcade mode fully playable — 3 hearts, power-ups drop, heart loss on zombie reach (with flash + sound), heart restore on boss defeat (capped at 3), game over at 0 hearts, arcade high score saves independently.
 

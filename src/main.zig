@@ -230,6 +230,13 @@ var freeze_timer: f32 = 0.0;
 var shield_active: bool = false;
 const FREEZE_DURATION: f32 = 3.0;
 
+const MAX_HEARTS: u8 = 3;
+const HEART_LOSS_FLASH_DURATION: f32 = 0.2;
+const HEART_RESTORE_FLASH_DURATION: f32 = 0.3;
+var hearts: u8 = 0;
+var heart_flash_timer: f32 = 0.0;
+var heart_flash_is_loss: bool = false;
+
 var zen_wpm_selection: u8 = 0;
 var zen_target_wpm: u32 = 50;
 const ZEN_WPM_TIERS = [_]u32{ 30, 50, 80 };
@@ -598,7 +605,7 @@ fn frame(ctx: *FrameContext) void {
 
                     updateZombies(ctx.allocator);
 
-                    if (!is_dying and game_mode == .survival) {
+                    if (!is_dying and (game_mode == .survival or game_mode == .arcade or game_mode == .simulation)) {
                         const wave_cfg = getWaveConfig(current_wave);
                         if (isBossWave(current_wave) and !boss_spawned_this_wave and boss == null) {
                             const threshold = (wave_cfg.pool_size + 1) / 2;
@@ -632,8 +639,7 @@ fn frame(ctx: *FrameContext) void {
                     resetMetricsState();
                     resetZombies(ctx.allocator);
                     resetBoss(ctx.allocator);
-                    // Front-load the new wave's starter pack for instant density.
-                    if (game_mode == .survival) {
+                    if (game_mode == .survival or game_mode == .arcade or game_mode == .simulation) {
                         spawnStarterPack(ctx.allocator, prng.random(), getWaveConfig(current_wave).starter_pack);
                     }
                 }
@@ -647,15 +653,28 @@ fn frame(ctx: *FrameContext) void {
                     if (audio_ready) raylib.StopMusicStream(music);
                     const avg_wpm = calculateAverageWpm();
                     const acc: u8 = @intCast(calculateStatsAccuracy());
-                    if (score > best_score_survival.score) {
-                        is_new_high_score = true;
-                        best_score_survival = highscore.Record{
-                            .score = score,
-                            .wave = current_wave,
-                            .wpm = avg_wpm,
-                            .accuracy = acc,
-                        };
-                        if (!bot_tainted) highscore.save(.survival, best_score_survival);
+                    const new_record = highscore.Record{
+                        .score = score,
+                        .wave = current_wave,
+                        .wpm = avg_wpm,
+                        .accuracy = acc,
+                    };
+                    switch (game_mode) {
+                        .survival => {
+                            if (score > best_score_survival.score) {
+                                is_new_high_score = true;
+                                best_score_survival = new_record;
+                                if (!bot_tainted) highscore.save(.survival, best_score_survival);
+                            }
+                        },
+                        .arcade => {
+                            if (score > best_score_arcade.score) {
+                                is_new_high_score = true;
+                                best_score_arcade = new_record;
+                                if (!bot_tainted) highscore.save(.arcade, best_score_arcade);
+                            }
+                        },
+                        .simulation, .zen => {},
                     }
                 }
             }
@@ -663,6 +682,11 @@ fn frame(ctx: *FrameContext) void {
             if (freeze_timer > 0) {
                 freeze_timer -= raylib.GetFrameTime();
                 if (freeze_timer < 0) freeze_timer = 0.0;
+            }
+
+            if (heart_flash_timer > 0) {
+                heart_flash_timer -= raylib.GetFrameTime();
+                if (heart_flash_timer < 0) heart_flash_timer = 0.0;
             }
 
             if (!is_dying) {
@@ -763,6 +787,14 @@ fn frame(ctx: *FrameContext) void {
             drawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
 
             drawCenteredTextShadow("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, CRT_ERR);
+
+            const mode_label: [*:0]const u8 = switch (game_mode) {
+                .survival => "SURVIE",
+                .arcade => "ARCADE",
+                .simulation => "SIMULATION",
+                .zen => "ZEN",
+            };
+            drawCenteredText(mode_label, STATS_BADGE_Y - 30, STATS_BADGE_SIZE, CRT_DIM_TEXT);
 
             if (is_new_high_score) {
                 drawCenteredText("- NEW HIGH SCORE -", STATS_BADGE_Y, STATS_BADGE_SIZE, CRT_WARN);
@@ -1149,6 +1181,28 @@ fn drawMetricsHud() void {
     drawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
 }
 
+const HEART_HUD_Y: c_int = 5;
+const HEART_HUD_SIZE: c_int = 22;
+const HEART_SPACING: c_int = 30;
+
+fn drawHeartsHud() void {
+    if (game_mode != .arcade) return;
+    const total_width = @as(c_int, MAX_HEARTS) * HEART_SPACING;
+    const start_x = @divTrunc(screen_width - total_width, 2);
+    var i: u8 = 0;
+    while (i < MAX_HEARTS) : (i += 1) {
+        const x = start_x + @as(c_int, i) * HEART_SPACING;
+        const is_flash = heart_flash_timer > 0;
+        if (i < hearts) {
+            const color = if (is_flash and !heart_flash_is_loss) CRT_ACCENT else CRT_ERR;
+            drawText("<3", x, HEART_HUD_Y, HEART_HUD_SIZE, color);
+        } else {
+            const color = if (is_flash and heart_flash_is_loss) CRT_ERR else CRT_DIM;
+            drawText("<3", x, HEART_HUD_Y, HEART_HUD_SIZE, color);
+        }
+    }
+}
+
 fn drawPlayingHud() void {
     if (game_mode == .zen) {
         drawZenHud();
@@ -1169,9 +1223,10 @@ fn drawPlayingHud() void {
     drawText(combo_text.ptr, COMBO_HUD_X, COMBO_HUD_Y, COMBO_HUD_SIZE, getComboColor(combo_count));
 
     drawMetricsHud();
+    drawHeartsHud();
 
     if (bot_active) {
-        drawCenteredText("BOT", 35, 24, CRT_WARN);
+        drawCenteredText("SIMULATION", 35, 24, CRT_WARN);
     }
 
     if (game_mode == .arcade) {
@@ -1197,7 +1252,6 @@ fn drawPlayingHud() void {
         }
 
         if (shield_active) {
-            // Drawn on its own row so it does not overlap the FREEZE countdown when both effects are active.
             const shield_y: c_int = if (freeze_timer > 0) 100 else 80;
             drawText("SHIELD ARMED", SCORE_HUD_X, shield_y, METRICS_HUD_SIZE, CRT_WARN);
         }
@@ -1315,11 +1369,12 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     resetMetricsState();
     resetBotState();
     bot_tainted = false;
+    hearts = if (mode == .arcade) MAX_HEARTS else 0;
+    heart_flash_timer = 0.0;
+    heart_flash_is_loss = false;
     resetZombies(allocator);
     resetBoss(allocator);
-    // Front-load the wave 1 starter pack so the screen is dense from t=0
-    // (sustained density model, see SPAWN_DELAY_BASE comment).
-    if (mode == .survival) {
+    if (mode == .survival or mode == .arcade or mode == .simulation) {
         spawnStarterPack(allocator, prng.random(), getWaveConfig(current_wave).starter_pack);
     }
     if (sound_cfg.music_enabled and audio_ready) {
@@ -1497,10 +1552,25 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                     allocator.destroy(zomb);
                     slot.* = null;
                     shield_absorbed_any = true;
-                    // Count the absorbed zombie toward wave completion and the kill total;
-                    // otherwise the wave stalls because spawned > kills forever.
                     wave_kills += 1;
                     total_kills += 1;
+                    continue;
+                }
+                if (game_mode == .arcade) {
+                    hearts -= 1;
+                    heart_flash_timer = HEART_LOSS_FLASH_DURATION;
+                    heart_flash_is_loss = true;
+                    playErrorSound();
+                    allocator.destroy(zomb);
+                    slot.* = null;
+                    wave_kills += 1;
+                    total_kills += 1;
+                    if (hearts == 0) {
+                        is_dying = true;
+                        dying_timer = DYING_DURATION;
+                        dying_zombie_index = null;
+                        break;
+                    }
                     continue;
                 }
                 is_dying = true;
@@ -1859,6 +1929,20 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
         }
 
         if (b.y >= screen_height) {
+            if (game_mode == .arcade and hearts > 0) {
+                hearts -= 1;
+                heart_flash_timer = HEART_LOSS_FLASH_DURATION;
+                heart_flash_is_loss = true;
+                playErrorSound();
+                allocator.destroy(b);
+                boss = null;
+                if (hearts == 0) {
+                    is_dying = true;
+                    dying_timer = DYING_DURATION;
+                    dying_zombie_index = null;
+                }
+                return;
+            }
             is_dying = true;
             dying_timer = DYING_DURATION;
             dying_zombie_index = null;
@@ -1876,8 +1960,12 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
             letter_count = 0;
             name[0] = '\x00';
             total_kills += 1;
-            // Give the player a full spawn_delay of breathing room before regular
-            // zombies resume — typing the boss phrase is enough work for one beat.
+            if (game_mode == .arcade and hearts < MAX_HEARTS) {
+                hearts += 1;
+                heart_flash_timer = HEART_RESTORE_FLASH_DURATION;
+                heart_flash_is_loss = false;
+                playPowerUpSound(.shield);
+            }
             spawn_timer = 0.0;
             playKillSound();
         }
@@ -2042,6 +2130,9 @@ fn resetSessionState() void {
     held_power_up = null;
     freeze_timer = 0.0;
     shield_active = false;
+    hearts = 0;
+    heart_flash_timer = 0.0;
+    heart_flash_is_loss = false;
 }
 
 fn resetBotState() void {
@@ -3445,6 +3536,59 @@ test "carrier zombie power-up field is optional" {
         .zombie_type = .standard,
     };
     try std.testing.expect(z2.power_up == null);
+}
+
+test "MAX_HEARTS is 3" {
+    try std.testing.expectEqual(@as(u8, 3), MAX_HEARTS);
+}
+
+test "hearts start at MAX_HEARTS in arcade mode" {
+    const saved_hearts = hearts;
+    const saved_mode = game_mode;
+    const saved_screen = current_screen;
+    const saved_wave = current_wave;
+    const saved_score = score;
+    defer {
+        hearts = saved_hearts;
+        game_mode = saved_mode;
+        current_screen = saved_screen;
+        current_wave = saved_wave;
+        score = saved_score;
+    }
+
+    var alloc = std.testing.allocator;
+    startGame(.arcade, @ptrCast(&alloc));
+    defer resetZombies(@ptrCast(&alloc));
+    try std.testing.expectEqual(@as(u8, MAX_HEARTS), hearts);
+}
+
+test "hearts start at 0 in survival mode" {
+    const saved_hearts = hearts;
+    const saved_mode = game_mode;
+    const saved_screen = current_screen;
+    const saved_wave = current_wave;
+    const saved_score = score;
+    defer {
+        hearts = saved_hearts;
+        game_mode = saved_mode;
+        current_screen = saved_screen;
+        current_wave = saved_wave;
+        score = saved_score;
+    }
+
+    var alloc = std.testing.allocator;
+    startGame(.survival, @ptrCast(&alloc));
+    defer resetZombies(@ptrCast(&alloc));
+    try std.testing.expectEqual(@as(u8, 0), hearts);
+}
+
+test "heart restore caps at MAX_HEARTS" {
+    const saved = hearts;
+    defer hearts = saved;
+
+    hearts = MAX_HEARTS;
+    const new_hearts = if (hearts < MAX_HEARTS) hearts + 1 else hearts;
+    try std.testing.expectEqual(MAX_HEARTS, new_hearts);
 }
 
 test "power-ups drop only in arcade mode" {
