@@ -267,23 +267,24 @@ graph TB
 
 ### F-03 Name Label Rendering
 
-**Description.** Each active zombie has its `name` field — a `[*:0]const u8` pointer into `name_lists.zig` arrays — drawn as text 20 pixels above the sprite's origin position, in `CRT_ACCENT` (#f0c8ff, lavender near-white) at font size 20. Names may be simple first names (e.g. `"Kai"`), compound hyphenated names (e.g. `"Jean-Pierre"`), or trap-group names that closely resemble others on screen.
+**Description.** Each active zombie has its `name` field — a `[*:0]const u8` pointer into `name_lists.zig` arrays — drawn as text 20 pixels above the sprite's origin position, in `CRT_ACCENT` (#f0c8ff, lavender near-white) at font size 20, over an opaque `CRT_BG` background rectangle. Names may be simple first names (e.g. `"Kai"`), compound hyphenated names (e.g. `"Jean-Pierre"`), or trap-group names that closely resemble others on screen.
 
-**User-facing behavior.** The player sees a name floating above each zombie — first names in early waves, with compound hyphenated names appearing from wave 4 onward. Trap-group names in later waves look visually similar to each other, requiring careful reading.
+**User-facing behavior.** The player sees a name floating above each zombie — first names in early waves, with compound hyphenated names appearing from wave 4 onward. Trap-group names in later waves look visually similar to each other, requiring careful reading. Each name is rendered over an opaque background so two zombies whose labels overlap never produce a garbled mix of pixels (one name may fully occlude another, which is acceptable). Names also render above the HUD so they stay readable when a zombie crosses the wave-info / score zones.
 
 **System behavior.**
-- Executed inside `drawZombies()` for every active zombie.
-- `text_pos.y = pos.y - 20.0`.
-- `drawText(zomb.name, …, 20, CRT_ACCENT)` — a wrapper around `raylib.DrawTextEx(game_font, …)` with `FONT_SPACING = 1.0`.
+- Executed inside `drawZombieNames()` (separate from `drawZombies()`, which only draws sprites). `drawZombieNames()` is called **after** `drawPlayingHud()` so labels paint over the HUD.
+- For each active zombie: `text_x = zomb.x`, `text_y = zomb.y - 20.0`; `text_w = measureText(zomb.name, ZOMBIE_NAME_SIZE)` with `ZOMBIE_NAME_SIZE = 20`.
+- A filled rectangle of color `CRT_BG` is drawn first at `(text_x - ZOMBIE_NAME_BG_PAD_X, text_y - ZOMBIE_NAME_BG_PAD_Y)` with size `(text_w + 2·ZOMBIE_NAME_BG_PAD_X, ZOMBIE_NAME_SIZE + 2·ZOMBIE_NAME_BG_PAD_Y)`. Padding constants: `ZOMBIE_NAME_BG_PAD_X = 4`, `ZOMBIE_NAME_BG_PAD_Y = 2`.
+- `drawText(zomb.name, text_x, text_y, ZOMBIE_NAME_SIZE, CRT_ACCENT)` — a wrapper around `raylib.DrawTextEx(game_font, …)` with `FONT_SPACING = 1.0`.
 - The name pointer is passed directly; no copy is made because `[*:0]const u8` is compatible with raylib's C string parameter.
 - The hyphen character in compound names is rendered natively by the game font.
 
 **Key source references.**
 - `src/main.zig` — `name: [*:0]const u8` field in `Zombie` struct
-- `src/main.zig` — label draw call in `drawZombies`
+- `src/main.zig` — `drawZombieNames()` function and its post-HUD call site in the frame function
 - `src/name_lists.zig` — `PrimaryNames`, `CompoundNames`, `TrapGroups` source arrays
 
-**Dependencies.** F-01 (spawn sets the name pointer), F-02 (same draw loop).
+**Dependencies.** F-01 (spawn sets the name pointer), F-02 (sprites drawn first by `drawZombies()`).
 
 ---
 
@@ -1248,11 +1249,11 @@ graph TB
 
 **Description.** Arcade mode uses the same wave configuration as Survival but adds a 3-heart lives system and power-up carrier zombies. A zombie or boss crossing the bottom costs one heart instead of ending the game immediately. Defeating a boss restores one heart (up to the 3-heart cap). Game over triggers only when all hearts are depleted. Power-up carrier zombies spawn in Arcade mode with the same 10% probability and behavior as they previously had in Survival mode. High scores are stored independently from Survival and Zen.
 
-**User-facing behavior.** The player starts each Arcade session with 3 heart icons displayed centered at the top of the screen. When a zombie reaches the bottom, one heart icon dims and the screen briefly flashes; gameplay continues. Defeating a boss lights up an additional heart icon (up to 3) with a different flash color. Only the 3rd lost heart triggers the dying pause and game-over sequence. Power-up carriers appear, are picked up automatically on kill, and are activated with Space. The game-over screen shows the Arcade-specific best score.
+**User-facing behavior.** The player starts each Arcade session with 3 heart icons displayed in the top-right corner of the screen, below the WPM/accuracy readout. When a zombie reaches the bottom, one heart icon dims and the screen briefly flashes; gameplay continues. Defeating a boss lights up an additional heart icon (up to 3) with a different flash color. Only the 3rd lost heart triggers the dying pause and game-over sequence. Power-up carriers appear, are picked up automatically on kill, and are activated with Space. The game-over screen shows the Arcade-specific best score.
 
 **System behavior.**
 - `startGame(.arcade, allocator)` sets `hearts = MAX_HEARTS` (3), `heart_flash_timer = 0.0`, `heart_flash_is_loss = false`.
-- `drawHearts()` renders `MAX_HEARTS` heart icons (`"<3"`) centered at the top of the screen at `HEART_HUD_Y` (5). Active hearts use `CRT_ERR` normally; during a restore flash (`!heart_flash_is_loss`), active hearts use `CRT_ACCENT`. Empty hearts use `CRT_DIM` normally; during a loss flash (`heart_flash_is_loss`), empty hearts use `CRT_ERR`. The function early-returns when `game_mode != .arcade`.
+- `drawHeartsHud()` renders `MAX_HEARTS` heart icons in the top-right of the screen at `HEART_HUD_Y` (60), spaced by `HEART_SPACING` (22), with right margin `HEART_HUD_RIGHT_MARGIN` (12). Each heart is drawn by `drawHeart()` as a vector shape (two filled circles for the lobes + one filled triangle for the point) at radius `HEART_RADIUS` (6.0), avoiding the bitmap-font `"<3"` look. Active hearts use `CRT_ERR` normally; during a restore flash (`!heart_flash_is_loss`), active hearts use `CRT_ACCENT`. Empty hearts use `CRT_DIM_TEXT` normally; during a loss flash (`heart_flash_is_loss`), empty hearts use `CRT_ERR`. The function early-returns when `game_mode != .arcade`.
 - `heart_flash_timer` decrements each frame via `heart_flash_timer -= GetFrameTime()`; clamped to 0 when it would go below.
 - When a regular zombie crosses `screen_height` in Arcade mode: `hearts -= 1; heart_flash_timer = HEART_LOSS_FLASH_DURATION (0.2); heart_flash_is_loss = true; playErrorSound()`; zombie freed immediately; `wave_kills += 1`; `total_kills += 1`; if `hearts == 0` → `is_dying = true; dying_timer = DYING_DURATION; dying_zombie_index = null; break;`; else `continue`.
 - When the boss crosses `screen_height` in Arcade mode with hearts remaining: same heart-decrement path; if `hearts == 0` → `is_dying = true; dying_zombie_index = null`; boss freed.
@@ -1262,8 +1263,8 @@ graph TB
 - Power-up carrier gating: `game_mode == .arcade` checked in `spawnZombieInZone`; same 10% drop rate (`POWER_UP_DROP_CHANCE`), same inventory slot, same activation mechanics as the pre-existing system.
 
 **Key source references.**
-- `src/main.zig` — `hearts`, `heart_flash_timer`, `heart_flash_is_loss`, `MAX_HEARTS`, `HEART_LOSS_FLASH_DURATION`, `HEART_RESTORE_FLASH_DURATION`, `HEART_HUD_Y`, `HEART_HUD_SIZE`, `HEART_SPACING`
-- `src/main.zig` — `drawHearts()` function
+- `src/main.zig` — `hearts`, `heart_flash_timer`, `heart_flash_is_loss`, `MAX_HEARTS`, `HEART_LOSS_FLASH_DURATION`, `HEART_RESTORE_FLASH_DURATION`, `HEART_HUD_Y`, `HEART_HUD_RIGHT_MARGIN`, `HEART_RADIUS`, `HEART_SPACING`
+- `src/main.zig` — `drawHeart()` (vector heart primitive) and `drawHeartsHud()` (top-right layout) functions
 - `src/main.zig` — arcade heart-loss branch in `updateZombies` and `updateBoss`
 - `src/main.zig` — boss-kill heart-restore branch in `updateBoss`
 - `src/main.zig` — `best_score_arcade` declaration and save call at dying→game-over transition

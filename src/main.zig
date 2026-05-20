@@ -846,6 +846,8 @@ fn frame(ctx: *FrameContext) void {
     // HUD draws AFTER the overlay so the vignette doesn't dim corner-anchored text.
     if (current_screen == .playing) {
         drawPlayingHud();
+        // Zombie names render last so they stay readable over HUD/wave text.
+        drawZombieNames();
     }
 
     drawPopups();
@@ -914,7 +916,7 @@ fn drawMenu() void {
         .arcade => std.fmt.bufPrintZ(&hs_buf, "ARCADE BEST: {d:0>6} - WAVE {d}", .{ best_score_arcade.score, best_score_arcade.wave }) catch "ARCADE BEST: ---",
         .survival, .simulation => std.fmt.bufPrintZ(&hs_buf, "SURVIVAL BEST: {d:0>6} - WAVE {d}", .{ best_score_survival.score, best_score_survival.wave }) catch "SURVIVAL BEST: ---",
     };
-    drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM_TEXT);
+    drawCenteredText(hs_text.ptr, 900, 20, CRT_DIM_TEXT);
 }
 
 fn updateWpmSelect(allocator: *std.mem.Allocator) void {
@@ -1185,28 +1187,43 @@ fn drawMetricsHud() void {
     drawText(acc_text.ptr, ACC_HUD_X, ACC_HUD_Y, METRICS_HUD_SIZE, CRT_FG);
 }
 
-const HEART_HUD_Y: c_int = 5;
-const HEART_HUD_SIZE: c_int = 22;
-const HEART_SPACING: c_int = 30;
+const HEART_HUD_Y: c_int = 60;
+const HEART_HUD_RIGHT_MARGIN: c_int = 12;
+const HEART_RADIUS: f32 = 6.0;
+const HEART_SPACING: c_int = 22;
+
+fn drawHeart(cx: c_int, cy: c_int, color: raylib.Color) void {
+    const fcx: f32 = @floatFromInt(cx);
+    const fcy: f32 = @floatFromInt(cy);
+    const r = HEART_RADIUS;
+    raylib.DrawCircleV(.{ .x = fcx - r * 0.55, .y = fcy }, r * 0.7, color);
+    raylib.DrawCircleV(.{ .x = fcx + r * 0.55, .y = fcy }, r * 0.7, color);
+    raylib.DrawTriangle(
+        .{ .x = fcx - r * 1.1, .y = fcy + r * 0.1 },
+        .{ .x = fcx, .y = fcy + r * 1.25 },
+        .{ .x = fcx + r * 1.1, .y = fcy + r * 0.1 },
+        color,
+    );
+}
 
 fn drawHeartsHud() void {
     if (game_mode != .arcade) return;
     const total_width = @as(c_int, MAX_HEARTS) * HEART_SPACING;
-    const start_x = @divTrunc(screen_width - total_width, 2);
+    const start_x = screen_width - HEART_HUD_RIGHT_MARGIN - total_width + @divTrunc(HEART_SPACING, 2);
     var i: u8 = 0;
     while (i < MAX_HEARTS) : (i += 1) {
-        const x = start_x + @as(c_int, i) * HEART_SPACING;
+        const cx = start_x + @as(c_int, i) * HEART_SPACING;
         const is_flash = heart_flash_timer > 0;
         if (i < hearts) {
             const color = if (is_flash and !heart_flash_is_loss) CRT_ACCENT else CRT_ERR;
-            drawText("<3", x, HEART_HUD_Y, HEART_HUD_SIZE, color);
+            drawHeart(cx, HEART_HUD_Y, color);
         } else {
             const color = if (is_flash and heart_flash_is_loss) CRT_ERR else CRT_DIM_TEXT;
-            drawText("<3", x, HEART_HUD_Y, HEART_HUD_SIZE, color);
+            drawHeart(cx, HEART_HUD_Y, color);
         }
     }
     if (hearts_max_msg_timer > 0) {
-        drawCenteredText("HEARTS MAX!", HEART_HUD_Y + HEART_HUD_SIZE + 4, 16, CRT_WARN);
+        drawText("HEARTS MAX!", screen_width - 110, HEART_HUD_Y + 12, 14, CRT_WARN);
     }
 }
 
@@ -1678,9 +1695,34 @@ fn drawZombies() void {
                 tint,
             );
 
-            // Draw the zombie's name above the zombie
-            const text_pos = raylib.Vector2{ .x = pos.x, .y = pos.y - 20.0 };
-            drawText(zomb.name, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y), 20, CRT_ACCENT);
+        }
+    }
+}
+
+const ZOMBIE_NAME_SIZE: c_int = 20;
+const ZOMBIE_NAME_BG_PAD_X: c_int = 4;
+const ZOMBIE_NAME_BG_PAD_Y: c_int = 2;
+
+// Draws zombie names with opaque backgrounds, on top of the HUD so they remain
+// readable even when a zombie is crossing the HUD zone. One name may hide
+// another (acceptable by design), but no garbled overlapping pixels.
+fn drawZombieNames() void {
+    for (zombies) |zombie| {
+        if (zombie) |zomb| {
+            if (!zomb.is_active) continue;
+
+            const text_x: c_int = @intFromFloat(zomb.x);
+            const text_y: c_int = @intFromFloat(zomb.y - 20.0);
+            const text_w = measureText(zomb.name, ZOMBIE_NAME_SIZE);
+
+            raylib.DrawRectangle(
+                text_x - ZOMBIE_NAME_BG_PAD_X,
+                text_y - ZOMBIE_NAME_BG_PAD_Y,
+                text_w + ZOMBIE_NAME_BG_PAD_X * 2,
+                ZOMBIE_NAME_SIZE + ZOMBIE_NAME_BG_PAD_Y * 2,
+                CRT_BG,
+            );
+            drawText(zomb.name, text_x, text_y, ZOMBIE_NAME_SIZE, CRT_ACCENT);
 
             if (zomb.power_up) |pu| {
                 const t = raylib.GetTime();
@@ -1697,7 +1739,7 @@ fn drawZombies() void {
                     .shield => CRT_WARN,
                 };
                 glyph_color.a = alpha;
-                drawText(glyph, @intFromFloat(text_pos.x), @intFromFloat(text_pos.y - 18.0), 20, glyph_color);
+                drawText(glyph, text_x, text_y - 18, ZOMBIE_NAME_SIZE, glyph_color);
             }
         }
     }
