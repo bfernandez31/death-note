@@ -35,7 +35,7 @@ The data containers in the project are:
 | `zombies[MAX_ZOMBIES]` pool | `src/main.zig` (runtime) | Fixed array of heap-allocated `?*Zombie` pointers; slot freed and set to `null` immediately on zombie kill |
 | `boss` pointer | `src/main.zig` (runtime) | Single `?*Zombie` pointer for the active boss zombie; null when no boss is present |
 | `popups[MAX_POPUPS]` pool | `src/main.zig` (runtime) | Fixed stack-allocated array of 32 `ScorePopup` value-type entries; mutable at runtime |
-| `best_score_survival` / `best_score_zen` | `src/main.zig` (runtime) | Two `highscore.Record` values, one per `GameMode`; both loaded via `highscore.load(.survival)` / `highscore.load(.zen)` at startup so the menu can display the relevant record for `last_played_mode`; each persisted via `highscore.save()` when its mode's session beats it |
+| `best_score_survival` / `best_score_arcade` / `best_score_zen` | `src/main.zig` (runtime) | Three `highscore.Record` values, one per scored `GameMode`; all loaded at startup (`highscore.load(.survival)`, `.arcade`, `.zen`) so the menu can display the relevant record for `last_played_mode`; each persisted via `highscore.save()` when its mode's session beats it. Simulation mode never persists a score (`bot_tainted` guard). |
 | `PrimaryNames` | `src/name_lists.zig` (compile-time) | Read-only array of 349+ null-terminated first-name C string pointers |
 | `CompoundNames` | `src/name_lists.zig` (compile-time) | Read-only array of 31 null-terminated hyphenated-name pointers (e.g. `"Jean-Pierre"`) |
 | `TrapGroups` | `src/name_lists.zig` (compile-time) | Read-only array of 15 `TrapGroup` structs, each containing 3–5 visually similar names |
@@ -43,7 +43,7 @@ The data containers in the project are:
 | `BossPhrases` | `src/boss_phrases.zig` (compile-time) | Read-only, compile-time array of 10 null-terminated multi-word phrase pointers |
 | `sound_cfg` | `src/main.zig` (runtime) | Single `SoundConfig` value loaded at startup by `sound_config.load()`; holds five toggles, two pack selections, and three volume levels |
 
-**Persistence layer.** Two types of data survive process exit. High scores are persisted per game mode: Survival uses `highscore.dat` (native) / `death-note.highscore` (web); Zen uses `highscore-zen.dat` (native) / `death-note.highscore.zen` (web); both are 17-byte little-endian binary files on native, JSON in localStorage on web; all high score persistence is handled by `src/highscore.zig`. Sound settings are persisted as a 10-byte binary file `soundconfig.dat` on native builds and as a JSON object under `"death-note.soundconfig"` in localStorage on web builds; all sound config persistence is handled by `src/sound_config.zig` via `load()` and `save(cfg: SoundConfig)`.
+**Persistence layer.** Two types of data survive process exit. High scores are persisted per game mode: Survival uses `highscore.dat` (native) / `death-note.highscore` (web); Arcade uses `highscore-arcade.dat` (native) / `death-note.highscore.arcade` (web); Zen uses `highscore-zen.dat` (native) / `death-note.highscore.zen` (web); all are 17-byte little-endian binary files on native, JSON in localStorage on web; all high score persistence is handled by `src/highscore.zig`. Simulation mode shares the `highscore.dat` filename but the `bot_tainted` flag prevents any write, so no simulation score ever reaches disk. Sound settings are persisted as a 10-byte binary file `soundconfig.dat` on native builds and as a JSON object under `"death-note.soundconfig"` in localStorage on web builds; all sound config persistence is handled by `src/sound_config.zig` via `load()` and `save(cfg: SoundConfig)`.
 
 ---
 
@@ -73,6 +73,9 @@ erDiagram
         bool is_new_high_score
         GameScreen current_screen
         GameMode game_mode
+        u8 hearts
+        f32 heart_flash_timer
+        bool heart_flash_is_loss
         PowerUpType held_power_up
         f32 freeze_timer
         bool shield_active
@@ -165,6 +168,8 @@ erDiagram
 
     GAME_MODE {
         enum survival
+        enum arcade
+        enum simulation
         enum zen
     }
 
@@ -253,7 +258,7 @@ const Zombie = struct {
 | `frame` | `f32` | Current animation frame index (0–16) | Incremented in `drawZombies` every 0.1 s; wraps to `0` when it reaches `ZOMBIE_FRAME_COUNT` (17) |
 | `animation_timer` | `f32` | Accumulated time since last frame advance (seconds) | Starts at `0`; reset to `0` each time a frame advance occurs |
 | `zombie_type` | `ZombieType` | Categorises the zombie as `.standard`, `.runner`, or `.tank` | Determines speed multiplier and color tint; defaults to `.standard`; set by `selectZombieType` at spawn |
-| `power_up` | `?PowerUpType` | Power-up carried by this zombie (Survival mode only) | `null` by default; set at spawn with 10% probability (`POWER_UP_DROP_CHANCE`) in Survival mode only; transferred to `held_power_up` on kill if the inventory slot is empty; lost if the zombie reaches the bottom |
+| `power_up` | `?PowerUpType` | Power-up carried by this zombie (Arcade mode only) | `null` by default; set at spawn with 10% probability (`POWER_UP_DROP_CHANCE`) in Arcade mode only; transferred to `held_power_up` on kill if the inventory slot is empty; lost if the zombie reaches the bottom |
 
 **Relationships:**
 - `name` references one entry in the compile-time `name_lists.zig` arrays (pointer, not a copy).
@@ -380,12 +385,16 @@ These variables collectively represent the running state of the game session.
 | `combo_count` | `u32` | `0` | `0` | Consecutive kill count without a mismatch. Determines the active combo multiplier tier (x1–x5 via `getComboMultiplier`). Reset to 0 on mismatch only — **persists across wave transitions** so a clean session keeps growing the multiplier. Also reset by `resetScoreState` on restart. |
 | `max_combo` | `u32` | `0` | `0` | Session-wide peak `combo_count`. Updated inline whenever `combo_count` grows after a regular or boss kill. Displayed in the `MAX COMBO` cell of the game-over grid. Reset by `resetScoreState` on restart. |
 | `total_kills` | `u32` | `0` | `0` | Session-wide count of all enemies destroyed (regular zombies and boss). Incremented in `updateZombies` and `updateBoss` on each successful kill. Displayed on the stats screen as "Kills". Reset to 0 by `resetSessionState` on restart. |
-| `best_score` | `HighScoreRecord` | zeroed | preserved | Best session record loaded at startup. Updated in memory (and persisted to `highscore.dat` / localStorage) at the `is_dying → is_game_over` transition if the current session score exceeds `best_score.score`. Not reset on restart — survives across sessions in memory for the lifetime of the process. |
-| `is_new_high_score` | `bool` | `false` | `false` | Set to `true` at the `is_dying → is_game_over` transition when `score > best_score.score`. Controls whether the stats screen shows "NEW HIGH SCORE!" (gold) or "Best: N" (dark gray). Reset to `false` by `resetSessionState` on restart. |
+| `best_score_survival` | `HighScoreRecord` | zeroed | preserved | Best Survival session record; loaded at startup from `highscore.dat`. Persisted at game-over when `score > best_score_survival.score` and `!bot_tainted`. |
+| `best_score_arcade` | `HighScoreRecord` | zeroed | preserved | Best Arcade session record; loaded at startup from `highscore-arcade.dat`. Persisted at game-over when `score > best_score_arcade.score`. |
+| `is_new_high_score` | `bool` | `false` | `false` | Set to `true` at the `is_dying → is_game_over` transition when the session score exceeds the current mode's best score. Controls whether the stats screen shows "NEW HIGH SCORE!" (gold). Reset to `false` by `resetSessionState` on restart. |
 | `current_screen` | `GameScreen` | `.main_menu` | `.main_menu` | Current UI/gameplay screen. `.main_menu` at startup; drives which update/draw path runs. |
-| `game_mode` | `GameMode` | `.survival` | — | Active game mode. `.survival` or `.zen`; set by `startGame(mode)`. |
-| `last_played_mode` | `GameMode` | `.survival` | — | Last mode started. `.survival` at startup; updated at each `startGame` call; used by main menu to display the relevant best score. |
-| `held_power_up` | `?PowerUpType` | `null` | `null` | Currently held power-up. `null` when empty; set on carrier kill; cleared on activation or reset. |
+| `game_mode` | `GameMode` | `.survival` | — | Active game mode. One of `.survival`, `.arcade`, `.simulation`, `.zen`; set by `startGame(mode)`. |
+| `last_played_mode` | `GameMode` | `.survival` | — | Last mode started. `.survival` at startup; updated at each `startGame` call; used by main menu to display the relevant best score (Arcade shows `best_score_arcade`; Survival/Simulation shows `best_score_survival`; Zen shows `best_score_zen`). |
+| `hearts` | `u8` | `0` | `0` | Remaining lives in Arcade mode. Initialised to `MAX_HEARTS` (3) on Arcade session start; 0 for all other modes. Decremented when a zombie or boss crosses `screen_height` in Arcade mode; incremented (up to `MAX_HEARTS`) when the boss is defeated in Arcade mode. Game over triggers only when `hearts` reaches 0. Reset to 0 by `resetSessionState`. |
+| `heart_flash_timer` | `f32` | `0.0` | `0.0` | Countdown driving the heart-icon flash feedback. Set to `HEART_LOSS_FLASH_DURATION` (0.2 s) on heart loss; `HEART_RESTORE_FLASH_DURATION` (0.3 s) on heart gain. Drives HUD color change during the flash window. |
+| `heart_flash_is_loss` | `bool` | `false` | `false` | `true` when the active heart flash is from a loss (icons flash red), `false` when from a restoration (icons flash accent). |
+| `held_power_up` | `?PowerUpType` | `null` | `null` | Currently held power-up. `null` when empty; set on carrier kill (Arcade mode only); cleared on activation or reset. |
 | `freeze_timer` | `f32` | `0.0` | `0.0` | Remaining freeze seconds. `0.0` when not active; set to `FREEZE_DURATION (3.0)` on Freeze activation; decremented each playing-frame. |
 | `shield_active` | `bool` | `false` | `false` | Whether shield is armed. `false` by default; `true` after Shield activation; `false` after absorbing a zombie. |
 | `trap_cluster_group` | `?usize` | `null` | `null` | Index into `TrapGroups` of the currently active trap cluster, or `null` when no cluster is in progress. Set when a trap-list name is spawned; cleared when `trap_cluster_remaining` reaches 0. Reset by `resetZombies` and on restart. |
@@ -578,7 +587,7 @@ pub const Record = struct {
 
 **Native persistence:**
 
-The file path depends on game mode: `highscore.filename(.survival)` returns `"highscore.dat"` and `highscore.filename(.zen)` returns `"highscore-zen.dat"`. Existing `highscore.dat` files from before the multi-mode update are read by the Survival mode load path without modification.
+The file path depends on game mode: `highscore.filename(.survival)` returns `"highscore.dat"`, `.arcade` returns `"highscore-arcade.dat"`, and `.zen` returns `"highscore-zen.dat"`. `.simulation` maps to `"highscore.dat"` but the `bot_tainted` guard prevents any write. Existing `highscore.dat` files from before the multi-mode update are read by the Survival mode load path without modification.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -591,7 +600,7 @@ Total: `HIGHSCORE_DISK_SIZE` = 17 bytes. The on-disk format is independent of th
 
 **Web persistence (`localStorage`):**
 
-Key depends on game mode: `highscore.webKey(.survival)` returns `"death-note.highscore"` and `highscore.webKey(.zen)` returns `"death-note.highscore.zen"`. Value: a JSON object `{"score":N,"wave":N,"wpm":N,"accuracy":N}`. Per-field reads use `emscripten_run_script_int` with inline JavaScript. Writes use `emscripten_run_script` with `localStorage.setItem`. On parse failure or missing key, all fields default to 0.
+Key depends on game mode: `highscore.webKey(.survival)` returns `"death-note.highscore"`, `.arcade` returns `"death-note.highscore.arcade"`, and `.zen` returns `"death-note.highscore.zen"`. Value: a JSON object `{"score":N,"wave":N,"wpm":N,"accuracy":N}`. Per-field reads use `emscripten_run_script_int` with inline JavaScript. Writes use `emscripten_run_script` with `localStorage.setItem`. On parse failure or missing key, all fields default to 0.
 
 **Relationships:**
 - All persistence logic is owned by `src/highscore.zig` via `load(GameMode)` and `save(GameMode, Record)`.
@@ -612,7 +621,7 @@ var held_power_up: ?PowerUpType = null;
 
 | Field | Type | Meaning | Constraints |
 |---|---|---|---|
-| `held_power_up` | `?PowerUpType` | Currently held power-up, or `null` | Only populated in Survival mode; set to `null` after activation or on session reset |
+| `held_power_up` | `?PowerUpType` | Currently held power-up, or `null` | Only populated in Arcade mode; set to `null` after activation or on session reset |
 
 The three power-up types and their activation effects:
 
@@ -708,10 +717,17 @@ pub const ZombieType = enum { standard, runner, tank };
 #### GameMode (`src/zombie_types.zig`)
 
 ```zig
-pub const GameMode = enum { survival, zen };
+pub const GameMode = enum { survival, arcade, simulation, zen };
 ```
 
-Determines which gameplay rules apply (power-ups, bosses, game-over, scoring).
+Determines which gameplay rules apply (power-ups, hearts, bosses, game-over, high-score persistence).
+
+| Value | Power-ups | Hearts | High score | Description |
+|---|---|---|---|---|
+| `.survival` | No | No | Yes (`highscore.dat`) | Hardcore wave mode; one zombie crossing the bottom triggers game over |
+| `.arcade` | Yes | Yes (3 max) | Yes (`highscore-arcade.dat`) | Same wave progression as Survival; lives system and power-ups; game over only at 0 hearts |
+| `.simulation` | Yes | No | No (bot-tainted) | Auto-play observation mode (renamed Bot mode); no high score persisted |
+| `.zen` | No | No | Yes (`highscore-zen.dat`) | Relaxed practice mode; zombies crossing the bottom vanish without triggering game over |
 
 #### GameScreen (`src/main.zig`)
 
@@ -841,7 +857,9 @@ All other constants are compile-time `const` values declared at module scope in 
 | `STATS_LINE_START_Y` | `80` | `c_int` | Y pixel position of the first stat line on the stats overlay |
 | `STATS_LINE_SPACING` | `35` | `c_int` | Vertical pixel spacing between stat lines on the stats overlay |
 | `STATS_FONT_SIZE` | `24` | `c_int` | Font size for the six stat lines (wave, score, best/high score, WPM, accuracy, kills) |
-| `HIGHSCORE_FILENAME` | `"highscore.dat"` | string literal | Filename for native high score persistence; written to and read from the working directory |
+| `MAX_HEARTS` | `3` | `u8` | Maximum number of hearts in Arcade mode; also the starting value when an Arcade session begins |
+| `HEART_LOSS_FLASH_DURATION` | `0.2` | `f32` | Seconds the heart HUD flashes red after a heart is lost |
+| `HEART_RESTORE_FLASH_DURATION` | `0.3` | `f32` | Seconds the heart HUD flashes accent-color after a heart is restored by a boss kill |
 
 ### Raylib Constants in Use
 
@@ -873,7 +891,7 @@ These are C constants imported from `raylib.h` via `src/raylib.zig` and referenc
 stateDiagram-v2
     [*] --> MainMenu : main() initialises (current_screen=.main_menu)
 
-    MainMenu --> Playing : Survival selected\n(game_mode=.survival, current_screen=.playing)
+    MainMenu --> Playing : Survival / Arcade / Simulation selected\n(game_mode set, current_screen=.playing)
     MainMenu --> WpmSelect : Zen selected\n(current_screen=.wpm_select)
 
     WpmSelect --> Playing : WPM target chosen\n(game_mode=.zen, current_screen=.playing)
@@ -886,7 +904,7 @@ stateDiagram-v2
     SoundSettings --> Paused : Escape\n(save config, return to return_screen if .paused)
     SoundSettings --> MainMenu : Escape\n(save config, return to return_screen if .main_menu)
 
-    Playing --> Dying : zombie.y >= screen_height\nAND game_mode==.survival\nAND !shield_active\n(is_dying=true, dying_timer=1.0)
+    Playing --> Dying : zombie.y >= screen_height\nAND (game_mode==.survival OR hearts==0)\nAND !shield_active\n(is_dying=true, dying_timer=1.0)
     Dying --> GameOver : dying_timer <= 0\n(current_screen=.game_over,\nhigh score compared and saved)
 
     Playing --> Transitioning : wave_kills >= pool_size\nAND wave_spawned >= pool_size\nAND boss_done\n(is_transitioning=true)

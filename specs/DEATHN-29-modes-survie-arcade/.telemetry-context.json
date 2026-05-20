@@ -1,0 +1,53 @@
+{
+  "generatedAt": "2026-05-19T22:52:33Z",
+  "sourceTicket": "DEATHN-29",
+  "tickets": {
+    "DEATHN-29": {
+      "ticketKey": "DEATHN-29",
+      "inputTokens": 33318,
+      "outputTokens": 221220,
+      "cacheReadTokens": 37481414,
+      "cacheCreationTokens": 1281210,
+      "costUsd": 23.4527699,
+      "durationMs": 3814131,
+      "model": "claude-opus-4-6",
+      "toolsUsed": [
+        "Agent",
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "TaskCreate",
+        "TaskUpdate",
+        "ToolSearch",
+        "Write"
+      ],
+      "jobCount": 4,
+      "hasData": true
+    },
+    "DEATHN-30": {
+      "ticketKey": "DEATHN-30",
+      "inputTokens": 3382,
+      "outputTokens": 153166,
+      "cacheReadTokens": 23793291,
+      "cacheCreationTokens": 1143690,
+      "costUsd": 14.703590999999998,
+      "durationMs": 2372704,
+      "model": "claude-opus-4-7",
+      "toolsUsed": [
+        "Agent",
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "TaskCreate",
+        "TaskUpdate",
+        "ToolSearch"
+      ],
+      "jobCount": 2,
+      "hasData": true
+    }
+  }
+}

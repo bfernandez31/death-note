@@ -14,6 +14,8 @@ pub const ZombieType = enum {
 
 pub const GameMode = enum {
     survival,
+    arcade,
+    simulation,
     zen,
 };
 
@@ -81,9 +83,9 @@ test "PowerUpType enum has 3 variants" {
     try std.testing.expectEqual(@as(usize, 3), fields.len);
 }
 
-test "GameMode enum has 2 variants" {
+test "GameMode enum has 4 variants" {
     const fields = @typeInfo(GameMode).@"enum".fields;
-    try std.testing.expectEqual(@as(usize, 2), fields.len);
+    try std.testing.expectEqual(@as(usize, 4), fields.len);
 }
 
 test "POWER_UP_DROP_CHANCE is 10" {

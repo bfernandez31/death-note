@@ -15,6 +15,8 @@ const is_web = builtin.target.os.tag == .emscripten;
 pub fn filename(mode: GameMode) [*:0]const u8 {
     return switch (mode) {
         .survival => "highscore.dat",
+        .arcade => "highscore-arcade.dat",
+        .simulation => "highscore.dat",
         .zen => "highscore-zen.dat",
     };
 }
@@ -22,6 +24,8 @@ pub fn filename(mode: GameMode) [*:0]const u8 {
 pub fn webKey(mode: GameMode) []const u8 {
     return switch (mode) {
         .survival => "death-note.highscore",
+        .arcade => "death-note.highscore.arcade",
+        .simulation => "death-note.highscore",
         .zen => "death-note.highscore.zen",
     };
 }
@@ -139,4 +143,12 @@ test "webKey survival returns death-note.highscore" {
 
 test "webKey zen returns death-note.highscore.zen" {
     try std.testing.expectEqualStrings("death-note.highscore.zen", webKey(.zen));
+}
+
+test "filename arcade returns highscore-arcade.dat" {
+    try std.testing.expectEqualStrings("highscore-arcade.dat", std.mem.span(filename(.arcade)));
+}
+
+test "webKey arcade returns death-note.highscore.arcade" {
+    try std.testing.expectEqualStrings("death-note.highscore.arcade", webKey(.arcade));
 }
