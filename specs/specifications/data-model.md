@@ -891,7 +891,7 @@ These are C constants imported from `raylib.h` via `src/raylib.zig` and referenc
 stateDiagram-v2
     [*] --> MainMenu : main() initialises (current_screen=.main_menu)
 
-    MainMenu --> Playing : Survie / Arcade / Simulation selected\n(game_mode set, current_screen=.playing)
+    MainMenu --> Playing : Survival / Arcade / Simulation selected\n(game_mode set, current_screen=.playing)
     MainMenu --> WpmSelect : Zen selected\n(current_screen=.wpm_select)
 
     WpmSelect --> Playing : WPM target chosen\n(game_mode=.zen, current_screen=.playing)

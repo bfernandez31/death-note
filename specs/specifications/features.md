@@ -890,14 +890,14 @@ graph TB
 
 ### F-30 Main Menu
 
-**Description.** The game opens to a main menu screen with six options: "SURVIE", "ARCADE", "SIMULATION", "ZEN", "SOUND", and "QUIT". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
+**Description.** The game opens to a main menu screen with six options: "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND", and "QUIT". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
 
-**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from QUIT back to SURVIE). Pressing Enter on "SURVIE" starts a new Survival session; on "ARCADE" starts an Arcade session (3 hearts, power-ups); on "SIMULATION" starts a Simulation (auto-play) session; on "ZEN" advances to the WPM target selection screen; on "SOUND" opens the Sound settings screen; on "QUIT" closes the window. The best score for the last-played mode is shown at the bottom of the menu (Arcade shows its own separate best; Simulation shows the Survival best label).
+**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from QUIT back to SURVIVAL). Pressing Enter on "SURVIVAL" starts a new Survival session; on "ARCADE" starts an Arcade session (3 hearts, power-ups); on "SIMULATION" starts a Simulation (auto-play) session; on "ZEN" advances to the WPM target selection screen; on "SOUND" opens the Sound settings screen; on "QUIT" closes the window. The best score for the last-played mode is shown at the bottom of the menu (Arcade shows its own separate best; Simulation shows the Survival best label).
 
 **System behavior.**
-- `current_screen` starts as `.main_menu`; transitions to `.playing` (SURVIE, ARCADE, or SIMULATION), `.wpm_select` (ZEN), `.sound_settings` (SOUND), or calls `raylib.CloseWindow()` (QUIT).
-- `menu_selection: u8` tracks the highlighted index (0=SURVIE, 1=ARCADE, 2=SIMULATION, 3=ZEN, 4=SOUND, 5=QUIT).
-- `MENU_ITEMS = [_][]const u8{ "SURVIE", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" }`, `MENU_ITEM_COUNT = 6`.
+- `current_screen` starts as `.main_menu`; transitions to `.playing` (SURVIVAL, ARCADE, or SIMULATION), `.wpm_select` (ZEN), `.sound_settings` (SOUND), or calls `raylib.CloseWindow()` (QUIT).
+- `menu_selection: u8` tracks the highlighted index (0=SURVIVAL, 1=ARCADE, 2=SIMULATION, 3=ZEN, 4=SOUND, 5=QUIT).
+- `MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" }`, `MENU_ITEM_COUNT = 6`.
 - Up/Down arrows: `menu_selection = (menu_selection ±% 1 +% MENU_ITEM_COUNT) % MENU_ITEM_COUNT`.
 - Enter: Case 0 → `startGame(.survival, allocator)`; Case 1 → `startGame(.arcade, allocator)`; Case 2 → `bot_active = true; bot_tainted = true; startGame(.simulation, allocator)`; Case 3 → `current_screen = .wpm_select`; Case 4 → `current_screen = .sound_settings`; Case 5 → `raylib.CloseWindow()`.
 - `last_played_mode` is read at draw time to select which best score to show: `.arcade` → `best_score_arcade`; `.survival`/`.simulation` → `best_score_survival`; `.zen` → `best_score_zen`.
@@ -1198,7 +1198,7 @@ graph TB
 - On pack change: reset corresponding round-robin index to 0; play preview sample at 50% of typing volume (minimum 30% volume if slider is at 0).
 - On slider adjustment completion (key released): play a representative sound at the new volume.
 - `drawSoundSettings()`: title `"SOUND SETTINGS"` in `CRT_FG`; item rows use `CRT_ACCENT` (selected) / `CRT_DIM` (unselected) following the existing `drawMenu` pattern; toggles show `[ON]` / `[OFF]`; sliders render as `[████░░░░░░░░░░░░░░░░] 70%` using `CRT_ACCENT` fill / `CRT_DIM` empty; footer `"ESC: BACK"` in `CRT_DIM`.
-- Main menu has 6 items: SURVIE, ARCADE, SIMULATION, ZEN, SOUND, QUIT.
+- Main menu has 6 items: SURVIVAL, ARCADE, SIMULATION, ZEN, SOUND, QUIT.
 - Pause menu has 3 items: RESUME, SOUND, QUIT TO MENU.
 
 **Key source references.**
@@ -1460,7 +1460,7 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> MainMenu : main() initialises
     MainMenu --> WpmSelect : player selects Zen
-    MainMenu --> Playing : player selects Survie / Arcade / Simulation
+    MainMenu --> Playing : player selects Survival / Arcade / Simulation
     WpmSelect --> Playing : WPM target chosen (game_mode=.zen)
     Playing --> Paused : Escape pressed
     Paused --> Playing : Resume selected

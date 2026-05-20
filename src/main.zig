@@ -153,6 +153,7 @@ const STATS_TITLE_Y: c_int = 80;
 const STATS_TITLE_SIZE: c_int = 56;
 const STATS_BADGE_Y: c_int = 165;
 const STATS_BADGE_SIZE: c_int = 22;
+const STATS_MODE_LABEL_Y: c_int = STATS_BADGE_Y - 30;
 const STATS_GRID_LABEL_SIZE: c_int = 14;
 const STATS_GRID_VALUE_SIZE: c_int = 32;
 const STATS_GRID_ROW1_LABEL_Y: c_int = 280;
@@ -241,9 +242,11 @@ const FREEZE_DURATION: f32 = 3.0;
 const MAX_HEARTS: u8 = 3;
 const HEART_LOSS_FLASH_DURATION: f32 = 0.2;
 const HEART_RESTORE_FLASH_DURATION: f32 = 0.3;
+const HEARTS_MAX_MSG_DURATION: f32 = 1.2;
 var hearts: u8 = 0;
 var heart_flash_timer: f32 = 0.0;
 var heart_flash_is_loss: bool = false;
+var hearts_max_msg_timer: f32 = 0.0;
 
 var zen_wpm_selection: u8 = 0;
 var zen_target_wpm: u32 = 50;
@@ -512,7 +515,7 @@ fn frame(ctx: *FrameContext) void {
                 ctx.frames_counter = 0;
             }
 
-            if (raylib.IsKeyPressed(raylib.KEY_F2) and !is_dying and game_mode == .survival and current_screen == .playing) {
+            if (raylib.IsKeyPressed(raylib.KEY_F2) and !is_dying and (game_mode == .survival or game_mode == .simulation) and current_screen == .playing) {
                 if (bot_active) {
                     bot_active = false;
                     bot_target_index = null;
@@ -693,6 +696,11 @@ fn frame(ctx: *FrameContext) void {
                 if (heart_flash_timer < 0) heart_flash_timer = 0.0;
             }
 
+            if (hearts_max_msg_timer > 0) {
+                hearts_max_msg_timer -= raylib.GetFrameTime();
+                if (hearts_max_msg_timer < 0) hearts_max_msg_timer = 0.0;
+            }
+
             if (!is_dying) {
                 updateMetrics();
             }
@@ -715,6 +723,7 @@ fn frame(ctx: *FrameContext) void {
                 // Retry the mode the player was actually playing — hard-coding `.survival` here
                 // would silently override the choice if game-over is ever wired up for other modes.
                 startGame(last_played_mode, ctx.allocator);
+                if (last_played_mode == .simulation) enableSimulationBot();
             } else if (raylib.IsKeyPressed(raylib.KEY_ESCAPE)) {
                 current_screen = .main_menu;
             }
@@ -793,12 +802,12 @@ fn frame(ctx: *FrameContext) void {
             drawCenteredTextShadow("GAME OVER", STATS_TITLE_Y, STATS_TITLE_SIZE, CRT_ERR);
 
             const mode_label: [*:0]const u8 = switch (game_mode) {
-                .survival => "SURVIE",
+                .survival => "SURVIVAL",
                 .arcade => "ARCADE",
                 .simulation => "SIMULATION",
                 .zen => "ZEN",
             };
-            drawCenteredText(mode_label, STATS_BADGE_Y - 30, STATS_BADGE_SIZE, CRT_DIM_TEXT);
+            drawCenteredText(mode_label, STATS_MODE_LABEL_Y, STATS_BADGE_SIZE, CRT_DIM_TEXT);
 
             if (is_new_high_score) {
                 drawCenteredText("- NEW HIGH SCORE -", STATS_BADGE_Y, STATS_BADGE_SIZE, CRT_WARN);
@@ -842,7 +851,7 @@ fn frame(ctx: *FrameContext) void {
     drawPopups();
 }
 
-const MENU_ITEMS = [_][]const u8{ "SURVIE", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" };
+const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" };
 const MENU_ITEM_COUNT: u8 = 6;
 const PAUSE_ITEMS = [_][]const u8{ "RESUME", "SOUND", "QUIT TO MENU" };
 const PAUSE_ITEM_COUNT: u8 = 3;
@@ -864,15 +873,7 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
             },
             2 => {
                 startGame(.simulation, allocator);
-                bot_active = true;
-                bot_tainted = true;
-                bot_reaction_timer = BOT_REACTION_DELAY;
-                bot_target_index = null;
-                bot_targeting_boss = false;
-                bot_char_index = 0;
-                bot_type_timer = 0.0;
-                letter_count = 0;
-                name[0] = '\x00';
+                enableSimulationBot();
             },
             3 => {
                 current_screen = .wpm_select;
@@ -911,7 +912,7 @@ fn drawMenu() void {
     const hs_text = switch (last_played_mode) {
         .zen => std.fmt.bufPrintZ(&hs_buf, "ZEN BEST: {d} WPM - {d}% ACC", .{ best_score_zen.wpm, best_score_zen.accuracy }) catch "ZEN BEST: ---",
         .arcade => std.fmt.bufPrintZ(&hs_buf, "ARCADE BEST: {d:0>6} - WAVE {d}", .{ best_score_arcade.score, best_score_arcade.wave }) catch "ARCADE BEST: ---",
-        .survival, .simulation => std.fmt.bufPrintZ(&hs_buf, "SURVIE BEST: {d:0>6} - WAVE {d}", .{ best_score_survival.score, best_score_survival.wave }) catch "SURVIE BEST: ---",
+        .survival, .simulation => std.fmt.bufPrintZ(&hs_buf, "SURVIVAL BEST: {d:0>6} - WAVE {d}", .{ best_score_survival.score, best_score_survival.wave }) catch "SURVIVAL BEST: ---",
     };
     drawCenteredText(hs_text.ptr, 700, 20, CRT_DIM_TEXT);
 }
@@ -1200,9 +1201,12 @@ fn drawHeartsHud() void {
             const color = if (is_flash and !heart_flash_is_loss) CRT_ACCENT else CRT_ERR;
             drawText("<3", x, HEART_HUD_Y, HEART_HUD_SIZE, color);
         } else {
-            const color = if (is_flash and heart_flash_is_loss) CRT_ERR else CRT_DIM;
+            const color = if (is_flash and heart_flash_is_loss) CRT_ERR else CRT_DIM_TEXT;
             drawText("<3", x, HEART_HUD_Y, HEART_HUD_SIZE, color);
         }
+    }
+    if (hearts_max_msg_timer > 0) {
+        drawCenteredText("HEARTS MAX!", HEART_HUD_Y + HEART_HUD_SIZE + 4, 16, CRT_WARN);
     }
 }
 
@@ -1350,6 +1354,18 @@ fn saveZenScoreIfBest() void {
     }
 }
 
+fn enableSimulationBot() void {
+    bot_active = true;
+    bot_tainted = true;
+    bot_reaction_timer = BOT_REACTION_DELAY;
+    bot_target_index = null;
+    bot_targeting_boss = false;
+    bot_char_index = 0;
+    bot_type_timer = 0.0;
+    letter_count = 0;
+    name[0] = '\x00';
+}
+
 fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     // If we were mid-Zen (e.g. user picked a new mode from the menu), preserve the WPM record
     // before the session counters are reset below.
@@ -1375,6 +1391,7 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
     hearts = if (mode == .arcade) MAX_HEARTS else 0;
     heart_flash_timer = 0.0;
     heart_flash_is_loss = false;
+    hearts_max_msg_timer = 0.0;
     resetZombies(allocator);
     resetBoss(allocator);
     if (isWaveMode(mode)) {
@@ -1946,6 +1963,11 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
                 }
                 return;
             }
+            // Survival/simulation path, or arcade with hearts already at 0.
+            // Free the boss allocation here too — otherwise the pointer stays
+            // live through the dying state and leaks on restart.
+            allocator.destroy(b);
+            boss = null;
             is_dying = true;
             dying_timer = DYING_DURATION;
             dying_zombie_index = null;
@@ -1968,6 +1990,12 @@ fn updateBoss(allocator: *std.mem.Allocator) void {
                 heart_flash_timer = HEART_RESTORE_FLASH_DURATION;
                 heart_flash_is_loss = false;
                 playPowerUpSound(.shield);
+            } else if (game_mode == .arcade) {
+                // Cap reached: still acknowledge the boss bonus visually so the
+                // player learns the rule (US3-5).
+                hearts_max_msg_timer = HEARTS_MAX_MSG_DURATION;
+                heart_flash_timer = HEART_RESTORE_FLASH_DURATION;
+                heart_flash_is_loss = false;
             }
             spawn_timer = 0.0;
             playKillSound();
@@ -3734,8 +3762,8 @@ test "menu has 6 items" {
     try std.testing.expectEqual(@as(usize, 6), MENU_ITEMS.len);
 }
 
-test "menu item labels are SURVIE ARCADE SIMULATION ZEN SOUND QUIT" {
-    try std.testing.expectEqualStrings("SURVIE", MENU_ITEMS[0]);
+test "menu item labels are SURVIVAL ARCADE SIMULATION ZEN SOUND QUIT" {
+    try std.testing.expectEqualStrings("SURVIVAL", MENU_ITEMS[0]);
     try std.testing.expectEqualStrings("ARCADE", MENU_ITEMS[1]);
     try std.testing.expectEqualStrings("SIMULATION", MENU_ITEMS[2]);
     try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[3]);
