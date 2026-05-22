@@ -584,8 +584,26 @@ fn frame(ctx: *FrameContext) void {
                             key = raylib.GetCharPressed();
                         }
 
-                        if (raylib.IsKeyPressed(raylib.KEY_BACKSPACE) and letter_count > 0) {
-                            letter_count -= 1;
+                        // Backspace: support OS auto-repeat (hold to delete) and word-delete with
+                        // Ctrl / Alt(Option) / Cmd, matching common text-input behaviour. Word delete
+                        // strips trailing spaces then chars up to the previous space — for nameless
+                        // (no-space) input this clears the buffer; during boss phrases it deletes
+                        // one word at a time.
+                        const backspace_fired = raylib.IsKeyPressed(raylib.KEY_BACKSPACE) or
+                            raylib.IsKeyPressedRepeat(raylib.KEY_BACKSPACE);
+                        if (backspace_fired and letter_count > 0) {
+                            const word_delete = raylib.IsKeyDown(raylib.KEY_LEFT_CONTROL) or
+                                raylib.IsKeyDown(raylib.KEY_RIGHT_CONTROL) or
+                                raylib.IsKeyDown(raylib.KEY_LEFT_ALT) or
+                                raylib.IsKeyDown(raylib.KEY_RIGHT_ALT) or
+                                raylib.IsKeyDown(raylib.KEY_LEFT_SUPER) or
+                                raylib.IsKeyDown(raylib.KEY_RIGHT_SUPER);
+                            if (word_delete) {
+                                while (letter_count > 0 and name[letter_count - 1] == ' ') letter_count -= 1;
+                                while (letter_count > 0 and name[letter_count - 1] != ' ') letter_count -= 1;
+                            } else {
+                                letter_count -= 1;
+                            }
                             name[letter_count] = '\x00';
                         }
                     }
@@ -963,7 +981,12 @@ fn updatePause(allocator: *std.mem.Allocator) void {
         switch (pause_selection) {
             0 => {
                 current_screen = .playing;
-                if (audio_ready) raylib.ResumeMusicStream(music);
+                // Only resume if music is enabled — otherwise we'd unpause a stream the
+                // player muted from this same pause menu. raylib's StopMusicStream is a
+                // no-op on a paused stream (it only stops when playing && !paused), so
+                // toggling music off here leaves the buffer in playing+paused state;
+                // a blind ResumeMusicStream would bring it back to life.
+                if (audio_ready and sound_cfg.music_enabled) raylib.ResumeMusicStream(music);
             },
             1 => {
                 sound_menu_return_screen = .paused;
@@ -1011,6 +1034,10 @@ fn updateSoundSettings() void {
                 sound_cfg.music_enabled = !sound_cfg.music_enabled;
                 if (audio_ready) {
                     if (!sound_cfg.music_enabled) {
+                        // Unpause first: raylib's StopMusicStream is gated on
+                        // (playing && !paused), so a paused stream would otherwise
+                        // stay alive and resume on the next ResumeMusicStream call.
+                        raylib.ResumeMusicStream(music);
                         raylib.StopMusicStream(music);
                     } else if (sound_menu_return_screen == .paused) {
                         // Coming from an active (paused) session: prime the stream so the game's
