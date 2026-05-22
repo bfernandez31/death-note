@@ -259,6 +259,7 @@ const GameScreen = enum {
     paused,
     game_over,
     sound_settings,
+    help,
 };
 
 var current_screen: GameScreen = .main_menu;
@@ -273,6 +274,9 @@ var bot_char_index: usize = 0;
 var bot_type_timer: f32 = 0.0;
 var bot_reaction_timer: f32 = 0.0;
 var pause_selection: u8 = 0;
+// Tracks where the help screen was opened from, so dismissing returns to the
+// right place (main menu, pause overlay, or directly back to gameplay via the ? shortcut).
+var help_return_screen: GameScreen = .main_menu;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -553,6 +557,16 @@ fn frame(ctx: *FrameContext) void {
                         var key = raylib.GetCharPressed();
                         while (key > 0) {
                             if ((key >= 32) and (key <= 125)) {
+                                // '?' is reserved as the in-game help shortcut and never appears
+                                // in zombie names or boss phrases, so intercept it at the
+                                // character layer (layout-independent) before it can be appended
+                                // to the typing buffer. Mirror the Esc-to-pause music flow.
+                                if (key == '?') {
+                                    help_return_screen = .playing;
+                                    current_screen = .help;
+                                    if (audio_ready) raylib.PauseMusicStream(music);
+                                    return;
+                                }
                                 if (key == 32 and space_consumed) {
                                     key = raylib.GetCharPressed();
                                     continue;
@@ -732,6 +746,9 @@ fn frame(ctx: *FrameContext) void {
         .sound_settings => {
             updateSoundSettings();
         },
+        .help => {
+            updateHelp();
+        },
         .game_over => {
             if (raylib.IsKeyPressed(raylib.KEY_ENTER)) {
                 // Retry the mode the player was actually playing — hard-coding `.survival` here
@@ -809,6 +826,9 @@ fn frame(ctx: *FrameContext) void {
         .sound_settings => {
             drawSoundSettings();
         },
+        .help => {
+            drawHelp();
+        },
         .game_over => {
             raylib.DrawRectangleRec(ctx.text_box, CRT_DIM);
             drawText(&name, @as(c_int, @intFromFloat(ctx.text_box.x)) + 5, @as(c_int, @intFromFloat(ctx.text_box.y)) + 8, 40, CRT_ACCENT);
@@ -867,10 +887,10 @@ fn frame(ctx: *FrameContext) void {
     drawPopups();
 }
 
-const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND" };
-const MENU_ITEM_COUNT: u8 = 5;
-const PAUSE_ITEMS = [_][]const u8{ "RESUME", "SOUND", "QUIT TO MENU" };
-const PAUSE_ITEM_COUNT: u8 = 3;
+const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "HELP", "SOUND" };
+const MENU_ITEM_COUNT: u8 = 6;
+const PAUSE_ITEMS = [_][]const u8{ "RESUME", "RESTART", "HELP", "SOUND", "QUIT TO MENU" };
+const PAUSE_ITEM_COUNT: u8 = 5;
 
 fn updateMenu(allocator: *std.mem.Allocator) void {
     if (raylib.IsKeyPressed(raylib.KEY_UP)) {
@@ -895,6 +915,10 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 current_screen = .wpm_select;
             },
             4 => {
+                help_return_screen = .main_menu;
+                current_screen = .help;
+            },
+            5 => {
                 sound_menu_return_screen = .main_menu;
                 sound_menu_selection = 0;
                 current_screen = .sound_settings;
@@ -981,11 +1005,24 @@ fn updatePause(allocator: *std.mem.Allocator) void {
                 if (audio_ready and sound_cfg.music_enabled) raylib.ResumeMusicStream(music);
             },
             1 => {
+                // RESTART: replay the current mode from wave 1. startGame handles all
+                // state reset and music; simulation needs the bot re-enabled afterwards
+                // since startGame itself leaves the bot off (the menu wires that up).
+                saveZenScoreIfBest();
+                const mode_to_restart = game_mode;
+                startGame(mode_to_restart, allocator);
+                if (mode_to_restart == .simulation) enableSimulationBot();
+            },
+            2 => {
+                help_return_screen = .paused;
+                current_screen = .help;
+            },
+            3 => {
                 sound_menu_return_screen = .paused;
                 sound_menu_selection = 0;
                 current_screen = .sound_settings;
             },
-            2 => {
+            4 => {
                 saveZenScoreIfBest();
                 resetZombies(allocator);
                 resetBoss(allocator);
@@ -1162,6 +1199,69 @@ fn drawSoundSettings() void {
     }
 
     drawCenteredText("ESC: BACK", screen_height - SOUND_SETTINGS_HINT_Y_OFFSET, SOUND_SETTINGS_HINT_SIZE, CRT_DIM_TEXT);
+}
+
+fn updateHelp() void {
+    if (raylib.IsKeyPressed(raylib.KEY_ESCAPE) or raylib.IsKeyPressed(raylib.KEY_ENTER)) {
+        current_screen = help_return_screen;
+        // Music was paused when help opened from in-game; mirror the pause-menu
+        // resume rules so we only un-pause when the player has music enabled.
+        if (help_return_screen == .playing and audio_ready and sound_cfg.music_enabled) {
+            raylib.ResumeMusicStream(music);
+        }
+    }
+}
+
+fn drawHelp() void {
+    raylib.DrawRectangle(0, 0, screen_width, screen_height, CRT_PAUSE_OVERLAY);
+    drawCenteredTextShadow("HELP", 80, 50, CRT_FG);
+
+    const left_x: c_int = 60;
+    var y: c_int = 160;
+    const heading_size: c_int = 22;
+    const line_size: c_int = 18;
+    const section_gap: c_int = 24;
+    const line_gap: c_int = 26;
+
+    drawText("KEYS", left_x, y, heading_size, CRT_ACCENT);
+    y += line_gap + 4;
+    drawText("Letters       Type the zombie name to destroy it", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("Backspace     Erase one character", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("Ctrl/Alt/Cmd + Backspace   Erase a whole word", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("Space         Trigger ready power-up (outside boss)", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("Esc           Pause / back", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("?             Open this help while playing", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("F2            Toggle bot (Survival / Simulation)", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("Up/Down + Enter   Navigate menus", left_x, y, line_size, CRT_FG);
+    y += section_gap;
+
+    drawText("MODES", left_x, y, heading_size, CRT_ACCENT);
+    y += line_gap + 4;
+    drawText("SURVIVAL    Endless waves, difficulty ramps with each wave", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("ARCADE      Survival + 3 hearts and a shield power-up", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("SIMULATION  Bot plays automatically (no score saved)", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("ZEN         Pick your WPM target, relaxed pace", left_x, y, line_size, CRT_FG);
+    y += section_gap;
+
+    drawText("MECHANICS", left_x, y, heading_size, CRT_ACCENT);
+    y += line_gap + 4;
+    drawText("Boss        Periodic boss spawns a phrase to type whole", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("Hearts      Arcade only: lose one per zombie that lands", left_x, y, line_size, CRT_FG);
+    y += line_gap;
+    drawText("Shield      Arcade only: absorbs the next hit before hearts", left_x, y, line_size, CRT_FG);
+
+    drawCenteredText("ESC / ENTER: BACK", screen_height - 60, 18, CRT_DIM_TEXT);
 }
 
 fn formatVolumeBar(buf: *[48]u8, level: u8) [*:0]const u8 {
@@ -3390,20 +3490,20 @@ test "anti-doublon retries exhaust gracefully" {
     try std.testing.expect(result != null);
 }
 
-test "GameScreen enum has exactly 6 variants" {
+test "GameScreen enum has exactly 7 variants" {
     const fields = @typeInfo(GameScreen).@"enum".fields;
-    try std.testing.expectEqual(@as(usize, 6), fields.len);
+    try std.testing.expectEqual(@as(usize, 7), fields.len);
 }
 
 test "menu selection circular wrap" {
-    try std.testing.expectEqual(@as(u8, 4), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(u8, 0), (4 +% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 5), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (5 +% 1) % MENU_ITEM_COUNT);
     try std.testing.expectEqual(@as(u8, 1), (0 +% 1) % MENU_ITEM_COUNT);
 }
 
 test "pause selection circular wrap" {
-    try std.testing.expectEqual(@as(u8, 2), (0 +% PAUSE_ITEM_COUNT -% 1) % PAUSE_ITEM_COUNT);
-    try std.testing.expectEqual(@as(u8, 0), (2 +% 1) % PAUSE_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 4), (0 +% PAUSE_ITEM_COUNT -% 1) % PAUSE_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (4 +% 1) % PAUSE_ITEM_COUNT);
 }
 
 test "pause does not modify game state" {
@@ -3818,17 +3918,28 @@ test "bot state reset clears all fields" {
     try std.testing.expectEqual(@as(f32, 0.0), bot_reaction_timer);
 }
 
-test "menu has 5 items" {
-    try std.testing.expectEqual(@as(u8, 5), MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(usize, 5), MENU_ITEMS.len);
+test "menu has 6 items" {
+    try std.testing.expectEqual(@as(u8, 6), MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(usize, 6), MENU_ITEMS.len);
 }
 
-test "menu item labels are SURVIVAL ARCADE SIMULATION ZEN SOUND" {
+test "menu item labels are SURVIVAL ARCADE SIMULATION ZEN HELP SOUND" {
     try std.testing.expectEqualStrings("SURVIVAL", MENU_ITEMS[0]);
     try std.testing.expectEqualStrings("ARCADE", MENU_ITEMS[1]);
     try std.testing.expectEqualStrings("SIMULATION", MENU_ITEMS[2]);
     try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[3]);
-    try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[4]);
+    try std.testing.expectEqualStrings("HELP", MENU_ITEMS[4]);
+    try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[5]);
+}
+
+test "pause menu has 5 items in expected order" {
+    try std.testing.expectEqual(@as(u8, 5), PAUSE_ITEM_COUNT);
+    try std.testing.expectEqual(@as(usize, 5), PAUSE_ITEMS.len);
+    try std.testing.expectEqualStrings("RESUME", PAUSE_ITEMS[0]);
+    try std.testing.expectEqualStrings("RESTART", PAUSE_ITEMS[1]);
+    try std.testing.expectEqualStrings("HELP", PAUSE_ITEMS[2]);
+    try std.testing.expectEqualStrings("SOUND", PAUSE_ITEMS[3]);
+    try std.testing.expectEqualStrings("QUIT TO MENU", PAUSE_ITEMS[4]);
 }
 
 test "multiple heart losses cost 1 each in arcade" {
