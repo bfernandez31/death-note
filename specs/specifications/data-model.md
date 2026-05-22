@@ -151,6 +151,7 @@ erDiagram
         enum paused
         enum game_over
         enum sound_settings
+        enum help
     }
 
     SOUND_CONFIG {
@@ -415,6 +416,7 @@ These variables collectively represent the running state of the game session.
 | `sound_cfg` | `sound_config.SoundConfig` | defaults from `sound_config.load()` | preserved | Player's full audio preference state. Loaded at startup; written to disk when the Sound settings screen is exited. |
 | `sound_menu_selection` | `u8` | `0` | — | Currently highlighted item index (0–9) in the Sound settings screen. |
 | `sound_menu_return_screen` | `GameScreen` | `.paused` | — | Screen to return to when Escape is pressed in Sound settings (`.main_menu` or `.paused`). |
+| `help_return_screen` | `GameScreen` | `.main_menu` | — | Screen to return to when Escape or Enter dismisses the Help screen. Set by the caller before transitioning into `.help`; observed values are `.main_menu`, `.paused`, and `.playing` (latter triggers a music resume on dismiss if music is enabled). |
 | `bot_active` | `bool` | `false` | `false` | When `true`, `updateBot()` drives the input buffer and all player keyboard input is suppressed. Reset to `false` by `resetBotState()` on new session. |
 | `bot_tainted` | `bool` | `false` | `false` | Set to `true` the first time bot mode is activated in a session; never cleared until `startGame()` starts a new session. When `true`, `highscore.save()` is not called at game-over, preventing bot-assisted scores from reaching persistent storage. |
 | `bot_target_index` | `?usize` | `null` | `null` | Index into `zombies[]` of the zombie the bot is currently typing. `null` when the bot has no target or is targeting the boss. |
@@ -732,10 +734,10 @@ Determines which gameplay rules apply (power-ups, hearts, bosses, game-over, hig
 #### GameScreen (`src/main.zig`)
 
 ```zig
-const GameScreen = enum { main_menu, wpm_select, playing, paused, game_over, sound_settings };
+const GameScreen = enum { main_menu, wpm_select, playing, paused, game_over, sound_settings, help };
 ```
 
-Top-level UI state; gates which update and draw paths run each frame. `sound_settings` is entered from either the main menu or the pause menu via the "SOUND" item; `sound_menu_return_screen` records which screen to return to on Escape.
+Top-level UI state; gates which update and draw paths run each frame. `sound_settings` is entered from either the main menu or the pause menu via the "SOUND" item; `sound_menu_return_screen` records which screen to return to on Escape. `help` is reachable from three contexts — the main menu (HELP item), the pause overlay (HELP item), and active gameplay via the `?` shortcut; `help_return_screen` records the originating screen so dismissal restores the correct context (and resumes music when returning from `.playing`).
 
 #### PowerUpType (`src/zombie_types.zig`)
 
@@ -898,11 +900,18 @@ stateDiagram-v2
 
     Playing --> Paused : Escape pressed\n(current_screen=.paused)
     Paused --> Playing : Resume selected\n(current_screen=.playing)
+    Paused --> Playing : Restart selected\n(startGame(game_mode), wave=1)
     Paused --> MainMenu : Quit to Menu\n(session discarded, current_screen=.main_menu)
     Paused --> SoundSettings : Sound selected\n(sound_menu_return_screen=.paused)
+    Paused --> Help : Help selected\n(help_return_screen=.paused)
+    Playing --> Help : ? pressed\n(help_return_screen=.playing, PauseMusicStream)
     MainMenu --> SoundSettings : Sound selected\n(sound_menu_return_screen=.main_menu)
+    MainMenu --> Help : Help selected\n(help_return_screen=.main_menu)
     SoundSettings --> Paused : Escape\n(save config, return to return_screen if .paused)
     SoundSettings --> MainMenu : Escape\n(save config, return to return_screen if .main_menu)
+    Help --> MainMenu : Escape/Enter\n(return to help_return_screen)
+    Help --> Paused : Escape/Enter\n(return to help_return_screen)
+    Help --> Playing : Escape/Enter\n(return to help_return_screen, ResumeMusicStream if enabled)
 
     Playing --> Dying : zombie.y >= screen_height\nAND (game_mode==.survival OR hearts==0)\nAND !shield_active\n(is_dying=true, dying_timer=1.0)
     Dying --> GameOver : dying_timer <= 0\n(current_screen=.game_over,\nhigh score compared and saved)

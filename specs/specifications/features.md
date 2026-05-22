@@ -50,6 +50,7 @@
   - [F-44 Sound Settings Screen](#f-44-sound-settings-screen)
   - [F-45 Simulation Mode](#f-45-simulation-mode)
   - [F-46 Arcade Mode](#f-46-arcade-mode)
+  - [F-47 Help Screen](#f-47-help-screen)
 - [User Journeys](#user-journeys)
   - [Journey 1: Successful Kill](#journey-1-successful-kill)
   - [Journey 2: Missed Zombie and Restart](#journey-2-missed-zombie-and-restart)
@@ -361,7 +362,7 @@ graph TB
 
 **Description.** Each frame the game reads characters from raylib's key-press queue and appends printable ASCII characters (codepoints 32–125) to the `name` buffer. The maximum buffer length is dynamic: 20 characters during normal play (up from 9; accommodates compound names up to 20 chars) and 35 characters while a boss is active (F-16). The hyphen character (codepoint 45) falls within the accepted range and is required for compound zombie names. Backspace removes the last character. Input is accepted regardless of mouse position; the mouse-over state only controls the cursor icon and the blinking-underscore overlay (F-09). Input is entirely disabled during wave transitions and the dying pause.
 
-**User-facing behavior.** The player types and characters appear in the text box, including hyphens for compound names. Backspace deletes the last character. During the 3-second wave-transition countdown or the 1-second dying pause, typing is ignored. While a boss is active the buffer accepts up to 35 characters to accommodate boss phrases.
+**User-facing behavior.** The player types and characters appear in the text box, including hyphens for compound names. Backspace deletes the last character; OS key-repeat applies (hold to keep deleting), and holding Ctrl, Alt/Option, or Cmd while pressing Backspace deletes a whole word (trailing spaces then characters up to the previous space). Pressing `?` while playing opens the help screen instead of inserting the character. During the 3-second wave-transition countdown or the 1-second dying pause, typing is ignored. While a boss is active the buffer accepts up to 35 characters to accommodate boss phrases.
 
 **System behavior.**
 - Mouse position checked each frame with `raylib.CheckCollisionPointRec`.
@@ -371,7 +372,8 @@ graph TB
 - Guard: `(key >= 32) and (key <= 125) and (letter_count < getCurrentMaxInput())`.
 - `getCurrentMaxInput()` returns `MAX_BOSS_INPUT_CHARS` (35) when `boss != null`, else `MAX_INPUT_CHARS` (20).
 - `name[letter_count] = @intCast(key)` appends the byte; `name[letter_count + 1] = '\x00'` maintains null termination.
-- Backspace: `IsKeyPressed(KEY_BACKSPACE) and letter_count > 0` → decrement and re-null-terminate.
+- `?` interception: inside the char loop, `if (key == '?')` sets `help_return_screen = .playing; current_screen = .help`, pauses music, and returns from `frame()` before the draw phase so the help screen appears on the next frame. Intercepted at the character layer (codepoint 63) rather than via `IsKeyPressed(KEY_SLASH)` to stay independent of keyboard layout, and safe because `?` never appears in any zombie name or boss phrase.
+- Backspace: fires on `IsKeyPressed(KEY_BACKSPACE) or IsKeyPressedRepeat(KEY_BACKSPACE)` (so the OS auto-repeat applies). When a Ctrl/Alt/Cmd modifier is held, word-delete runs (strip trailing spaces, then characters up to the previous space); otherwise a single character is removed. Trailing null terminator is restored.
 
 **Key source references.**
 - `src/main.zig` — `MAX_INPUT_CHARS = 20`
@@ -891,16 +893,16 @@ graph TB
 
 ### F-30 Main Menu
 
-**Description.** The game opens to a main menu screen with six options: "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND", and "QUIT". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
+**Description.** The game opens to a main menu screen with six options: "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "HELP", and "SOUND". Navigation uses Up/Down arrow keys to move the highlight and Enter to confirm. Selection wraps circularly. The menu displays the best score for the most recently played mode.
 
-**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from QUIT back to SURVIVAL). Pressing Enter on "SURVIVAL" starts a new Survival session; on "ARCADE" starts an Arcade session (3 hearts, power-ups); on "SIMULATION" starts a Simulation (auto-play) session; on "ZEN" advances to the WPM target selection screen; on "SOUND" opens the Sound settings screen; on "QUIT" closes the window. The best score for the last-played mode is shown at the bottom of the menu (Arcade shows its own separate best; Simulation shows the Survival best label).
+**User-facing behavior.** On launch, the player sees the main menu with the first option highlighted. Pressing Down moves the selection down (wrapping from SOUND back to SURVIVAL). Pressing Enter on "SURVIVAL" starts a new Survival session; on "ARCADE" starts an Arcade session (3 hearts, power-ups); on "SIMULATION" starts a Simulation (auto-play) session; on "ZEN" advances to the WPM target selection screen; on "HELP" opens the Help screen (F-47); on "SOUND" opens the Sound settings screen. There is no "Quit" entry — desktop users close the OS window directly and the web build has no analogue. The best score for the last-played mode is shown at the bottom of the menu (Arcade shows its own separate best; Simulation shows the Survival best label).
 
 **System behavior.**
-- `current_screen` starts as `.main_menu`; transitions to `.playing` (SURVIVAL, ARCADE, or SIMULATION), `.wpm_select` (ZEN), `.sound_settings` (SOUND), or calls `raylib.CloseWindow()` (QUIT).
-- `menu_selection: u8` tracks the highlighted index (0=SURVIVAL, 1=ARCADE, 2=SIMULATION, 3=ZEN, 4=SOUND, 5=QUIT).
-- `MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" }`, `MENU_ITEM_COUNT = 6`.
+- `current_screen` starts as `.main_menu`; transitions to `.playing` (SURVIVAL, ARCADE, or SIMULATION), `.wpm_select` (ZEN), `.help` (HELP), or `.sound_settings` (SOUND).
+- `menu_selection: u8` tracks the highlighted index (0=SURVIVAL, 1=ARCADE, 2=SIMULATION, 3=ZEN, 4=HELP, 5=SOUND).
+- `MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "HELP", "SOUND" }`, `MENU_ITEM_COUNT = 6`.
 - Up/Down arrows: `menu_selection = (menu_selection ±% 1 +% MENU_ITEM_COUNT) % MENU_ITEM_COUNT`.
-- Enter: Case 0 → `startGame(.survival, allocator)`; Case 1 → `startGame(.arcade, allocator)`; Case 2 → `bot_active = true; bot_tainted = true; startGame(.simulation, allocator)`; Case 3 → `current_screen = .wpm_select`; Case 4 → `current_screen = .sound_settings`; Case 5 → `raylib.CloseWindow()`.
+- Enter: Case 0 → `startGame(.survival, allocator)`; Case 1 → `startGame(.arcade, allocator)`; Case 2 → `startGame(.simulation, allocator); enableSimulationBot()`; Case 3 → `current_screen = .wpm_select`; Case 4 → `help_return_screen = .main_menu; current_screen = .help`; Case 5 → `sound_menu_return_screen = .main_menu; current_screen = .sound_settings`.
 - `last_played_mode` is read at draw time to select which best score to show: `.arcade` → `best_score_arcade`; `.survival`/`.simulation` → `best_score_survival`; `.zen` → `best_score_zen`.
 - The menu does not block keyboard input from leaking; the input buffer is cleared on game start.
 
@@ -908,30 +910,33 @@ graph TB
 - `src/main.zig` — `GameScreen` enum, `current_screen`, `menu_selection`, `last_played_mode`, `MENU_ITEMS`, `MENU_ITEM_COUNT`
 - `src/main.zig` — main menu update/draw branch in `frame()`
 
-**Dependencies.** F-31 (pause shows "Quit to Menu"), F-32 (Zen option leads to WPM select), F-38 (best score shown), F-44 (SOUND entry leads to settings), F-45 (SIMULATION entry starts bot session), F-46 (ARCADE entry starts Arcade session).
+**Dependencies.** F-31 (pause shows "Quit to Menu"), F-32 (Zen option leads to WPM select), F-38 (best score shown), F-44 (SOUND entry leads to settings), F-45 (SIMULATION entry starts bot session), F-46 (ARCADE entry starts Arcade session), F-47 (HELP entry opens the help screen).
 
 ---
 
 ### F-31 Pause System
 
-**Description.** Pressing Escape during active gameplay (either mode) pauses the game and shows an overlay with "Resume" and "Quit to Menu" options. All timers, zombie movement, input processing, and spawn logic stop. Resuming restores exact game state. Quitting discards the session without saving.
+**Description.** Pressing Escape during active gameplay pauses the game and shows an overlay with five options: "Resume", "Restart", "Help", "Sound", and "Quit to Menu". All timers, zombie movement, input processing, and spawn logic stop while paused. Resuming restores exact game state. Restart replays the current mode from wave 1. Help opens the help screen (returning to the pause overlay on dismiss). Quit to Menu discards the session without saving.
 
-**User-facing behavior.** During gameplay, Escape freezes everything and shows a pause overlay. The player can resume (returning to exactly where they left off) or quit to the main menu. Pressing Escape on the game-over screen also returns to the main menu.
+**User-facing behavior.** During gameplay, Escape freezes everything and shows the pause overlay. The player can resume (returning to exactly where they left off), restart the current mode from wave 1, open the help screen, open the sound settings, or quit to the main menu. Pressing Escape on the game-over screen returns to the main menu.
 
 **System behavior.**
-- `current_screen = .paused` is set when Escape is pressed during `.playing`.
-- All update guards are keyed on `current_screen == .playing`; in `.paused` state no updates run.
-- Pause overlay shows two items (Resume / Quit to Menu) with the same Up/Down + Enter navigation as the main menu.
-- Resume: sets `current_screen = .playing`.
-- Quit to Menu: resets session state (calls `resetSessionState`, `resetZombies`, `resetBoss`) and sets `current_screen = .main_menu`. The current session score is NOT saved.
+- `current_screen = .paused` is set when Escape is pressed during `.playing`; music is paused via `PauseMusicStream`.
+- All update guards are keyed on `current_screen == .playing`; in `.paused` state no gameplay updates run.
+- `PAUSE_ITEMS = [_][]const u8{ "RESUME", "RESTART", "HELP", "SOUND", "QUIT TO MENU" }`, `PAUSE_ITEM_COUNT = 5`; same Up/Down + Enter navigation as the main menu.
+- Case 0 Resume: sets `current_screen = .playing`; resumes music only if `sound_cfg.music_enabled` (otherwise we'd unpause a stream the player just muted from the same overlay).
+- Case 1 Restart: `saveZenScoreIfBest()`, then `startGame(game_mode, allocator)`; if `game_mode == .simulation`, also calls `enableSimulationBot()` so the bot is re-armed (the menu wires that step separately).
+- Case 2 Help: sets `help_return_screen = .paused; current_screen = .help`; music stays paused, mirrored by the help-screen dismiss path.
+- Case 3 Sound: sets `sound_menu_return_screen = .paused; current_screen = .sound_settings`.
+- Case 4 Quit to Menu: `saveZenScoreIfBest()`, `resetZombies`, `resetBoss`, `StopMusicStream`, `current_screen = .main_menu`. Non-Zen session scores are NOT saved.
 - Freeze timer and shield state are suspended alongside all other timers; they resume naturally because the update block that decrements `freeze_timer` is gated by `current_screen == .playing`.
 - Pressing Escape on `.game_over` sets `current_screen = .main_menu`.
 
 **Key source references.**
-- `src/main.zig` — `current_screen`, `.paused` handling in `frame()`
-- `src/main.zig` — pause overlay draw function
+- `src/main.zig` — `current_screen`, `.paused` handling in `frame()`, `PAUSE_ITEMS`, `PAUSE_ITEM_COUNT`
+- `src/main.zig` — `updatePause`, `drawPauseOverlay`
 
-**Dependencies.** F-30 (Quit to Menu returns to main menu), F-35 (freeze timer paused).
+**Dependencies.** F-30 (Quit to Menu returns to main menu), F-35 (freeze timer paused), F-44 (SOUND entry leads to settings), F-47 (HELP entry opens the help screen).
 
 ---
 
@@ -1199,8 +1204,8 @@ graph TB
 - On pack change: reset corresponding round-robin index to 0; play preview sample at 50% of typing volume (minimum 30% volume if slider is at 0).
 - On slider adjustment completion (key released): play a representative sound at the new volume.
 - `drawSoundSettings()`: title `"SOUND SETTINGS"` in `CRT_FG`; item rows use `CRT_ACCENT` (selected) / `CRT_DIM` (unselected) following the existing `drawMenu` pattern; toggles show `[ON]` / `[OFF]`; sliders render as `[████░░░░░░░░░░░░░░░░] 70%` using `CRT_ACCENT` fill / `CRT_DIM` empty; footer `"ESC: BACK"` in `CRT_DIM`.
-- Main menu has 6 items: SURVIVAL, ARCADE, SIMULATION, ZEN, SOUND, QUIT.
-- Pause menu has 3 items: RESUME, SOUND, QUIT TO MENU.
+- Main menu has 6 items: SURVIVAL, ARCADE, SIMULATION, ZEN, HELP, SOUND.
+- Pause menu has 5 items: RESUME, RESTART, HELP, SOUND, QUIT TO MENU.
 
 **Key source references.**
 - `src/main.zig` — `GameScreen.sound_settings`, `updateSoundSettings`, `drawSoundSettings`, `SOUND_MENU_ITEM_COUNT`, `sound_menu_selection`, `sound_menu_return_screen`, `MENU_ITEMS`, `PAUSE_ITEMS`
@@ -1271,6 +1276,28 @@ graph TB
 - `src/highscore.zig` — `.arcade` branch in `filename` and `webKey`
 
 **Dependencies.** F-05 (zombie/boss crossing screen_height; arcade path), F-30 (ARCADE menu entry), F-33 (power-up carriers active in arcade), F-34–F-37 (power-up inventory and activation mechanics), F-38 (separate arcade high score), F-26 (dying transition triggered at 0 hearts).
+
+---
+
+### F-47 Help Screen
+
+**Description.** A dedicated Help screen documents the player-facing controls, modes, and core mechanics. It is reachable from the main menu ("HELP" entry, between ZEN and SOUND), from the pause overlay ("HELP" entry), and from active gameplay via the `?` shortcut. Pressing Escape or Enter dismisses the screen and returns to the originating context.
+
+**User-facing behavior.** The player opens Help from any of three entry points and reads a single-screen reference covering: typing keys (letters, Backspace, Ctrl/Alt/Cmd+Backspace word-delete, Space power-up trigger, Esc, `?`, F2 bot toggle, Up/Down + Enter for menu nav); the four modes (Survival, Arcade, Simulation, Zen); and three mechanics (boss phrases, Arcade hearts, Arcade shield). Pressing Escape or Enter returns to where Help was opened from — main menu, pause overlay, or directly back to gameplay (with music resumed if music is enabled).
+
+**System behavior.**
+- `GameScreen.help` is a top-level screen state.
+- `help_return_screen: GameScreen` records the originating screen, set by the caller before transitioning into `.help`. Three values are observed: `.main_menu`, `.paused`, `.playing`.
+- `updateHelp()`: `if (IsKeyPressed(KEY_ESCAPE) or IsKeyPressed(KEY_ENTER))` → `current_screen = help_return_screen`; if `help_return_screen == .playing` and `sound_cfg.music_enabled` and `audio_ready`, also call `ResumeMusicStream(music)` (mirroring the pause→playing music rule).
+- `drawHelp()`: full-screen pause-style dim overlay (`CRT_PAUSE_OVERLAY`); centered title `"HELP"` in `CRT_FG`; three left-aligned sections — KEYS, MODES, MECHANICS — with section headings in `CRT_ACCENT` and body lines in `CRT_FG`; footer `"ESC / ENTER: BACK"` in `CRT_DIM_TEXT`.
+- In-game `?` shortcut: handled inside the `.playing` `GetCharPressed` loop — `if (key == '?')` sets `help_return_screen = .playing; current_screen = .help`, pauses music, and returns from `frame()` (so the playing branch's remaining update and draw are skipped this frame; next frame routes to the `.help` branch).
+- Music coordination: opening Help from `.playing` calls `PauseMusicStream`; opening it from `.paused` is a no-op (music already paused). Dismissal calls `ResumeMusicStream` only when returning to `.playing` and `sound_cfg.music_enabled`.
+
+**Key source references.**
+- `src/main.zig` — `GameScreen.help`, `help_return_screen`, `updateHelp`, `drawHelp`
+- `src/main.zig` — main-menu HELP case (case 4), pause-menu HELP case (case 2), in-game `?` interception in `.playing` char loop
+
+**Dependencies.** F-30 (main menu HELP entry), F-31 (pause overlay HELP entry), F-07 (in-game `?` shortcut intercepted in the typing-input path), F-41 (background music pause/resume coordination).
 
 ---
 
