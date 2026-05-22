@@ -273,10 +273,6 @@ var bot_char_index: usize = 0;
 var bot_type_timer: f32 = 0.0;
 var bot_reaction_timer: f32 = 0.0;
 var pause_selection: u8 = 0;
-// Set by the main-menu Quit entry so the main loop exits cleanly between frames.
-// Tearing raylib down inside `frame()` would leave the rest of the same frame drawing
-// onto a destroyed context.
-var should_quit_app: bool = false;
 
 // Define the Zombie structure
 const Zombie = struct {
@@ -871,8 +867,8 @@ fn frame(ctx: *FrameContext) void {
     drawPopups();
 }
 
-const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND", "QUIT" };
-const MENU_ITEM_COUNT: u8 = 6;
+const MENU_ITEMS = [_][]const u8{ "SURVIVAL", "ARCADE", "SIMULATION", "ZEN", "SOUND" };
+const MENU_ITEM_COUNT: u8 = 5;
 const PAUSE_ITEMS = [_][]const u8{ "RESUME", "SOUND", "QUIT TO MENU" };
 const PAUSE_ITEM_COUNT: u8 = 3;
 
@@ -902,10 +898,6 @@ fn updateMenu(allocator: *std.mem.Allocator) void {
                 sound_menu_return_screen = .main_menu;
                 sound_menu_selection = 0;
                 current_screen = .sound_settings;
-            },
-            5 => {
-                saveZenScoreIfBest();
-                should_quit_app = true;
             },
             else => {},
         }
@@ -1581,7 +1573,7 @@ pub fn main() !void {
         _ = raylib.atexit(&cleanup_on_exit);
         raylib.emscripten_set_main_loop_arg(frame_c_callback, &ctx, 0, 1);
     } else {
-        while (!raylib.WindowShouldClose() and !should_quit_app) { // Main game loop
+        while (!raylib.WindowShouldClose()) { // Main game loop
             frame(&ctx);
         }
     }
@@ -3404,8 +3396,8 @@ test "GameScreen enum has exactly 6 variants" {
 }
 
 test "menu selection circular wrap" {
-    try std.testing.expectEqual(@as(u8, 5), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(u8, 0), (5 +% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 4), (0 +% MENU_ITEM_COUNT -% 1) % MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(u8, 0), (4 +% 1) % MENU_ITEM_COUNT);
     try std.testing.expectEqual(@as(u8, 1), (0 +% 1) % MENU_ITEM_COUNT);
 }
 
@@ -3826,18 +3818,17 @@ test "bot state reset clears all fields" {
     try std.testing.expectEqual(@as(f32, 0.0), bot_reaction_timer);
 }
 
-test "menu has 6 items" {
-    try std.testing.expectEqual(@as(u8, 6), MENU_ITEM_COUNT);
-    try std.testing.expectEqual(@as(usize, 6), MENU_ITEMS.len);
+test "menu has 5 items" {
+    try std.testing.expectEqual(@as(u8, 5), MENU_ITEM_COUNT);
+    try std.testing.expectEqual(@as(usize, 5), MENU_ITEMS.len);
 }
 
-test "menu item labels are SURVIVAL ARCADE SIMULATION ZEN SOUND QUIT" {
+test "menu item labels are SURVIVAL ARCADE SIMULATION ZEN SOUND" {
     try std.testing.expectEqualStrings("SURVIVAL", MENU_ITEMS[0]);
     try std.testing.expectEqualStrings("ARCADE", MENU_ITEMS[1]);
     try std.testing.expectEqualStrings("SIMULATION", MENU_ITEMS[2]);
     try std.testing.expectEqualStrings("ZEN", MENU_ITEMS[3]);
     try std.testing.expectEqualStrings("SOUND", MENU_ITEMS[4]);
-    try std.testing.expectEqualStrings("QUIT", MENU_ITEMS[5]);
 }
 
 test "multiple heart losses cost 1 each in arcade" {
