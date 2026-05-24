@@ -3582,7 +3582,7 @@ test "freeze activation sets timer via activatePowerUp" {
     held_power_up = .freeze;
     freeze_timer = 0.0;
     var alloc = std.testing.allocator;
-    activatePowerUp(@ptrCast(&alloc));
+    activatePowerUp(&alloc);
     try std.testing.expectApproxEqAbs(FREEZE_DURATION, freeze_timer, 0.001);
     try std.testing.expect(held_power_up == null);
 }
@@ -3598,7 +3598,7 @@ test "shield activation via activatePowerUp" {
     shield_active = false;
     held_power_up = .shield;
     var alloc = std.testing.allocator;
-    activatePowerUp(@ptrCast(&alloc));
+    activatePowerUp(&alloc);
     try std.testing.expect(shield_active);
     try std.testing.expect(held_power_up == null);
 }
@@ -3618,7 +3618,7 @@ test "activatePowerUp with empty inventory is no-op" {
     shield_active = false;
 
     var alloc = std.testing.allocator;
-    activatePowerUp(@ptrCast(&alloc));
+    activatePowerUp(&alloc);
     try std.testing.expect(held_power_up == null);
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), freeze_timer, 0.001);
     try std.testing.expect(!shield_active);
@@ -3713,7 +3713,7 @@ test "bomb on empty screen consumes power-up" {
 
     held_power_up = .bomb;
     var alloc = std.testing.allocator;
-    activatePowerUp(@ptrCast(&alloc));
+    activatePowerUp(&alloc);
     try std.testing.expect(held_power_up == null);
 }
 
