@@ -1,6 +1,8 @@
 const std = @import("std");
 const zt = @import("zombie_types.zig");
 
+const MAX_PRIMARY_RETRIES: u32 = 50;
+
 pub const NameCategory = enum {
     primary,
     compound,
@@ -239,7 +241,7 @@ fn pickCandidate(
 
 fn pickFromPrimary(zombie_type: zt.ZombieType, rng: std.Random) ?NameSelection {
     var attempts: u32 = 0;
-    while (attempts < 50) : (attempts += 1) {
+    while (attempts < MAX_PRIMARY_RETRIES) : (attempts += 1) {
         const idx = rng.intRangeAtMost(usize, 0, PrimaryNames.len - 1);
         const candidate = PrimaryNames[idx];
         if (meetsLengthConstraint(candidate, zombie_type)) {
