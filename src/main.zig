@@ -714,10 +714,7 @@ fn frame(ctx: *FrameContext) void {
                 }
             }
 
-            if (freeze_timer > 0) {
-                freeze_timer -= raylib.GetFrameTime();
-                if (freeze_timer < 0) freeze_timer = 0.0;
-            }
+            tickFreezeTimer(raylib.GetFrameTime());
 
             if (heart_flash_timer > 0) {
                 heart_flash_timer -= raylib.GetFrameTime();
@@ -1472,6 +1469,19 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
     }
 }
 
+fn tryPickupPowerUp(drop: ?PowerUpType) void {
+    if (drop != null and held_power_up == null) {
+        held_power_up = drop;
+    }
+}
+
+fn tickFreezeTimer(dt: f32) void {
+    if (freeze_timer > 0) {
+        freeze_timer -= dt;
+        if (freeze_timer < 0) freeze_timer = 0.0;
+    }
+}
+
 // Persist the current Zen session's WPM/accuracy if it beats `best_score_zen`.
 // Called from every transition that ends an active Zen session (start new game,
 // quit-to-menu, quit-to-OS) so a record is never silently dropped.
@@ -1541,7 +1551,7 @@ fn startGame(mode: GameMode, allocator: *std.mem.Allocator) void {
 }
 
 // Emscripten C-callback trampoline; arg carries the FrameContext pointer
-fn frame_c_callback(arg: ?*anyopaque) callconv(.c) void {
+fn frameCCallback(arg: ?*anyopaque) callconv(.c) void {
     if (arg) |raw| {
         const ctx: *FrameContext = @ptrCast(@alignCast(raw));
         frame(ctx);
@@ -1552,7 +1562,7 @@ fn frame_c_callback(arg: ?*anyopaque) callconv(.c) void {
 // never run there — emscripten_set_main_loop_arg does not return. atexit only fires on
 // explicit emscripten_force_exit / module shutdown (browser tab close bypasses it), but
 // it is the cleanest available hook for any controlled teardown the runtime offers.
-fn cleanup_on_exit() callconv(.c) void {
+fn cleanupOnExit() callconv(.c) void {
     raylib.UnloadTexture(zombie_texture);
     // Skip audio unloads when audio init failed — handles are zeroed and unloading them is UB.
     if (audio_ready) {
@@ -1668,10 +1678,10 @@ pub fn main() !void {
 
     if (comptime is_web) {
         // The emscripten loop never returns, so the defers above do not fire in the web
-        // build. Register cleanup_on_exit() as a best-effort mitigation; see its doc
+        // build. Register cleanupOnExit() as a best-effort mitigation; see its doc
         // comment for the limitations on browser tab close.
-        _ = raylib.atexit(&cleanup_on_exit);
-        raylib.emscripten_set_main_loop_arg(frame_c_callback, &ctx, 0, 1);
+        _ = raylib.atexit(&cleanupOnExit);
+        raylib.emscripten_set_main_loop_arg(frameCCallback, &ctx, 0, 1);
     } else {
         while (!raylib.WindowShouldClose()) { // Main game loop
             frame(&ctx);
@@ -1751,9 +1761,7 @@ fn updateZombies(allocator: *std.mem.Allocator) void {
                 combo_count += 1;
                 if (combo_count > max_combo) max_combo = combo_count;
                 spawnPopup(zomb.x, zomb.y, points);
-                if (zomb.power_up != null and held_power_up == null) {
-                    held_power_up = zomb.power_up;
-                }
+                tryPickupPowerUp(zomb.power_up);
                 allocator.destroy(zomb);
                 slot.* = null;
                 letter_count = 0;
@@ -3567,44 +3575,45 @@ test "FREEZE_DURATION is 3.0" {
     try std.testing.expectApproxEqAbs(@as(f32, 3.0), FREEZE_DURATION, 0.001);
 }
 
-test "freeze timer clamps to zero" {
-    const saved = freeze_timer;
-    defer freeze_timer = saved;
-
-    freeze_timer = 0.1;
-    freeze_timer -= 0.2;
-    if (freeze_timer < 0) freeze_timer = 0.0;
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), freeze_timer, 0.001);
-}
-
-test "shield state transition" {
-    const saved = shield_active;
-    defer shield_active = saved;
-
-    shield_active = true;
-    try std.testing.expect(shield_active);
-    shield_active = false;
-    try std.testing.expect(!shield_active);
-}
-
-test "space with empty inventory no state change" {
+test "freeze activation sets timer via activatePowerUp" {
     const saved_held = held_power_up;
     const saved_freeze = freeze_timer;
-    const saved_shield = shield_active;
     defer {
         held_power_up = saved_held;
         freeze_timer = saved_freeze;
+    }
+
+    held_power_up = .freeze;
+    freeze_timer = 0.0;
+    var alloc = std.testing.allocator;
+    activatePowerUp(&alloc);
+    try std.testing.expectApproxEqAbs(FREEZE_DURATION, freeze_timer, 0.001);
+    try std.testing.expect(held_power_up == null);
+}
+
+test "shield activation via activatePowerUp" {
+    const saved_held = held_power_up;
+    const saved_shield = shield_active;
+    defer {
+        held_power_up = saved_held;
         shield_active = saved_shield;
     }
 
-    held_power_up = null;
-    freeze_timer = 0.0;
     shield_active = false;
-
-    // Simulate: space pressed but no power-up held — activatePowerUp is only called when held != null
+    held_power_up = .shield;
+    var alloc = std.testing.allocator;
+    activatePowerUp(&alloc);
+    try std.testing.expect(shield_active);
     try std.testing.expect(held_power_up == null);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), freeze_timer, 0.001);
-    try std.testing.expect(!shield_active);
+}
+
+test "power-up pickup into empty slot accepts drop" {
+    const saved = held_power_up;
+    defer held_power_up = saved;
+
+    held_power_up = null;
+    tryPickupPowerUp(.freeze);
+    try std.testing.expect(held_power_up.? == .freeze);
 }
 
 test "power-up pickup with full slot unchanged" {
@@ -3612,11 +3621,17 @@ test "power-up pickup with full slot unchanged" {
     defer held_power_up = saved;
 
     held_power_up = .freeze;
-    const new_drop: ?PowerUpType = .bomb;
-    if (new_drop != null and held_power_up == null) {
-        held_power_up = new_drop;
-    }
+    tryPickupPowerUp(.bomb);
     try std.testing.expect(held_power_up.? == .freeze);
+}
+
+test "tickFreezeTimer clamps to zero on overshoot" {
+    const saved_freeze = freeze_timer;
+    defer freeze_timer = saved_freeze;
+
+    freeze_timer = 0.5;
+    tickFreezeTimer(2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), freeze_timer, 0.001);
 }
 
 test "carrier glyph mapping per PowerUpType" {
@@ -3698,9 +3713,8 @@ test "bomb on empty screen consumes power-up" {
     defer held_power_up = saved_held;
 
     held_power_up = .bomb;
-    try std.testing.expect(held_power_up != null);
-    // Bomb activation kills all active zombies; with none active it simply clears held_power_up
-    held_power_up = null;
+    var alloc = std.testing.allocator;
+    activatePowerUp(&alloc);
     try std.testing.expect(held_power_up == null);
 }
 

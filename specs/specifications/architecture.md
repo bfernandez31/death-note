@@ -262,11 +262,11 @@ Each zombie carries its own `frame: f32` and `animationTimer: f32` (lines 33–3
 
 ### (i) `comptime` branch for web vs. native main loop
 
-`main()` contains a `comptime` check on `@import("builtin").target.os.tag == .emscripten` that selects between two loop strategies. On native targets the existing `while (!raylib.WindowShouldClose())` loop calls `frame(&ctx)` each iteration. On the Emscripten target, `raylib.emscripten_set_main_loop_arg(frame_c_callback, &ctx, 0, 1)` replaces the loop — the browser's requestAnimationFrame drives execution instead.
+`main()` contains a `comptime` check on `@import("builtin").target.os.tag == .emscripten` that selects between two loop strategies. On native targets the existing `while (!raylib.WindowShouldClose())` loop calls `frame(&ctx)` each iteration. On the Emscripten target, `raylib.emscripten_set_main_loop_arg(frameCCallback, &ctx, 0, 1)` replaces the loop — the browser's requestAnimationFrame drives execution instead.
 
 The loop body is extracted into a `frame(ctx: *FrameContext) void` helper. `FrameContext` is a struct that carries the allocator and RNG by pointer so the Emscripten callback (which has a C calling convention and receives a `?*anyopaque` argument) can reconstruct context without accessing globals directly. Resource `Init…`/`defer Close…` pairs stay in `main()` and are not affected by the loop refactor; the Emscripten loop does not return, so those defers do not fire on the web target — this is intentional and documented inline.
 
-**Evidence**: `src/main.zig` — `FrameContext` struct, `frame()` helper, `frame_c_callback` trampoline, `comptime` target check in `main()`.
+**Evidence**: `src/main.zig` — `FrameContext` struct, `frame()` helper, `frameCCallback` trampoline, `comptime` target check in `main()`.
 
 ### (h) Names stored as `[*:0]const u8` for direct raylib interop
 
