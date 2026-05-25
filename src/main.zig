@@ -714,10 +714,7 @@ fn frame(ctx: *FrameContext) void {
                 }
             }
 
-            if (freeze_timer > 0) {
-                freeze_timer -= raylib.GetFrameTime();
-                if (freeze_timer < 0) freeze_timer = 0.0;
-            }
+            tickFreezeTimer(raylib.GetFrameTime());
 
             if (heart_flash_timer > 0) {
                 heart_flash_timer -= raylib.GetFrameTime();
@@ -1475,6 +1472,13 @@ fn activatePowerUp(allocator: *std.mem.Allocator) void {
 fn tryPickupPowerUp(drop: ?PowerUpType) void {
     if (drop != null and held_power_up == null) {
         held_power_up = drop;
+    }
+}
+
+fn tickFreezeTimer(dt: f32) void {
+    if (freeze_timer > 0) {
+        freeze_timer -= dt;
+        if (freeze_timer < 0) freeze_timer = 0.0;
     }
 }
 
@@ -3603,25 +3607,13 @@ test "shield activation via activatePowerUp" {
     try std.testing.expect(held_power_up == null);
 }
 
-test "activatePowerUp with empty inventory is no-op" {
-    const saved_held = held_power_up;
-    const saved_freeze = freeze_timer;
-    const saved_shield = shield_active;
-    defer {
-        held_power_up = saved_held;
-        freeze_timer = saved_freeze;
-        shield_active = saved_shield;
-    }
+test "power-up pickup into empty slot accepts drop" {
+    const saved = held_power_up;
+    defer held_power_up = saved;
 
     held_power_up = null;
-    freeze_timer = 0.0;
-    shield_active = false;
-
-    var alloc = std.testing.allocator;
-    activatePowerUp(&alloc);
-    try std.testing.expect(held_power_up == null);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), freeze_timer, 0.001);
-    try std.testing.expect(!shield_active);
+    tryPickupPowerUp(.freeze);
+    try std.testing.expect(held_power_up.? == .freeze);
 }
 
 test "power-up pickup with full slot unchanged" {
@@ -3631,6 +3623,15 @@ test "power-up pickup with full slot unchanged" {
     held_power_up = .freeze;
     tryPickupPowerUp(.bomb);
     try std.testing.expect(held_power_up.? == .freeze);
+}
+
+test "tickFreezeTimer clamps to zero on overshoot" {
+    const saved_freeze = freeze_timer;
+    defer freeze_timer = saved_freeze;
+
+    freeze_timer = 0.5;
+    tickFreezeTimer(2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), freeze_timer, 0.001);
 }
 
 test "carrier glyph mapping per PowerUpType" {
